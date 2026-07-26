@@ -71,7 +71,9 @@ fi
 
 print_section "Protocol Files"
 ai_check_file "$(ai_agents_file "$ROOT")" "AGENTS.md"
+ai_check_file "$ROOT/ai-state.json" "AI State"
 ai_check_file "$DOCS_DIR/project-context.md" "Project Context"
+ai_check_file "$DOCS_DIR/operating-model.md" "Operating Model"
 ai_check_file "$DOCS_DIR/current-task.md" "Current Task"
 ai_check_file "$DOCS_DIR/decisions.md" "Decision Log"
 ai_check_file "$DOCS_DIR/handoff.md" "Handoff Log"

@@ -49,6 +49,7 @@ $TASK_DESC
 - Not run
 EOF
 
+ai_update_state "$ROOT" "ACTIVE" "$TASK_ID" "$TASK_DESC" "" "Inspect the current code and context"
 ai_sync_registry "$ROOT"
 
 echo "Started task $TASK_ID"

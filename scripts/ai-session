@@ -36,6 +36,8 @@ PROJECT_NAME="$(basename "$ROOT")"
 CURRENT_TASK="$(ai_current_task_file "$ROOT")"
 PROJECT_CONTEXT="$(ai_project_context_file "$ROOT")"
 HANDOFF_FILE="$(ai_handoff_file "$ROOT")"
+STATE_FILE="$(ai_state_file "$ROOT")"
+OPERATING_MODEL="$(ai_docs_dir "$ROOT")/operating-model.md"
 NAMESPACE="$(ai_uteke_namespace "$ROOT")"
 CODEBASE_PROJECT="$(ai_codebase_project "$ROOT")"
 
@@ -52,6 +54,8 @@ VALIDATION="$(ai_extract_section "$CURRENT_TASK" "## Validation" | sed '/^[[:spa
 SUMMARY_BLOCK="$(ai_extract_section "$PROJECT_CONTEXT" "## Summary" | sed '/^[[:space:]]*$/d' | head -n 6)"
 STACK_BLOCK="$(ai_extract_section "$PROJECT_CONTEXT" "## Stack" | sed '/^[[:space:]]*$/d' | head -n 6)"
 CONSTRAINTS_BLOCK="$(ai_extract_section "$PROJECT_CONTEXT" "## Constraints" | sed '/^[[:space:]]*$/d' | head -n 6)"
+OPERATING_MODEL_BLOCK="$(sed -n '1,70p' "$OPERATING_MODEL" 2>/dev/null || true)"
+STATE_BLOCK="$(sed -n '1,100p' "$STATE_FILE" 2>/dev/null || true)"
 LAST_HANDOFF="$(grep '^## ' "$HANDOFF_FILE" | tail -n 1 | sed 's/^## //' || true)"
 CHANGED_COUNT="$(ai_git_changed_files "$ROOT" | wc -l | tr -d ' ')"
 
@@ -85,6 +89,12 @@ printf '%s\n' "${STACK_BLOCK:-No stack recorded.}"
 echo
 echo "Constraints:"
 printf '%s\n' "${CONSTRAINTS_BLOCK:-No constraints recorded.}"
+echo
+echo "## Operating Model"
+printf '%s\n' "${OPERATING_MODEL_BLOCK:-No operating model recorded.}"
+echo
+echo "## Machine State (ai-state.json)"
+printf '%s\n' "${STATE_BLOCK:-No ai-state.json recorded.}"
 echo
 echo "## Active Work"
 echo "Objective:"

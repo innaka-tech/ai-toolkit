@@ -16,13 +16,16 @@ Central hub for multi-AI orchestration on this MacBook.
 Every project should keep shared context inside the repository:
 
 - `AGENTS.md`
+- `ai-state.json`
 - `docs/ai/project-context.md`
+- `docs/ai/operating-model.md`
 - `docs/ai/current-task.md`
 - `docs/ai/decisions.md`
 - `docs/ai/handoff.md`
 - `.ai-toolkit/project.env`
 
-Use Markdown for human-plus-AI context and `.ai-toolkit/project.env` for shell-safe automation config.
+Use Markdown for human-plus-AI context, `ai-state.json` for machine-readable
+state, and `.ai-toolkit/project.env` for shell-safe automation config.
 
 OpenCode note: it discovers `AGENTS.md` automatically, but does not
 recursively load `docs/ai/*` on its own. `ai-init` and `ai-fix` maintain an

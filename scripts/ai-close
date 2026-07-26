@@ -79,6 +79,7 @@ ai_replace_line "$CURRENT_TASK" "Updated At: " "$NOW"
   fi
 } >> "$HANDOFF_FILE"
 
+ai_update_state "$ROOT" "$STATUS" "$(awk -F': ' '/^Task ID:/{print $2; exit}' "$CURRENT_TASK")" "$OBJECTIVE" "$SUMMARY" "$NEXT_STEP"
 ai_sync_registry "$ROOT"
 
 if ai_has_cmd uteke && [ -n "$SUMMARY" ]; then

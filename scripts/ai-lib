@@ -88,6 +88,76 @@ ai_handoff_file() {
   echo "$(ai_docs_dir "${1:-$PWD}")/handoff.md"
 }
 
+ai_state_file() {
+  echo "$(ai_find_project_root "${1:-$PWD}")/ai-state.json"
+}
+
+ai_update_state() {
+  local root="${1:-$PWD}"
+  local status="${2:-ACTIVE}"
+  local task_id="${3:-none}"
+  local objective="${4:-}"
+  local summary="${5:-}"
+  local next_step="${6:-}"
+  local state_file
+  state_file="$(ai_state_file "$root")"
+  [ -f "$state_file" ] || return 0
+
+  # Python is used only as a JSON parser/writer; the toolkit still works when
+  # it is unavailable, with Markdown files remaining the primary source.
+  if ai_has_cmd python3; then
+    AI_STATE_FILE="$state_file" AI_STATE_NOW="$(ai_now_utc)" \
+      AI_STATE_STATUS="$status" AI_STATE_TASK_ID="$task_id" \
+      AI_STATE_OBJECTIVE="$objective" AI_STATE_SUMMARY="$summary" \
+      AI_STATE_NEXT="$next_step" python3 - <<'PY'
+import json
+import os
+import tempfile
+
+path = os.environ["AI_STATE_FILE"]
+try:
+    with open(path, encoding="utf-8") as handle:
+        state = json.load(handle)
+except (OSError, json.JSONDecodeError):
+    state = {"version": 1, "modules": {}, "bugs_found": [], "progress": []}
+
+state.setdefault("version", 1)
+state.setdefault("modules", {})
+state.setdefault("bugs_found", [])
+state.setdefault("progress", [])
+state["last_session"] = os.environ["AI_STATE_NOW"]
+state["active_task"] = {
+    "id": os.environ["AI_STATE_TASK_ID"],
+    "status": os.environ["AI_STATE_STATUS"],
+    "objective": os.environ["AI_STATE_OBJECTIVE"],
+    "next_step": os.environ["AI_STATE_NEXT"],
+    "updated_at": os.environ["AI_STATE_NOW"],
+}
+summary = os.environ["AI_STATE_SUMMARY"].strip()
+if summary:
+    state["progress"].append({
+        "what": summary,
+        "status": "done" if os.environ["AI_STATE_STATUS"] in ("COMPLETED", "DONE") else "wip",
+        "updated_at": os.environ["AI_STATE_NOW"],
+    })
+
+directory = os.path.dirname(path) or "."
+fd, temporary = tempfile.mkstemp(prefix=".ai-state.", dir=directory, text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(state, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    os.replace(temporary, path)
+except Exception:
+    try:
+        os.unlink(temporary)
+    except OSError:
+        pass
+    raise
+PY
+  fi
+}
+
 ai_agents_file() {
   echo "$(ai_find_project_root "${1:-$PWD}")/AGENTS.md"
 }

@@ -33,6 +33,7 @@ $AI_PROTOCOL_START
 Before making meaningful changes, read these repository-local files:
 
 - \`docs/ai/project-context.md\` — project purpose, stack, constraints
+- \`docs/ai/operating-model.md\` — lifecycle, goals, and source-of-truth rules
 - \`docs/ai/current-task.md\` — active objective and next steps
 - \`docs/ai/handoff.md\` — latest work handed off by another agent
 - \`docs/ai/decisions.md\` — durable architecture/product decisions
@@ -130,6 +131,51 @@ if [ ! -f "$DOCS_DIR/handoff.md" ]; then
 ## $NOW Initial Setup
 - Project context scaffold created.
 - Next step: update \`project-context.md\` and start the first task with \`ai-start "task name"\`.
+EOF
+fi
+
+if [ ! -f "$DOCS_DIR/operating-model.md" ]; then
+  cat > "$DOCS_DIR/operating-model.md" <<'EOF'
+# AI Toolkit Operating Model
+
+## Goal
+
+Make project work resumable across AI providers, machines, and sessions by
+keeping the durable context in the repository and treating external memory as
+a secondary index.
+
+## Source of Truth
+
+1. `docs/ai/project-context.md` — what the project is and its constraints.
+2. `docs/ai/current-task.md` — the active objective and next step.
+3. `docs/ai/handoff.md` — what the previous agent changed and validated.
+4. `docs/ai/decisions.md` — durable decisions and tradeoffs.
+5. `ai-state.json` — machine-readable state for agents and automation.
+6. `.ai-toolkit/project.env` — local project automation settings.
+
+## Session Lifecycle
+
+1. `ai-init` creates or repairs the protocol.
+2. An AI reads `AGENTS.md`, this document, and the current context files.
+3. `ai-start` marks the active objective in Markdown and `ai-state.json`.
+4. Work is implemented and validated; important decisions are recorded.
+5. `ai-close` writes the handoff and updates machine-readable progress.
+6. `ai-commit`, `ai-push`, or `ai-deploy` performs the requested delivery step.
+
+## Portability Rules
+
+- Repository files are authoritative and must remain understandable without
+  Uteke or any particular AI provider.
+- Uteke stores concise cross-session summaries, never secrets.
+- Provider-specific prompts are adapters; they must consume the same project
+  context rather than create a competing state format.
+- `ai-state.json` is operational metadata, not a replacement for explanation
+  in Markdown.
+
+## Project Goals
+
+Fill in product goals, success criteria, non-goals, and current milestones in
+`project-context.md` and keep this section aligned with them.
 EOF
 fi
 

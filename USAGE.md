@@ -7,13 +7,19 @@ This document explains the day-to-day workflow for the local multi-AI project pr
 Each project keeps AI-readable context inside the repository:
 
 - `AGENTS.md`
+- `ai-state.json`
 - `docs/ai/project-context.md`
+- `docs/ai/operating-model.md`
 - `docs/ai/current-task.md`
 - `docs/ai/decisions.md`
 - `docs/ai/handoff.md`
 - `.ai-toolkit/project.env`
 
 That makes the project portable across Codex, Claude, OpenCode, Hermes, and any future tool that can read repository files.
+
+`docs/ai/operating-model.md` explains the lifecycle, source-of-truth rules,
+and where to record product goals, success criteria, and non-goals. Fill in
+those project-specific sections instead of relying on provider-specific memory.
 
 ## One-Time Setup Per Project
 
