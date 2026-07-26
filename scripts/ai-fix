@@ -1,0 +1,117 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TARGET_DIR="$PWD"
+FIX_INIT="true"
+FIX_HOOKS="true"
+FIX_REGISTRY="true"
+FIX_CONFIG="true"
+FIX_DEPLOY_HINTS="false"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --init-only)
+      FIX_HOOKS="false"
+      FIX_REGISTRY="false"
+      FIX_CONFIG="false"
+      shift
+      ;;
+    --hooks-only)
+      FIX_INIT="false"
+      FIX_REGISTRY="false"
+      FIX_CONFIG="false"
+      shift
+      ;;
+    --config-only)
+      FIX_INIT="false"
+      FIX_HOOKS="false"
+      FIX_REGISTRY="false"
+      shift
+      ;;
+    --with-deploy-hints)
+      FIX_DEPLOY_HINTS="true"
+      shift
+      ;;
+    *)
+      TARGET_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+CONFIG_FILE="$(ai_local_config_file "$ROOT")"
+IS_GIT_REPO="false"
+
+if git -C "$ROOT" rev-parse --show-toplevel >/dev/null 2>&1; then
+  IS_GIT_REPO="true"
+fi
+
+echo "[ai-fix] Root -> $ROOT"
+
+if [ "$FIX_INIT" = "true" ]; then
+  echo "[ai-fix] Ensuring protocol files exist"
+  "$SCRIPT_DIR/ai-init" "$ROOT" >/dev/null
+fi
+
+if [ "$FIX_HOOKS" = "true" ] && [ "$IS_GIT_REPO" = "true" ]; then
+  echo "[ai-fix] Reinstalling git hooks"
+  "$SCRIPT_DIR/ai-install-hooks" "$ROOT" >/dev/null
+elif [ "$FIX_HOOKS" = "true" ]; then
+  echo "[ai-fix] Skipping hooks (not a git repo)"
+fi
+
+if [ "$FIX_REGISTRY" = "true" ]; then
+  echo "[ai-fix] Refreshing toolkit registry entry"
+  ai_sync_registry "$ROOT"
+fi
+
+if [ "$FIX_CONFIG" = "true" ]; then
+  echo "[ai-fix] Normalizing project config"
+  mkdir -p "$ROOT/.ai-toolkit"
+  [ -f "$CONFIG_FILE" ] || touch "$CONFIG_FILE"
+
+  if ! grep -q '^PROJECT_NAME=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'PROJECT_NAME="%s"\n' "$(basename "$ROOT")" >> "$CONFIG_FILE"
+  fi
+  if ! grep -q '^PROJECT_ROOT=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'PROJECT_ROOT="%s"\n' "$ROOT" >> "$CONFIG_FILE"
+  fi
+  if ! grep -q '^DEFAULT_BRANCH=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'DEFAULT_BRANCH="%s"\n' "$(ai_detect_default_branch "$ROOT")" >> "$CONFIG_FILE"
+  fi
+  if ! grep -q '^UTEKE_NAMESPACE=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'UTEKE_NAMESPACE="%s"\n' "$(ai_project_slug "$ROOT")" >> "$CONFIG_FILE"
+  fi
+  if ! grep -q '^CODEBASE_PROJECT=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'CODEBASE_PROJECT="%s"\n' "$(ai_project_slug "$ROOT")" >> "$CONFIG_FILE"
+  fi
+  if ! grep -q '^DEPLOY_DEFAULT=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'DEPLOY_DEFAULT=""\n' >> "$CONFIG_FILE"
+  fi
+  if ! grep -q '^DEPLOY_STAGING=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'DEPLOY_STAGING=""\n' >> "$CONFIG_FILE"
+  fi
+  if ! grep -q '^DEPLOY_PRODUCTION=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'DEPLOY_PRODUCTION=""\n' >> "$CONFIG_FILE"
+  fi
+  if ! grep -q '^POST_DEPLOY_CHECK=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'POST_DEPLOY_CHECK=""\n' >> "$CONFIG_FILE"
+  fi
+
+  if [ "$FIX_DEPLOY_HINTS" = "true" ]; then
+    if grep -q '^DEPLOY_DEFAULT=""' "$CONFIG_FILE"; then
+      perl -0pi -e 's/^DEPLOY_DEFAULT=""$/DEPLOY_DEFAULT="echo TODO: set deploy command"/m' "$CONFIG_FILE"
+    fi
+    if grep -q '^POST_DEPLOY_CHECK=""' "$CONFIG_FILE"; then
+      perl -0pi -e 's/^POST_DEPLOY_CHECK=""$/POST_DEPLOY_CHECK="echo TODO: set smoke check"/m' "$CONFIG_FILE"
+    fi
+  fi
+fi
+
+echo "[ai-fix] Done"
+echo "[ai-fix] Re-run ai-doctor to verify remaining gaps"

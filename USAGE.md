@@ -1,0 +1,201 @@
+# AI Toolkit Usage
+
+This document explains the day-to-day workflow for the local multi-AI project protocol.
+
+## What This Toolkit Standardizes
+
+Each project keeps AI-readable context inside the repository:
+
+- `AGENTS.md`
+- `docs/ai/project-context.md`
+- `docs/ai/current-task.md`
+- `docs/ai/decisions.md`
+- `docs/ai/handoff.md`
+- `.ai-toolkit/project.env`
+
+That makes the project portable across Codex, Claude, OpenCode, Hermes, and any future tool that can read repository files.
+
+## One-Time Setup Per Project
+
+From inside a repository:
+
+```bash
+~/.ai-toolkit/scripts/ai-init
+```
+
+What it does:
+
+- creates the standard AI context files
+- creates `.ai-toolkit/project.env`
+- installs lightweight git hooks
+- registers the project in `~/.ai-toolkit/context/`
+
+## Daily Workflow
+
+See the complete command menu at any time:
+
+```bash
+~/.ai-toolkit/scripts/ai-toolkit --help
+```
+
+After installing aliases, the shortcut is `ait --help`.
+
+Start a task:
+
+```bash
+~/.ai-toolkit/scripts/ai-start "build auth flow"
+```
+
+Resume context:
+
+```bash
+~/.ai-toolkit/scripts/ai-resume
+```
+
+Run a full health check:
+
+```bash
+~/.ai-toolkit/scripts/ai-doctor
+```
+
+Auto-fix safe issues:
+
+```bash
+~/.ai-toolkit/scripts/ai-fix
+```
+
+Sync project summary to Uteke:
+
+```bash
+~/.ai-toolkit/scripts/ai-sync
+~/.ai-toolkit/scripts/ai-sync "custom summary"
+```
+
+Recall project memory from Uteke:
+
+```bash
+~/.ai-toolkit/scripts/ai-recall
+~/.ai-toolkit/scripts/ai-recall "deploy constraints"
+```
+
+Generate a handoff-ready session brief:
+
+```bash
+~/.ai-toolkit/scripts/ai-session
+~/.ai-toolkit/scripts/ai-session --index
+~/.ai-toolkit/scripts/ai-session --query "deploy constraints"
+```
+
+Query codebase-memory:
+
+```bash
+~/.ai-toolkit/scripts/ai-map index fast
+~/.ai-toolkit/scripts/ai-map status
+~/.ai-toolkit/scripts/ai-map search "auth handler"
+~/.ai-toolkit/scripts/ai-map trace "CreateOrder"
+~/.ai-toolkit/scripts/ai-map architecture
+```
+
+Close or checkpoint a task:
+
+```bash
+~/.ai-toolkit/scripts/ai-close --summary "auth done, retry webhook next"
+```
+
+Commit all tracked changes:
+
+```bash
+~/.ai-toolkit/scripts/ai-commit "feat: add auth flow"
+```
+
+Commit and push:
+
+```bash
+~/.ai-toolkit/scripts/ai-commit "feat: add auth flow" . --push
+```
+
+Push current branch:
+
+```bash
+~/.ai-toolkit/scripts/ai-push
+```
+
+Deploy using project config:
+
+```bash
+~/.ai-toolkit/scripts/ai-deploy default
+~/.ai-toolkit/scripts/ai-deploy staging
+~/.ai-toolkit/scripts/ai-deploy production
+```
+
+## Recommended Routine
+
+1. Run `ai-init` once per repository.
+2. Run `ai-start "..."` when you begin meaningful work.
+3. Let any AI tool read `AGENTS.md` and `docs/ai/*`.
+4. Run `ai-close --summary "..."` before switching tools or ending a session.
+5. Run `ai-commit "..."`.
+6. Run `ai-push`.
+7. Run `ai-deploy ...` if needed.
+
+## Project Deploy Configuration
+
+Set deploy commands in `.ai-toolkit/project.env`:
+
+```bash
+PROJECT_NAME="my-app"
+PROJECT_ROOT="/absolute/path/to/my-app"
+DEFAULT_BRANCH="main"
+UTEKE_NAMESPACE="my-app"
+CODEBASE_PROJECT="my-app"
+DEPLOY_DEFAULT="npm run deploy"
+DEPLOY_STAGING="npm run deploy:staging"
+DEPLOY_PRODUCTION="npm run deploy:prod"
+POST_DEPLOY_CHECK="npm run smoke"
+```
+
+If a deploy target is empty, `ai-deploy` stops and prints an error.
+
+## Alias Installation
+
+To install short aliases into `~/.zshrc`:
+
+```bash
+~/.ai-toolkit/scripts/ai-aliases install
+source ~/.zshrc
+```
+
+Installed aliases:
+
+- `aii` -> `ai-init`
+- `air` -> `ai-resume`
+- `ais` -> `ai-start`
+- `aix` -> `ai-close`
+- `aio` -> `ai-doctor`
+- `aif` -> `ai-fix`
+- `aim` -> `ai-map`
+- `aiy` -> `ai-sync`
+- `airl` -> `ai-recall`
+- `aisn` -> `ai-session`
+- `aic` -> `ai-commit`
+- `aip` -> `ai-push`
+- `aid` -> `ai-deploy`
+
+To remove them:
+
+```bash
+~/.ai-toolkit/scripts/ai-aliases uninstall
+```
+
+## Notes
+
+- `ai-commit` stages all changes with `git add -A`.
+- `ai-close` appends a handoff summary to `docs/ai/handoff.md`.
+- `ai-doctor` audits toolkit availability, project protocol files, git wiring, deploy config, and command dependencies.
+- `ai-fix` repairs safe issues such as missing protocol files, missing project config, missing registry entry, and missing hooks.
+- `ai-sync` stores a concise project summary in Uteke using the configured namespace.
+- `ai-recall` recalls project memory from Uteke.
+- `ai-session` combines local repo context, Uteke recall, and codebase-memory status into one AI-ready briefing.
+- `ai-map` wraps `codebase-memory-mcp cli` for indexing, architecture, search, and call tracing.
+- `ai-deploy` runs commands from `.ai-toolkit/project.env` inside the repository root.
+- `Uteke` is used as optional secondary memory, not the primary source of truth.

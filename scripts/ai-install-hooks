@@ -1,0 +1,46 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TARGET_DIR="${1:-$PWD}"
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+ai_require_git_repo "$ROOT"
+
+HOOKS_DIR="$ROOT/.git/hooks"
+mkdir -p "$HOOKS_DIR"
+
+cat > "$HOOKS_DIR/pre-commit" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+if [ ! -f "docs/ai/current-task.md" ]; then
+  echo "warning: docs/ai/current-task.md is missing. Run ai-init in this project." >&2
+fi
+EOF
+
+cat > "$HOOKS_DIR/post-checkout" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+if [ -f "docs/ai/current-task.md" ]; then
+  echo "[ai-resume hint] docs/ai/current-task.md"
+  sed -n '1,8p' "docs/ai/current-task.md"
+fi
+EOF
+
+cat > "$HOOKS_DIR/post-merge" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+if [ -f "docs/ai/handoff.md" ]; then
+  echo "[ai-resume hint] docs/ai/handoff.md"
+  sed -n '1,12p' "docs/ai/handoff.md"
+fi
+EOF
+
+chmod +x "$HOOKS_DIR/pre-commit" "$HOOKS_DIR/post-checkout" "$HOOKS_DIR/post-merge"
+
+echo "Installed AI hooks into $HOOKS_DIR"

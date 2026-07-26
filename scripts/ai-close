@@ -1,0 +1,88 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+STATUS="COMPLETED"
+SUMMARY=""
+TARGET_DIR="$PWD"
+NEXT_STEP=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --status)
+      STATUS="${2:-}"
+      shift 2
+      ;;
+    --summary)
+      SUMMARY="${2:-}"
+      shift 2
+      ;;
+    --next)
+      NEXT_STEP="${2:-}"
+      shift 2
+      ;;
+    *)
+      TARGET_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+CURRENT_TASK="$(ai_current_task_file "$ROOT")"
+HANDOFF_FILE="$(ai_handoff_file "$ROOT")"
+NOW="$(ai_now_utc)"
+
+ai_ensure_initialized "$ROOT"
+
+OBJECTIVE="$(ai_extract_section "$CURRENT_TASK" "## Objective" | sed '/^[[:space:]]*$/d' | head -n 3)"
+[ -n "$OBJECTIVE" ] || OBJECTIVE="No objective recorded."
+
+FILES="$(ai_git_changed_files "$ROOT" | sed 's/^/- /')"
+[ -n "$FILES" ] || FILES="- No local changes detected"
+
+if [ -n "$NEXT_STEP" ]; then
+  awk -v next_step="$NEXT_STEP" '
+    $0 == "## Next Steps" {
+      print
+      getline
+      print "- " next_step
+      replaced=1
+      skip=1
+      next
+    }
+    skip && /^## / { skip=0 }
+    !skip { print }
+  ' "$CURRENT_TASK" > "$CURRENT_TASK.tmp"
+  mv "$CURRENT_TASK.tmp" "$CURRENT_TASK"
+fi
+
+ai_replace_line "$CURRENT_TASK" "Status: " "$STATUS"
+ai_replace_line "$CURRENT_TASK" "Updated At: " "$NOW"
+
+{
+  echo
+  echo "## $NOW"
+  echo "- Status: $STATUS"
+  echo "- Objective: $OBJECTIVE"
+  if [ -n "$SUMMARY" ]; then
+    echo "- Summary: $SUMMARY"
+  fi
+  echo "- Branch: $(ai_git_branch "$ROOT")"
+  echo "- Changed Files:"
+  echo "$FILES"
+  if [ -n "$NEXT_STEP" ]; then
+    echo "- Next Step: $NEXT_STEP"
+  fi
+} >> "$HANDOFF_FILE"
+
+ai_sync_registry "$ROOT"
+
+if ai_has_cmd uteke && [ -n "$SUMMARY" ]; then
+  uteke remember "$SUMMARY" --tags "ai-toolkit,project-handoff,$(ai_project_slug "$ROOT")" --entity "$(basename "$ROOT")" --category "task-progress" >/dev/null 2>&1 || true
+fi
+
+echo "Closed task context for $ROOT"

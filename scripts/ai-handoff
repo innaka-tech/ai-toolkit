@@ -1,0 +1,11 @@
+#!/bin/bash
+set -euo pipefail
+TO="${1:-}"; TASK="${2:-}"; FILES="${3:-}"
+[ -z "$TO" ] && echo "Usage: ai-handoff <agent> <task> [files]" && exit 1
+TS=$(date -u +%Y%m%d%H%M%S)
+PROJ=$(ls $HOME/.ai-toolkit/context/ 2>/dev/null | head -1 || echo default)
+cat > "$HOME/.ai-toolkit/bridge/inbox/handoff-${TS}.json" <<EOF
+{"task_id":"handoff-$TS","from":"hermes","to":"$TO","task":"$TASK","files":"$FILES","context_project":"$PROJ","status":"pending","created":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+EOF
+echo "✅ Handoff → $TO"
+echo "   $TASK"

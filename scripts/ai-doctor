@@ -1,0 +1,160 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TARGET_DIR="${1:-$PWD}"
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+DOCS_DIR="$(ai_docs_dir "$ROOT")"
+CONFIG_FILE="$(ai_local_config_file "$ROOT")"
+REGISTRY_DIR="$(ai_registry_dir "$ROOT")"
+IS_GIT_REPO="false"
+
+if [ -f "$CONFIG_FILE" ]; then
+  ai_load_local_config "$ROOT"
+fi
+
+if git -C "$ROOT" rev-parse --show-toplevel >/dev/null 2>&1; then
+  IS_GIT_REPO="true"
+fi
+
+print_section() {
+  echo
+  echo "[$1]"
+}
+
+print_section "Toolkit"
+ai_check_dir "$AI_TOOLKIT_ROOT" "Toolkit Root"
+ai_check_dir "$AI_TOOLKIT_ROOT/scripts" "Toolkit Scripts"
+ai_check_dir "$AI_TOOLKIT_ROOT/context" "Toolkit Registry"
+ai_check_file "$AI_TOOLKIT_ROOT/config.yaml" "Toolkit Config"
+ai_check_cmd bash "bash"
+ai_check_cmd git "git"
+ai_check_cmd awk "awk"
+ai_check_cmd sed "sed"
+ai_check_cmd uteke "uteke"
+ai_check_cmd codebase-memory-mcp "codebase-memory-mcp"
+
+print_section "Provider CLIs"
+ai_check_cmd codex "codex"
+ai_check_cmd claude "claude"
+ai_check_cmd opencode "opencode"
+ai_check_cmd gemini "gemini"
+
+print_section "Project"
+echo "ROOT $ROOT"
+if [ "$IS_GIT_REPO" = "true" ]; then
+  echo "OK   Git Repo -> yes"
+  echo "OK   Branch -> $(ai_git_branch "$ROOT")"
+else
+  echo "INFO Git Repo -> no"
+fi
+
+CHANGED_COUNT="$(ai_git_changed_files "$ROOT" | wc -l | tr -d ' ')"
+echo "INFO Changed Entries -> ${CHANGED_COUNT:-0}"
+
+if [ "$IS_GIT_REPO" = "true" ]; then
+  if git -C "$ROOT" remote get-url origin >/dev/null 2>&1; then
+    echo "OK   Git Remote origin -> $(git -C "$ROOT" remote get-url origin)"
+  else
+    echo "MISS Git Remote origin"
+  fi
+
+  if git -C "$ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+    echo "OK   Git Upstream -> $(git -C "$ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{u}')"
+  else
+    echo "MISS Git Upstream"
+  fi
+fi
+
+print_section "Protocol Files"
+ai_check_file "$(ai_agents_file "$ROOT")" "AGENTS.md"
+ai_check_file "$DOCS_DIR/project-context.md" "Project Context"
+ai_check_file "$DOCS_DIR/current-task.md" "Current Task"
+ai_check_file "$DOCS_DIR/decisions.md" "Decision Log"
+ai_check_file "$DOCS_DIR/handoff.md" "Handoff Log"
+ai_check_dir "$DOCS_DIR/tasks" "Task Archive"
+ai_check_dir "$ROOT/.ai-toolkit" "Project Config Dir"
+ai_check_file "$CONFIG_FILE" "Project Env"
+ai_check_dir "$REGISTRY_DIR" "Toolkit Registry Entry"
+
+print_section "Hooks"
+if [ "$IS_GIT_REPO" = "true" ]; then
+  ai_check_file "$ROOT/.git/hooks/pre-commit" "pre-commit"
+  ai_check_file "$ROOT/.git/hooks/post-checkout" "post-checkout"
+  ai_check_file "$ROOT/.git/hooks/post-merge" "post-merge"
+else
+  echo "INFO Hooks -> skipped (not a git repo)"
+fi
+
+print_section "Deploy Config"
+if [ -f "$CONFIG_FILE" ]; then
+  echo "INFO PROJECT_NAME -> ${PROJECT_NAME:-}"
+  echo "INFO DEFAULT_BRANCH -> ${DEFAULT_BRANCH:-}"
+  echo "INFO UTEKE_NAMESPACE -> $(ai_uteke_namespace "$ROOT")"
+  echo "INFO CODEBASE_PROJECT -> $(ai_codebase_project "$ROOT")"
+  [ -n "${DEPLOY_DEFAULT:-}" ] && echo "OK   DEPLOY_DEFAULT -> configured" || echo "MISS DEPLOY_DEFAULT"
+  [ -n "${DEPLOY_STAGING:-}" ] && echo "OK   DEPLOY_STAGING -> configured" || echo "MISS DEPLOY_STAGING"
+  [ -n "${DEPLOY_PRODUCTION:-}" ] && echo "OK   DEPLOY_PRODUCTION -> configured" || echo "MISS DEPLOY_PRODUCTION"
+  [ -n "${POST_DEPLOY_CHECK:-}" ] && echo "OK   POST_DEPLOY_CHECK -> configured" || echo "MISS POST_DEPLOY_CHECK"
+else
+  echo "MISS Project Env"
+fi
+
+print_section "Memory"
+if ai_check_cmd_quiet uteke; then
+  UTEKE_HEALTH="$(uteke doctor --json 2>/dev/null || true)"
+  if [ -n "$UTEKE_HEALTH" ]; then
+    echo "OK   Uteke Doctor -> available"
+    echo "$UTEKE_HEALTH"
+  else
+    echo "MISS Uteke Doctor"
+  fi
+else
+  echo "MISS Uteke CLI"
+fi
+
+if ai_check_cmd_quiet codebase-memory-mcp; then
+  PROJECT_KEY="$(ai_codebase_project "$ROOT")"
+  LIST_OUTPUT="$(codebase-memory-mcp cli list_projects 2>/dev/null || true)"
+  if printf '%s' "$LIST_OUTPUT" | grep -q "\"name\":\"$PROJECT_KEY\""; then
+    echo "OK   Codebase Project Indexed -> $PROJECT_KEY"
+    codebase-memory-mcp cli index_status --project "$PROJECT_KEY" 2>/dev/null || true
+  else
+    echo "MISS Codebase Project Indexed -> $PROJECT_KEY"
+  fi
+else
+  echo "MISS codebase-memory-mcp CLI"
+fi
+
+print_section "Command Dependencies"
+{
+  ai_parse_required_commands "${DEPLOY_DEFAULT:-}"
+  ai_parse_required_commands "${DEPLOY_STAGING:-}"
+  ai_parse_required_commands "${DEPLOY_PRODUCTION:-}"
+  ai_parse_required_commands "${POST_DEPLOY_CHECK:-}"
+} | awk '!seen[$0]++' | while read -r dep; do
+  [ -n "$dep" ] || continue
+  ai_check_cmd "$dep" "$dep"
+done
+
+print_section "Context Freshness"
+if [ -f "$DOCS_DIR/current-task.md" ]; then
+  awk '
+    /^Status:/ { print "INFO " $0 }
+    /^Updated At:/ { print "INFO " $0 }
+    /^Task ID:/ { print "INFO " $0 }
+  ' "$DOCS_DIR/current-task.md"
+fi
+
+if [ -f "$DOCS_DIR/handoff.md" ]; then
+  LAST_HANDOFF="$(grep '^## ' "$DOCS_DIR/handoff.md" | tail -n 1 || true)"
+  [ -n "$LAST_HANDOFF" ] && echo "INFO Last Handoff -> ${LAST_HANDOFF#\#\# }" || echo "MISS Last Handoff Entry"
+fi
+
+print_section "Summary"
+echo "Run ai-init if protocol files are missing."
+echo "Update .ai-toolkit/project.env if deploy entries are missing."
+echo "Run ai-resume before switching AI tools."

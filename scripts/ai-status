@@ -1,0 +1,67 @@
+#!/bin/bash
+# ai-status: Check all AI provider availability
+set -euo pipefail
+
+CONFIG="$HOME/.ai-toolkit/config.yaml"
+STATE="$HOME/.ai-toolkit/state/provider-status.json"
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+echo "🤖 AI Toolkit Provider Status"
+echo "============================"
+echo "Time: $NOW"
+echo ""
+
+# Check Hermes (always available if this runs)
+echo "✅ Hermes (NovaRa)    → ONLINE (orchestrator)"
+
+# Check Claude Code
+if command -v claude &>/dev/null; then
+  echo "✅ Claude Code        → AVAILABLE ($(which claude))"
+else
+  echo "⚠️  Claude Code        → NOT INSTALLED"
+fi
+
+# Check Codex
+if command -v codex &>/dev/null; then
+  echo "✅ Codex              → AVAILABLE ($(which codex))"
+else
+  echo "⚠️  Codex              → NOT INSTALLED"
+fi
+
+# Check OpenCode
+if command -v opencode &>/dev/null; then
+  echo "✅ OpenCode           → AVAILABLE ($(which opencode))"
+else
+  echo "⚠️  OpenCode           → NOT INSTALLED"
+fi
+
+# Check anti-gravity
+AG_FILE="$HOME/.ai-toolkit/state/ag-accounts.json"
+if [ -f "$AG_FILE" ]; then
+  AG_COUNT=$(jq '.accounts | length' "$AG_FILE" 2>/dev/null || echo 0)
+  AG_ACTIVE=$(jq '[.accounts[] | select(.status == "active")] | length' "$AG_FILE" 2>/dev/null || echo 0)
+  AG_COOLDOWN=$(jq '[.accounts[] | select(.cooldown_until > now)] | length' "$AG_FILE" 2>/dev/null || echo 0)
+  echo "🔄 anti-gravity       → $AG_ACTIVE/$AG_COUNT accounts active, $AG_COOLDOWN cooling down"
+else
+  echo "⚠️  anti-gravity       → NO ACCOUNTS CONFIGURED"
+fi
+
+# Check Kiro (VS Code extension)
+VSCODE_EXT="$HOME/.vscode/extensions"
+if ls "$VSCODE_EXT"/*kiro* 2>/dev/null | head -1 >/dev/null; then
+  echo "✅ Kiro               → INSTALLED (VS Code)"
+else
+  echo "⚠️  Kiro               → NOT FOUND"
+fi
+
+# Check Gemini CLI
+if command -v gemini &>/dev/null; then
+  echo "✅ Gemini CLI         → AVAILABLE ($(which gemini))"
+else
+  echo "⚠️  Gemini CLI         → NOT INSTALLED"
+fi
+
+echo ""
+echo "📁 Context: $HOME/.ai-toolkit/context/"
+echo "📁 Bridge:  $HOME/.ai-toolkit/bridge/"
+echo "📁 Logs:    $HOME/.ai-toolkit/logs/"

@@ -1,0 +1,24 @@
+#!/bin/bash
+set -euo pipefail
+ACCOUNTS="$HOME/.ai-toolkit/state/ag-accounts.json"
+NOW=$(date +%s)
+[ ! -f "$ACCOUNTS" ] && echo "⚠️  No accounts file" && exit 1
+ACCS=$(jq -r '.accounts | length' "$ACCOUNTS")
+BEST_IDX=0; BEST_USED=9999
+for i in $(seq 0 $((ACCS - 1))); do
+  USED=$(jq -r ".accounts[$i].used" "$ACCOUNTS")
+  LIMIT=$(jq -r ".accounts[$i].limit" "$ACCOUNTS")
+  CD=$(jq -r ".accounts[$i].cooldown_until // 0" "$ACCOUNTS")
+  STATUS=$(jq -r ".accounts[$i].status" "$ACCOUNTS")
+  if [ "$STATUS" = "active" ] && [ "$USED" -lt "$LIMIT" ] && [ "$NOW" -gt "$CD" ] && [ "$USED" -lt "$BEST_USED" ]; then
+    BEST_USED=$USED; BEST_IDX=$i
+  fi
+done
+CUR=$(jq -r '.current_index // 0' "$ACCOUNTS")
+if [ "$BEST_IDX" -ne "$CUR" ]; then
+  UPD=$(jq ".current_index=$BEST_IDX|.last_rotation=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"" "$ACCOUNTS")
+  echo "$UPD" > "$ACCOUNTS"
+  echo "🔄 Rotated → $(jq -r ".accounts[$BEST_IDX].email" "$ACCOUNTS") (used $BEST_USED)"
+else
+  echo "✅ Optimal: $(jq -r ".accounts[$CUR].email" "$ACCOUNTS")"
+fi

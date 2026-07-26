@@ -1,0 +1,43 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TARGET_DIR="$PWD"
+SUMMARY="${1:-}"
+
+if [ -n "$SUMMARY" ] && [ -d "$SUMMARY" ]; then
+  TARGET_DIR="$SUMMARY"
+  SUMMARY=""
+elif [ "$#" -gt 1 ]; then
+  TARGET_DIR="${2:-$PWD}"
+fi
+
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+PROJECT_NAME="$(basename "$ROOT")"
+PROJECT_SLUG="$(ai_project_slug "$ROOT")"
+NAMESPACE="$(ai_uteke_namespace "$ROOT")"
+CURRENT_TASK="$(ai_current_task_file "$ROOT")"
+PROJECT_CONTEXT="$(ai_project_context_file "$ROOT")"
+HANDOFF_FILE="$(ai_handoff_file "$ROOT")"
+DECISIONS_FILE="$(ai_decisions_file "$ROOT")"
+
+ai_ensure_initialized "$ROOT"
+ai_check_cmd_quiet uteke || { echo "uteke is not installed" >&2; exit 1; }
+
+if [ -z "$SUMMARY" ]; then
+  OBJECTIVE="$(ai_extract_section "$CURRENT_TASK" "## Objective" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g')"
+  NEXT_STEP="$(ai_extract_section "$CURRENT_TASK" "## Next Steps" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g')"
+  LAST_DECISION="$(grep '^## ' "$DECISIONS_FILE" | tail -n 1 | sed 's/^## //')"
+  LAST_HANDOFF="$(grep '^## ' "$HANDOFF_FILE" | tail -n 1 | sed 's/^## //')"
+  SUMMARY="project=$PROJECT_NAME; objective=${OBJECTIVE:-n/a}; next=${NEXT_STEP:-n/a}; handoff=${LAST_HANDOFF:-n/a}; decision=${LAST_DECISION:-n/a}"
+fi
+
+uteke --namespace "$NAMESPACE" remember "$SUMMARY" \
+  --tags "ai-toolkit,project-sync,$PROJECT_SLUG" \
+  --entity "$PROJECT_NAME" \
+  --category "project-context"
+
+echo "Synced project context to Uteke namespace '$NAMESPACE'"

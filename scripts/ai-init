@@ -1,0 +1,156 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TARGET_DIR="${1:-$PWD}"
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+DOCS_DIR="$(ai_docs_dir "$ROOT")"
+TASKS_DIR="$(ai_tasks_dir "$ROOT")"
+CONFIG_DIR="$ROOT/.ai-toolkit"
+CONFIG_FILE="$(ai_local_config_file "$ROOT")"
+DEFAULT_BRANCH="$(ai_detect_default_branch "$ROOT")"
+PROJECT_NAME="$(basename "$ROOT")"
+NOW="$(ai_now_utc)"
+
+mkdir -p "$DOCS_DIR" "$TASKS_DIR" "$CONFIG_DIR"
+
+AGENTS_FILE="$(ai_agents_file "$ROOT")"
+AI_PROTOCOL_START="<!-- ai-toolkit:protocol:start -->"
+AI_PROTOCOL_END="<!-- ai-toolkit:protocol:end -->"
+
+# OpenCode and several other coding agents discover AGENTS.md automatically,
+# but do not recursively read arbitrary docs/ folders. Keep the canonical
+# protocol here and make it safe to apply to existing AGENTS.md files.
+if ! grep -Fq "$AI_PROTOCOL_START" "$AGENTS_FILE" 2>/dev/null; then
+  cat >> "$AGENTS_FILE" <<EOF
+
+$AI_PROTOCOL_START
+## Shared AI project context (ai-toolkit)
+
+Before making meaningful changes, read these repository-local files:
+
+- \`docs/ai/project-context.md\` — project purpose, stack, constraints
+- \`docs/ai/current-task.md\` — active objective and next steps
+- \`docs/ai/handoff.md\` — latest work handed off by another agent
+- \`docs/ai/decisions.md\` — durable architecture/product decisions
+- \`ai-state.json\` — machine-readable project state, when present
+
+Keep the files current while working. Update \`docs/ai/current-task.md\` at
+start/close, append important handoffs to \`docs/ai/handoff.md\`, and record
+durable decisions in \`docs/ai/decisions.md\`. Treat these files as the
+project's shared source of truth across Codex, OpenCode, Claude, and other AI
+tools. Use \`.ai-toolkit/project.env\` for automation/deploy settings.
+$AI_PROTOCOL_END
+EOF
+fi
+
+STATE_FILE="$ROOT/ai-state.json"
+if [ ! -f "$STATE_FILE" ]; then
+  cat > "$STATE_FILE" <<EOF
+{
+  "version": 1,
+  "last_session": "$NOW",
+  "context": "$PROJECT_NAME — update this summary in docs/ai/project-context.md",
+  "modules": {},
+  "bugs_found": [],
+  "progress": []
+}
+EOF
+fi
+
+if [ ! -f "$DOCS_DIR/project-context.md" ]; then
+  cat > "$DOCS_DIR/project-context.md" <<EOF
+# Project Context
+
+Project: $PROJECT_NAME
+Project Root: $ROOT
+Initialized At: $NOW
+Updated At: $NOW
+
+## Summary
+Describe what this project is for.
+
+## Stack
+- Fill in primary languages, frameworks, and infrastructure.
+
+## Constraints
+- Note hard constraints, rules, and non-goals.
+
+## Conventions
+- Record coding conventions, architecture patterns, and deployment rules.
+EOF
+fi
+
+if [ ! -f "$DOCS_DIR/current-task.md" ]; then
+  cat > "$DOCS_DIR/current-task.md" <<EOF
+# Current Task
+
+Status: IDLE
+Task ID: none
+Started At: n/a
+Updated At: $NOW
+Project Root: $ROOT
+
+## Objective
+No active task.
+
+## Files Involved
+- None yet
+
+## Next Steps
+- Define the first task
+
+## Risks
+- None recorded
+
+## Validation
+- Not run
+EOF
+fi
+
+if [ ! -f "$DOCS_DIR/decisions.md" ]; then
+  cat > "$DOCS_DIR/decisions.md" <<EOF
+# Decision Log
+
+## $NOW Initial AI Protocol Setup
+Status: Accepted
+Context: Standardized AI-readable project context was initialized.
+Decision: Store shared project context under \`docs/ai/\` and automation config under \`.ai-toolkit/project.env\`.
+Consequences: Any AI tool can resume work by reading repository-local context first.
+EOF
+fi
+
+if [ ! -f "$DOCS_DIR/handoff.md" ]; then
+  cat > "$DOCS_DIR/handoff.md" <<EOF
+# Handoff Log
+
+## $NOW Initial Setup
+- Project context scaffold created.
+- Next step: update \`project-context.md\` and start the first task with \`ai-start "task name"\`.
+EOF
+fi
+
+if [ ! -f "$CONFIG_FILE" ]; then
+  cat > "$CONFIG_FILE" <<EOF
+PROJECT_NAME="$PROJECT_NAME"
+PROJECT_ROOT="$ROOT"
+DEFAULT_BRANCH="$DEFAULT_BRANCH"
+UTEKE_NAMESPACE="$(ai_project_slug "$ROOT")"
+CODEBASE_PROJECT="$(ai_project_slug "$ROOT")"
+DEPLOY_DEFAULT=""
+DEPLOY_STAGING=""
+DEPLOY_PRODUCTION=""
+POST_DEPLOY_CHECK=""
+EOF
+fi
+
+ai_sync_registry "$ROOT"
+
+if git -C "$ROOT" rev-parse --show-toplevel >/dev/null 2>&1; then
+  "$SCRIPT_DIR/ai-install-hooks" "$ROOT" >/dev/null
+fi
+
+echo "Initialized AI project protocol in $ROOT"

@@ -1,0 +1,42 @@
+# AI Toolkit Configuration
+default_agent: hermes
+
+providers:
+  hermes:
+    enabled: true
+    role: orchestrator
+  claude_code:
+    enabled: true
+    max_parallel: 2
+    role: heavy_coding
+  codex:
+    enabled: true
+    role: research_coding
+  opencode:
+    enabled: true
+    role: free_local
+  anti_gravity:
+    enabled: true
+    account_file: "~/.ai-toolkit/state/ag-accounts.json"
+    rotation_strategy: least_used
+  kiro:
+    enabled: true
+    role: ide_native
+  gemini:
+    enabled: true
+    role: large_context
+
+context_dir: ~/.ai-toolkit/context
+bridge_dir: ~/.ai-toolkit/bridge
+log_dir: ~/.ai-toolkit/logs
+
+# Auto-handoff thresholds
+auto_handoff:
+  files_changed: 20
+  estimated_lines: 500
+
+# Cost controls
+cost_controls:
+  prefer_free_tier: true
+  monthly_budget_usd: 50
+  alert_threshold_usd: 40

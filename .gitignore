@@ -1,0 +1,10 @@
+# Local machine state and credentials
+/state/
+/logs/
+/bridge/
+/context/
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,54 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TASK_DESC="${1:-}"
+TARGET_DIR="${2:-$PWD}"
+[ -n "$TASK_DESC" ] || { echo 'Usage: ai-start "task description" [path]' >&2; exit 1; }
+
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+CURRENT_TASK="$(ai_current_task_file "$ROOT")"
+TASKS_DIR="$(ai_tasks_dir "$ROOT")"
+NOW="$(ai_now_utc)"
+TASK_ID="$(date -u +%Y%m%d-%H%M%S)-$(printf '%s' "$TASK_DESC" | cksum | awk '{print $1}' | cut -c1-6)"
+
+ai_ensure_initialized "$ROOT"
+mkdir -p "$TASKS_DIR"
+
+if [ -f "$CURRENT_TASK" ]; then
+  cp "$CURRENT_TASK" "$TASKS_DIR/$TASK_ID.previous.md"
+fi
+
+cat > "$CURRENT_TASK" <<EOF
+# Current Task
+
+Status: ACTIVE
+Task ID: $TASK_ID
+Started At: $NOW
+Updated At: $NOW
+Project Root: $ROOT
+
+## Objective
+$TASK_DESC
+
+## Files Involved
+- To be determined
+
+## Next Steps
+- Inspect the current code and context
+- Execute the task
+- Update handoff notes before switching tools
+
+## Risks
+- None recorded
+
+## Validation
+- Not run
+EOF
+
+ai_sync_registry "$ROOT"
+
+echo "Started task $TASK_ID"

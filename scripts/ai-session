@@ -1,0 +1,113 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TARGET_DIR="$PWD"
+QUERY="project progress and architecture"
+AUTO_INDEX="false"
+MAP_STATUS="true"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --query)
+      QUERY="${2:-$QUERY}"
+      shift 2
+      ;;
+    --index)
+      AUTO_INDEX="true"
+      shift
+      ;;
+    --no-map)
+      MAP_STATUS="false"
+      shift
+      ;;
+    *)
+      TARGET_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+PROJECT_NAME="$(basename "$ROOT")"
+CURRENT_TASK="$(ai_current_task_file "$ROOT")"
+PROJECT_CONTEXT="$(ai_project_context_file "$ROOT")"
+HANDOFF_FILE="$(ai_handoff_file "$ROOT")"
+NAMESPACE="$(ai_uteke_namespace "$ROOT")"
+CODEBASE_PROJECT="$(ai_codebase_project "$ROOT")"
+
+ai_ensure_initialized "$ROOT"
+
+if [ "$AUTO_INDEX" = "true" ] && ai_check_cmd_quiet codebase-memory-mcp; then
+  "$SCRIPT_DIR/ai-map" index fast "$ROOT" >/dev/null 2>&1 || true
+fi
+
+OBJECTIVE="$(ai_extract_section "$CURRENT_TASK" "## Objective" | sed '/^[[:space:]]*$/d' | head -n 3)"
+NEXT_STEPS="$(ai_extract_section "$CURRENT_TASK" "## Next Steps" | sed '/^[[:space:]]*$/d' | head -n 5)"
+RISKS="$(ai_extract_section "$CURRENT_TASK" "## Risks" | sed '/^[[:space:]]*$/d' | head -n 5)"
+VALIDATION="$(ai_extract_section "$CURRENT_TASK" "## Validation" | sed '/^[[:space:]]*$/d' | head -n 5)"
+SUMMARY_BLOCK="$(ai_extract_section "$PROJECT_CONTEXT" "## Summary" | sed '/^[[:space:]]*$/d' | head -n 6)"
+STACK_BLOCK="$(ai_extract_section "$PROJECT_CONTEXT" "## Stack" | sed '/^[[:space:]]*$/d' | head -n 6)"
+CONSTRAINTS_BLOCK="$(ai_extract_section "$PROJECT_CONTEXT" "## Constraints" | sed '/^[[:space:]]*$/d' | head -n 6)"
+LAST_HANDOFF="$(grep '^## ' "$HANDOFF_FILE" | tail -n 1 | sed 's/^## //' || true)"
+CHANGED_COUNT="$(ai_git_changed_files "$ROOT" | wc -l | tr -d ' ')"
+
+UTEKE_OUTPUT="Uteke unavailable"
+if ai_check_cmd_quiet uteke; then
+  UTEKE_OUTPUT="$(uteke --namespace "$NAMESPACE" recall "$QUERY" 2>/dev/null | sed -n '1,12p' || true)"
+  [ -n "$UTEKE_OUTPUT" ] || UTEKE_OUTPUT="No matching memory found"
+fi
+
+MAP_OUTPUT="Codebase-memory unavailable"
+if [ "$MAP_STATUS" = "true" ] && ai_check_cmd_quiet codebase-memory-mcp; then
+  MAP_OUTPUT="$(codebase-memory-mcp cli index_status --project "$CODEBASE_PROJECT" 2>/dev/null | sed -n '1,12p' || true)"
+  [ -n "$MAP_OUTPUT" ] || MAP_OUTPUT="Project not indexed yet"
+fi
+
+echo "# AI Session Brief"
+echo
+echo "Project: $PROJECT_NAME"
+echo "Root: $ROOT"
+echo "Branch: $(ai_git_branch "$ROOT")"
+echo "Uncommitted Entries: ${CHANGED_COUNT:-0}"
+echo "Uteke Namespace: $NAMESPACE"
+echo "Codebase Project: $CODEBASE_PROJECT"
+echo
+echo "## Repository Context"
+echo "Summary:"
+printf '%s\n' "${SUMMARY_BLOCK:-No summary recorded.}"
+echo
+echo "Stack:"
+printf '%s\n' "${STACK_BLOCK:-No stack recorded.}"
+echo
+echo "Constraints:"
+printf '%s\n' "${CONSTRAINTS_BLOCK:-No constraints recorded.}"
+echo
+echo "## Active Work"
+echo "Objective:"
+printf '%s\n' "${OBJECTIVE:-No active objective recorded.}"
+echo
+echo "Next Steps:"
+printf '%s\n' "${NEXT_STEPS:-No next steps recorded.}"
+echo
+echo "Risks:"
+printf '%s\n' "${RISKS:-No risks recorded.}"
+echo
+echo "Validation:"
+printf '%s\n' "${VALIDATION:-No validation recorded.}"
+echo
+echo "Last Handoff: ${LAST_HANDOFF:-No handoff entry recorded}"
+echo
+echo "## Uteke Recall"
+printf '%s\n' "$UTEKE_OUTPUT"
+echo
+if [ "$MAP_STATUS" = "true" ]; then
+  echo "## Codebase Memory"
+  printf '%s\n' "$MAP_OUTPUT"
+  echo
+fi
+echo "## Prompt Starter"
+echo "Read AGENTS.md and docs/ai/*. Continue the active task, preserve existing conventions, and update docs/ai/current-task.md plus docs/ai/handoff.md before handing off."

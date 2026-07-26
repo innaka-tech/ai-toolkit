@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+mkdir -p "$HOME/.ai-toolkit/logs"
+PROVIDER="${1:-hermes}"; MODEL="${2:-unknown}"; TI="${3:-0}"; TO="${4:-0}"; COST="${5:-0}"; TASK="${6:-}"
+echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"provider\":\"$PROVIDER\",\"model\":\"$MODEL\",\"tokens_in\":$TI,\"tokens_out\":$TO,\"cost_estimate\":$COST,\"task\":\"$TASK\"}" >> "$HOME/.ai-toolkit/logs/usage.jsonl"
+echo "✅ Logged $PROVIDER"

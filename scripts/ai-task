@@ -1,0 +1,24 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CMD="${1:-}"
+
+case "$CMD" in
+  start)
+    "$SCRIPT_DIR/ai-start" "${2:-}" "${3:-$PWD}"
+    ;;
+  done)
+    "$SCRIPT_DIR/ai-close" --status COMPLETED --summary "${2:-Task marked done}" "${3:-$PWD}"
+    ;;
+  list)
+    find "$HOME/.ai-toolkit/context" -name "project.env" 2>/dev/null | while read -r f; do
+      echo "--- $(basename "$(dirname "$f")") ---"
+      sed -n '1,3p' "$f"
+      echo
+    done
+    ;;
+  *)
+    echo "Usage: ai-task <start|done|list>"
+    ;;
+esac

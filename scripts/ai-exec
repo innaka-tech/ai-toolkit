@@ -1,0 +1,30 @@
+#!/bin/bash
+set -euo pipefail
+AGENT="${1:-auto}"
+
+auto_select() {
+  local task_file desc
+  task_file="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/docs/ai/current-task.md"
+  [ -f "$task_file" ] || { echo "hermes"; return; }
+  desc="$(awk '/^## Objective/{getline; print; exit}' "$task_file" | xargs || true)"
+  if echo "$desc" | grep -qiE "refactor|migrate|rewrite|architecture|redesign"; then
+    echo "claude-code"
+  elif echo "$desc" | grep -qiE "fix|bug|patch|update|add|remove"; then
+    echo "opencode"
+  else
+    echo "hermes"
+  fi
+}
+
+if [ "$AGENT" = "auto" ]; then
+  AGENT=$(auto_select)
+  echo "🎯 Auto: $AGENT"
+fi
+
+case "$AGENT" in
+  hermes) echo "➡️  Hermes (this agent)" ;;
+  opencode) command -v opencode >/dev/null && opencode || echo "⚠️  opencode not installed" ;;
+  claude-code|claude) command -v claude >/dev/null && claude --print "Execute current task" || echo "⚠️  claude not installed" ;;
+  codex) command -v codex >/dev/null && codex || echo "⚠️  codex not installed" ;;
+  *) echo "⚠️  Unknown: $AGENT" ;;
+esac

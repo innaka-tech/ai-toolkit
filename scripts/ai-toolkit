@@ -1,0 +1,74 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+show_help() {
+  cat <<'EOF'
+AI Toolkit — shared context and delivery workflow for multi-AI projects
+
+Usage:
+  ai-toolkit <command> [args...]
+  ai-toolkit --help
+
+Project context:
+  init [path]                 Bootstrap/repair AGENTS.md, docs/ai, ai-state.json
+  resume [path]               Show project context, active task, and latest handoff
+  start <task> [path]         Start or replace the active task
+  close [options]             Close task and write a handoff summary
+  session [options]           Build one AI Session Brief for the next tool
+
+Health and memory:
+  doctor [path]               Audit toolkit, project, hooks, providers, memory
+  fix [options]               Repair safe missing project/toolkit pieces
+  sync [summary]              Save project summary to Uteke
+  recall [query]              Recall project memory from Uteke
+  map <subcommand>            Query codebase-memory knowledge graph
+
+Git and deployment:
+  commit <message> [options]  Sync context and create a commit
+  push [path]                  Push current branch
+  deploy <target>             Run configured deployment command
+
+Other:
+  aliases <install|uninstall> Manage zsh shortcuts
+  help                        Show this menu
+
+Examples:
+  ai-toolkit init .
+  ai-toolkit doctor
+  ai-toolkit session --index
+  ai-toolkit close --summary "implemented auth flow"
+EOF
+}
+
+COMMAND="${1:-help}"
+if [ "$COMMAND" = "--help" ] || [ "$COMMAND" = "-h" ] || [ "$COMMAND" = "help" ]; then
+  show_help
+  exit 0
+fi
+shift
+
+case "$COMMAND" in
+  init) SCRIPT="ai-init" ;;
+  resume) SCRIPT="ai-resume" ;;
+  start) SCRIPT="ai-start" ;;
+  close) SCRIPT="ai-close" ;;
+  session) SCRIPT="ai-session" ;;
+  doctor) SCRIPT="ai-doctor" ;;
+  fix) SCRIPT="ai-fix" ;;
+  sync) SCRIPT="ai-sync" ;;
+  recall) SCRIPT="ai-recall" ;;
+  map) SCRIPT="ai-map" ;;
+  commit) SCRIPT="ai-commit" ;;
+  push) SCRIPT="ai-push" ;;
+  deploy) SCRIPT="ai-deploy" ;;
+  aliases) SCRIPT="ai-aliases" ;;
+  *)
+    echo "Unknown command: $COMMAND" >&2
+    echo "Run 'ai-toolkit --help' to see available commands." >&2
+    exit 2
+    ;;
+esac
+
+exec "$SCRIPT_DIR/$SCRIPT" "$@"

@@ -1,0 +1,246 @@
+#!/bin/bash
+set -euo pipefail
+
+AI_TOOLKIT_ROOT="${AI_TOOLKIT_ROOT:-$HOME/.ai-toolkit}"
+
+ai_now_utc() {
+  date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+ai_find_project_root() {
+  local start_dir="${1:-$PWD}"
+  if git -C "$start_dir" rev-parse --show-toplevel >/dev/null 2>&1; then
+    git -C "$start_dir" rev-parse --show-toplevel
+  else
+    cd "$start_dir" && pwd
+  fi
+}
+
+ai_require_git_repo() {
+  local root
+  root="$(ai_find_project_root "${1:-$PWD}")"
+  git -C "$root" rev-parse --show-toplevel >/dev/null 2>&1 || {
+    echo "This command requires a git repository." >&2
+    exit 1
+  }
+}
+
+ai_project_slug() {
+  local root="${1:-$PWD}"
+  basename "$root" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | sed 's/^-*//; s/-*$//'
+}
+
+ai_docs_dir() {
+  echo "$(ai_find_project_root "${1:-$PWD}")/docs/ai"
+}
+
+ai_tasks_dir() {
+  echo "$(ai_docs_dir "${1:-$PWD}")/tasks"
+}
+
+ai_local_config_file() {
+  echo "$(ai_find_project_root "${1:-$PWD}")/.ai-toolkit/project.env"
+}
+
+ai_uteke_namespace() {
+  local root="${1:-$PWD}"
+  local config_file
+  config_file="$(ai_local_config_file "$root")"
+  if [ -f "$config_file" ]; then
+    local ns
+    ns="$(awk -F= '/^UTEKE_NAMESPACE=/{gsub(/^"|"$/, "", $2); print $2; exit}' "$config_file")"
+    [ -n "$ns" ] && { echo "$ns"; return; }
+  fi
+  echo "$(ai_project_slug "$root")"
+}
+
+ai_codebase_project() {
+  local root="${1:-$PWD}"
+  local config_file
+  config_file="$(ai_local_config_file "$root")"
+  if [ -f "$config_file" ]; then
+    local project_name
+    project_name="$(awk -F= '/^CODEBASE_PROJECT=/{gsub(/^"|"$/, "", $2); print $2; exit}' "$config_file")"
+    [ -n "$project_name" ] && { echo "$project_name"; return; }
+  fi
+  echo "$(ai_project_slug "$root")"
+}
+
+ai_registry_dir() {
+  local root
+  root="$(ai_find_project_root "${1:-$PWD}")"
+  echo "$AI_TOOLKIT_ROOT/context/$(ai_project_slug "$root")"
+}
+
+ai_current_task_file() {
+  echo "$(ai_docs_dir "${1:-$PWD}")/current-task.md"
+}
+
+ai_project_context_file() {
+  echo "$(ai_docs_dir "${1:-$PWD}")/project-context.md"
+}
+
+ai_decisions_file() {
+  echo "$(ai_docs_dir "${1:-$PWD}")/decisions.md"
+}
+
+ai_handoff_file() {
+  echo "$(ai_docs_dir "${1:-$PWD}")/handoff.md"
+}
+
+ai_agents_file() {
+  echo "$(ai_find_project_root "${1:-$PWD}")/AGENTS.md"
+}
+
+ai_has_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+ai_detect_default_branch() {
+  local root="${1:-$PWD}"
+  if git -C "$root" symbolic-ref refs/remotes/origin/HEAD >/dev/null 2>&1; then
+    git -C "$root" symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'
+    return
+  fi
+
+  if git -C "$root" show-ref --verify --quiet refs/heads/main; then
+    echo "main"
+  elif git -C "$root" show-ref --verify --quiet refs/heads/master; then
+    echo "master"
+  else
+    echo "main"
+  fi
+}
+
+ai_git_branch() {
+  local root="${1:-$PWD}"
+  if git -C "$root" symbolic-ref --quiet --short HEAD >/dev/null 2>&1; then
+    git -C "$root" symbolic-ref --quiet --short HEAD
+  elif git -C "$root" rev-parse --abbrev-ref HEAD >/dev/null 2>&1; then
+    git -C "$root" rev-parse --abbrev-ref HEAD
+  else
+    echo "no-git"
+  fi
+}
+
+ai_git_changed_files() {
+  local root="${1:-$PWD}"
+  if git -C "$root" rev-parse --show-toplevel >/dev/null 2>&1; then
+    git -C "$root" status --short
+  fi
+}
+
+ai_sync_registry() {
+  local root="${1:-$PWD}"
+  local registry_dir
+  registry_dir="$(ai_registry_dir "$root")"
+  mkdir -p "$registry_dir"
+
+  cat > "$registry_dir/project.env" <<EOF
+PROJECT_SLUG=$(ai_project_slug "$root")
+PROJECT_ROOT=$root
+LAST_SYNCED_AT=$(ai_now_utc)
+EOF
+}
+
+ai_load_local_config() {
+  local root="${1:-$PWD}"
+  local config_file
+  config_file="$(ai_local_config_file "$root")"
+  if [ -f "$config_file" ]; then
+    # shellcheck disable=SC1090
+    source "$config_file"
+  fi
+}
+
+ai_parse_required_commands() {
+  local command_string="${1:-}"
+  [ -n "$command_string" ] || return 0
+  printf '%s\n' "$command_string" | awk '
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      split($0, parts, /[[:space:]]+/)
+      if (parts[1] != "" && parts[1] !~ /^(cd|export|if|then|fi|for|do|done|while|case|esac)$/) {
+        print parts[1]
+      }
+    }
+  '
+}
+
+ai_check_file() {
+  local path="$1"
+  local label="$2"
+  if [ -f "$path" ]; then
+    echo "OK   $label -> $path"
+  else
+    echo "MISS $label -> $path"
+  fi
+}
+
+ai_check_dir() {
+  local path="$1"
+  local label="$2"
+  if [ -d "$path" ]; then
+    echo "OK   $label -> $path"
+  else
+    echo "MISS $label -> $path"
+  fi
+}
+
+ai_check_cmd() {
+  local cmd_name="$1"
+  local label="${2:-$1}"
+  if ai_has_cmd "$cmd_name"; then
+    echo "OK   $label -> $(command -v "$cmd_name")"
+  else
+    echo "MISS $label"
+  fi
+}
+
+ai_check_cmd_quiet() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+ai_uteke_cmd() {
+  local root="${1:-$PWD}"
+  printf 'uteke --namespace %q' "$(ai_uteke_namespace "$root")"
+}
+
+ai_codebase_cli() {
+  printf 'codebase-memory-mcp cli'
+}
+
+ai_ensure_initialized() {
+  local root="${1:-$PWD}"
+  local docs_dir
+  docs_dir="$(ai_docs_dir "$root")"
+
+  [ -f "$(ai_agents_file "$root")" ] || "$AI_TOOLKIT_ROOT/scripts/ai-init" "$root" >/dev/null
+  [ -f "$docs_dir/current-task.md" ] || "$AI_TOOLKIT_ROOT/scripts/ai-init" "$root" >/dev/null
+}
+
+ai_extract_section() {
+  local file="$1"
+  local heading="$2"
+  awk -v heading="$heading" '
+    $0 == heading { capture=1; next }
+    capture && /^## / { exit }
+    capture { print }
+  ' "$file"
+}
+
+ai_replace_line() {
+  local file="$1"
+  local prefix="$2"
+  local value="$3"
+  awk -v prefix="$prefix" -v value="$value" '
+    index($0, prefix) == 1 && replaced == 0 { print prefix value; replaced=1; next }
+    { print }
+    END {
+      if (replaced == 0) {
+        print prefix value
+      }
+    }
+  ' "$file" > "$file.tmp"
+  mv "$file.tmp" "$file"
+}
