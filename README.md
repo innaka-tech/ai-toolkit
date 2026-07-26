@@ -51,8 +51,9 @@ ai-deploy production         # Run configured deploy command
 
 ## Installing on Another Device
 
-The toolkit runs natively on macOS and Linux. Windows users should use WSL or
-Git Bash because the automation scripts are Bash-based.
+The toolkit runs natively on macOS and Linux. Windows has a PowerShell
+installer and launcher, but still requires Git for Windows/Git Bash because
+the automation engine is Bash-based. WSL is also supported.
 
 From a terminal:
 
@@ -62,6 +63,19 @@ git clone https://github.com/innaka-tech/ai-toolkit.git ~/.ai-toolkit
 source ~/.zshrc              # macOS/zsh
 # or: source ~/.bashrc       # Linux/bash/WSL
 ai-toolkit --help
+```
+
+On Windows PowerShell:
+
+```powershell
+.\install.ps1
+ai-toolkit.ps1 --help
+```
+
+If PowerShell blocks local scripts, enable them for the current user:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
 For a private repository, authenticate Git first (SSH or HTTPS). To install
