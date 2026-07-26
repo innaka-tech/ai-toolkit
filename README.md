@@ -32,6 +32,7 @@ start a new OpenCode session.
 
 ## Quick Start
 ```bash
+./install.sh                 # install/update toolkit on macOS/Linux/WSL
 ai-toolkit --help           # show all commands
 ai-init                      # Bootstrap current project
 ai-resume                    # Show current context
@@ -46,6 +47,28 @@ ai-close --summary "..."     # Save handoff summary
 ai-commit "feat: auth"       # Auto-sync context and commit
 ai-push                      # Push current branch
 ai-deploy production         # Run configured deploy command
+```
+
+## Installing on Another Device
+
+The toolkit runs natively on macOS and Linux. Windows users should use WSL or
+Git Bash because the automation scripts are Bash-based.
+
+From a terminal:
+
+```bash
+git clone https://github.com/innaka-tech/ai-toolkit.git ~/.ai-toolkit
+~/.ai-toolkit/install.sh
+source ~/.zshrc              # macOS/zsh
+# or: source ~/.bashrc       # Linux/bash/WSL
+ai-toolkit --help
+```
+
+For a private repository, authenticate Git first (SSH or HTTPS). To install
+to another location, set `AI_TOOLKIT_DIR` before running the installer:
+
+```bash
+AI_TOOLKIT_DIR="$HOME/tools/ai-toolkit" ./install.sh
 ```
 
 Full usage guide: [USAGE.md](/Users/anasfikri/.ai-toolkit/USAGE.md:1)
