@@ -40,6 +40,9 @@ STATE_FILE="$(ai_state_file "$ROOT")"
 OPERATING_MODEL="$(ai_docs_dir "$ROOT")/operating-model.md"
 NAMESPACE="$(ai_uteke_namespace "$ROOT")"
 CODEBASE_PROJECT="$(ai_codebase_project "$ROOT")"
+BROWSER_MCP_URL_VALUE="$(ai_browser_mcp_url "$ROOT")"
+BROWSER_MCP_NAME_VALUE="$(ai_browser_mcp_name "$ROOT")"
+BROWSER_MCP_ENABLED_VALUE="$(ai_browser_mcp_enabled "$ROOT")"
 
 ai_ensure_initialized "$ROOT"
 
@@ -79,6 +82,7 @@ echo "Branch: $(ai_git_branch "$ROOT")"
 echo "Uncommitted Entries: ${CHANGED_COUNT:-0}"
 echo "Uteke Namespace: $NAMESPACE"
 echo "Codebase Project: $CODEBASE_PROJECT"
+echo "Browser MCP: $BROWSER_MCP_NAME_VALUE (${BROWSER_MCP_URL_VALUE:-not configured}, enabled=$BROWSER_MCP_ENABLED_VALUE)"
 echo
 echo "## Repository Context"
 echo "Summary:"

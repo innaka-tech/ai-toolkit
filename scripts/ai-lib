@@ -66,6 +66,54 @@ ai_codebase_project() {
   echo "$(ai_project_slug "$root")"
 }
 
+ai_browser_mcp_url() {
+  local root="${1:-$PWD}"
+  local config_file
+  config_file="$(ai_local_config_file "$root")"
+  if [ -n "${BROWSER_MCP_URL:-}" ]; then
+    echo "$BROWSER_MCP_URL"
+    return
+  fi
+  if [ -f "$config_file" ]; then
+    local url
+    url="$(awk -F= '/^BROWSER_MCP_URL=/{gsub(/^"|"$/, "", $2); print $2; exit}' "$config_file")"
+    [ -n "$url" ] && { echo "$url"; return; }
+  fi
+  echo ""
+}
+
+ai_browser_mcp_enabled() {
+  local root="${1:-$PWD}"
+  local config_file
+  config_file="$(ai_local_config_file "$root")"
+  if [ -n "${BROWSER_MCP_ENABLED:-}" ]; then
+    echo "$BROWSER_MCP_ENABLED"
+    return
+  fi
+  if [ -f "$config_file" ]; then
+    local enabled
+    enabled="$(awk -F= '/^BROWSER_MCP_ENABLED=/{gsub(/^"|"$/, "", $2); print $2; exit}' "$config_file")"
+    [ -n "$enabled" ] && { echo "$enabled"; return; }
+  fi
+  echo "false"
+}
+
+ai_browser_mcp_name() {
+  local root="${1:-$PWD}"
+  local config_file
+  config_file="$(ai_local_config_file "$root")"
+  if [ -n "${BROWSER_MCP_NAME:-}" ]; then
+    echo "$BROWSER_MCP_NAME"
+    return
+  fi
+  if [ -f "$config_file" ]; then
+    local name
+    name="$(awk -F= '/^BROWSER_MCP_NAME=/{gsub(/^"|"$/, "", $2); print $2; exit}' "$config_file")"
+    [ -n "$name" ] && { echo "$name"; return; }
+  fi
+  echo "browser"
+}
+
 ai_registry_dir() {
   local root
   root="$(ai_find_project_root "${1:-$PWD}")"
@@ -216,10 +264,17 @@ EOF
 ai_load_local_config() {
   local root="${1:-$PWD}"
   local config_file
+  local env_browser_url="${BROWSER_MCP_URL:-}"
+  local env_browser_enabled="${BROWSER_MCP_ENABLED:-}"
+  local env_browser_name="${BROWSER_MCP_NAME:-}"
   config_file="$(ai_local_config_file "$root")"
   if [ -f "$config_file" ]; then
     # shellcheck disable=SC1090
     source "$config_file"
+    # Project config supplies defaults; explicit environment variables win.
+    if [ -n "$env_browser_url" ]; then BROWSER_MCP_URL="$env_browser_url"; fi
+    if [ -n "$env_browser_enabled" ]; then BROWSER_MCP_ENABLED="$env_browser_enabled"; fi
+    if [ -n "$env_browser_name" ]; then BROWSER_MCP_NAME="$env_browser_name"; fi
   fi
 }
 

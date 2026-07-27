@@ -131,6 +131,17 @@ else
   echo "MISS codebase-memory-mcp CLI"
 fi
 
+print_section "Optional Browser MCP"
+echo "INFO Name -> $(ai_browser_mcp_name "$ROOT")"
+echo "INFO URL -> $(ai_browser_mcp_url "$ROOT" || true)"
+echo "INFO Enabled -> $(ai_browser_mcp_enabled "$ROOT")"
+if [ "$(ai_browser_mcp_enabled "$ROOT")" = "true" ] && [ -n "$(ai_browser_mcp_url "$ROOT")" ] && ai_check_cmd_quiet curl; then
+  BROWSER_STATUS="$(curl -L --max-time 3 -sS -o /dev/null -w '%{http_code}' "$(ai_browser_mcp_url "$ROOT")" 2>/dev/null || true)"
+  echo "INFO Reachability -> HTTP ${BROWSER_STATUS:-unreachable}"
+else
+  echo "INFO Reachability -> skipped"
+fi
+
 print_section "Command Dependencies"
 {
   ai_parse_required_commands "${DEPLOY_DEFAULT:-}"

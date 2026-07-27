@@ -24,6 +24,8 @@ Health and memory:
   sync [summary]              Save project summary to Uteke
   recall [query]              Recall project memory from Uteke
   map <subcommand>            Query codebase-memory knowledge graph
+  mcp <status|json|opencode>  Inspect/configure optional Browser MCP
+  mcp <status|json|opencode>  Inspect/configure optional Browser MCP
 
 Git and deployment:
   commit <message> [options]  Sync context and create a commit
@@ -60,6 +62,8 @@ case "$COMMAND" in
   sync) SCRIPT="ai-sync" ;;
   recall) SCRIPT="ai-recall" ;;
   map) SCRIPT="ai-map" ;;
+  mcp) SCRIPT="ai-mcp" ;;
+  mcp) SCRIPT="ai-mcp" ;;
   commit) SCRIPT="ai-commit" ;;
   push) SCRIPT="ai-push" ;;
   deploy) SCRIPT="ai-deploy" ;;

@@ -122,6 +122,34 @@ Query codebase-memory:
 ~/.ai-toolkit/scripts/ai-map architecture
 ```
 
+## Optional Browser MCP
+
+Configure the browser MCP in `.ai-toolkit/project.env`:
+
+```bash
+BROWSER_MCP_ENABLED="true"
+BROWSER_MCP_NAME="browser"
+BROWSER_MCP_URL="http://127.0.0.1:9010/mcp"
+```
+
+Override the endpoint per machine without editing the repository:
+
+```bash
+BROWSER_MCP_URL="http://127.0.0.1:9010/mcp" ai-toolkit mcp status
+```
+
+Inspect or register it in OpenCode:
+
+```bash
+ai-toolkit mcp status
+ai-toolkit mcp json
+ai-toolkit mcp opencode                 # preview only
+ai-toolkit mcp opencode --apply         # writes a backup first
+```
+
+`--apply` updates only the named MCP entry and creates an `.bak` copy of the
+OpenCode config. Other MCP servers remain intact.
+
 Close or checkpoint a task:
 
 ```bash

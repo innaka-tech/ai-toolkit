@@ -27,6 +27,11 @@ Every project should keep shared context inside the repository:
 Use Markdown for human-plus-AI context, `ai-state.json` for machine-readable
 state, and `.ai-toolkit/project.env` for shell-safe automation config.
 
+Optional Browser MCP is configured per project with `BROWSER_MCP_URL`,
+`BROWSER_MCP_NAME`, and `BROWSER_MCP_ENABLED`. The endpoint stays dynamic;
+use `ai-toolkit mcp opencode --apply` to register the current endpoint in
+OpenCode without replacing other MCP servers.
+
 OpenCode note: it discovers `AGENTS.md` automatically, but does not
 recursively load `docs/ai/*` on its own. `ai-init` and `ai-fix` maintain an
 `ai-toolkit` block in the project's `AGENTS.md` that explicitly points to the
@@ -45,6 +50,7 @@ ai-sync                      # Push project summary to Uteke
 ai-recall                    # Recall project memory from Uteke
 ai-session                   # Build one briefing for the next AI session
 ai-map                       # Query codebase-memory for this project
+ai-toolkit mcp status         # Check optional Browser MCP
 ai-start "refactor auth"     # Start active task
 ai-close --summary "..."     # Save handoff summary
 ai-commit "feat: auth"       # Auto-sync context and commit

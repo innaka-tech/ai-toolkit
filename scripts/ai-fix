@@ -90,6 +90,15 @@ if [ "$FIX_CONFIG" = "true" ]; then
   if ! grep -q '^CODEBASE_PROJECT=' "$CONFIG_FILE" 2>/dev/null; then
     printf 'CODEBASE_PROJECT="%s"\n' "$(ai_project_slug "$ROOT")" >> "$CONFIG_FILE"
   fi
+  if ! grep -q '^BROWSER_MCP_ENABLED=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'BROWSER_MCP_ENABLED="${BROWSER_MCP_ENABLED:-false}"\n' >> "$CONFIG_FILE"
+  fi
+  if ! grep -q '^BROWSER_MCP_NAME=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'BROWSER_MCP_NAME="${BROWSER_MCP_NAME:-browser}"\n' >> "$CONFIG_FILE"
+  fi
+  if ! grep -q '^BROWSER_MCP_URL=' "$CONFIG_FILE" 2>/dev/null; then
+    printf 'BROWSER_MCP_URL="${BROWSER_MCP_URL:-http://127.0.0.1:9010/mcp}"\n' >> "$CONFIG_FILE"
+  fi
   if ! grep -q '^DEPLOY_DEFAULT=' "$CONFIG_FILE" 2>/dev/null; then
     printf 'DEPLOY_DEFAULT=""\n' >> "$CONFIG_FILE"
   fi

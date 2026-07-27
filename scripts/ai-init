@@ -153,6 +153,9 @@ a secondary index.
 5. `ai-state.json` — machine-readable state for agents and automation.
 6. `.ai-toolkit/project.env` — local project automation settings.
 
+Optional capabilities such as Browser MCP are configured in
+`.ai-toolkit/project.env` and may be different on each machine.
+
 ## Session Lifecycle
 
 1. `ai-init` creates or repairs the protocol.
@@ -169,6 +172,8 @@ a secondary index.
 - Uteke stores concise cross-session summaries, never secrets.
 - Provider-specific prompts are adapters; they must consume the same project
   context rather than create a competing state format.
+- MCP endpoints are capabilities, not project state. Keep their names and
+  dynamic URLs in config, and never store credentials in repository files.
 - `ai-state.json` is operational metadata, not a replacement for explanation
   in Markdown.
 
@@ -186,6 +191,9 @@ PROJECT_ROOT="$ROOT"
 DEFAULT_BRANCH="$DEFAULT_BRANCH"
 UTEKE_NAMESPACE="$(ai_project_slug "$ROOT")"
 CODEBASE_PROJECT="$(ai_project_slug "$ROOT")"
+BROWSER_MCP_ENABLED="\${BROWSER_MCP_ENABLED:-false}"
+BROWSER_MCP_NAME="\${BROWSER_MCP_NAME:-browser}"
+BROWSER_MCP_URL="\${BROWSER_MCP_URL:-http://127.0.0.1:9010/mcp}"
 DEPLOY_DEFAULT=""
 DEPLOY_STAGING=""
 DEPLOY_PRODUCTION=""
