@@ -19,6 +19,8 @@ Every project should keep shared context inside the repository:
 - `ai-state.json`
 - `docs/ai/project-context.md`
 - `docs/ai/operating-model.md`
+- `docs/ai/goals.md`
+- `docs/ai/application-map.md`
 - `docs/ai/current-task.md`
 - `docs/ai/decisions.md`
 - `docs/ai/handoff.md`

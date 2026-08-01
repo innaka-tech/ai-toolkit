@@ -10,6 +10,8 @@ Each project keeps AI-readable context inside the repository:
 - `ai-state.json`
 - `docs/ai/project-context.md`
 - `docs/ai/operating-model.md`
+- `docs/ai/goals.md`
+- `docs/ai/application-map.md`
 - `docs/ai/current-task.md`
 - `docs/ai/decisions.md`
 - `docs/ai/handoff.md`
@@ -70,6 +72,7 @@ Start a task:
 
 ```bash
 ~/.ai-toolkit/scripts/ai-start "build auth flow"
+~/.ai-toolkit/scripts/ai-start "implement review queue" --goal G-002 --sub-goal G-002.S-001
 ```
 
 Resume context:

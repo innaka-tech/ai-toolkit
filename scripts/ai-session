@@ -38,6 +38,8 @@ PROJECT_CONTEXT="$(ai_project_context_file "$ROOT")"
 HANDOFF_FILE="$(ai_handoff_file "$ROOT")"
 STATE_FILE="$(ai_state_file "$ROOT")"
 OPERATING_MODEL="$(ai_docs_dir "$ROOT")/operating-model.md"
+GOALS_FILE="$(ai_docs_dir "$ROOT")/goals.md"
+APPLICATION_MAP_FILE="$(ai_docs_dir "$ROOT")/application-map.md"
 NAMESPACE="$(ai_uteke_namespace "$ROOT")"
 CODEBASE_PROJECT="$(ai_codebase_project "$ROOT")"
 BROWSER_MCP_URL_VALUE="$(ai_browser_mcp_url "$ROOT")"
@@ -51,6 +53,7 @@ if [ "$AUTO_INDEX" = "true" ] && ai_check_cmd_quiet codebase-memory-mcp; then
 fi
 
 OBJECTIVE="$(ai_extract_section "$CURRENT_TASK" "## Objective" | sed '/^[[:space:]]*$/d' | head -n 3)"
+GOAL_LINK="$(ai_extract_section "$CURRENT_TASK" "## Goal Link" | sed '/^[[:space:]]*$/d' | head -n 3)"
 NEXT_STEPS="$(ai_extract_section "$CURRENT_TASK" "## Next Steps" | sed '/^[[:space:]]*$/d' | head -n 5)"
 RISKS="$(ai_extract_section "$CURRENT_TASK" "## Risks" | sed '/^[[:space:]]*$/d' | head -n 5)"
 VALIDATION="$(ai_extract_section "$CURRENT_TASK" "## Validation" | sed '/^[[:space:]]*$/d' | head -n 5)"
@@ -97,12 +100,20 @@ echo
 echo "## Operating Model"
 printf '%s\n' "${OPERATING_MODEL_BLOCK:-No operating model recorded.}"
 echo
+echo "## Goals & Sub-goals"
+sed -n '1,120p' "$GOALS_FILE" 2>/dev/null || echo "No goals document recorded."
+echo
+echo "## Verified Application Map"
+sed -n '1,160p' "$APPLICATION_MAP_FILE" 2>/dev/null || echo "No application map recorded."
+echo
 echo "## Machine State (ai-state.json)"
 printf '%s\n' "${STATE_BLOCK:-No ai-state.json recorded.}"
 echo
 echo "## Active Work"
 echo "Objective:"
 printf '%s\n' "${OBJECTIVE:-No active objective recorded.}"
+echo "Goal Link:"
+printf '%s\n' "${GOAL_LINK:-No goal link recorded.}"
 echo
 echo "Next Steps:"
 printf '%s\n' "${NEXT_STEPS:-No next steps recorded.}"

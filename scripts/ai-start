@@ -7,7 +7,19 @@ source "$SCRIPT_DIR/ai-lib"
 
 TASK_DESC="${1:-}"
 TARGET_DIR="${2:-$PWD}"
-[ -n "$TASK_DESC" ] || { echo 'Usage: ai-start "task description" [path]' >&2; exit 1; }
+GOAL_ID=""
+SUB_GOAL_ID=""
+
+shift || true
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --goal) GOAL_ID="${2:-}"; shift 2 ;;
+    --sub-goal|--subgoal) SUB_GOAL_ID="${2:-}"; shift 2 ;;
+    *) TARGET_DIR="$1"; shift ;;
+  esac
+done
+
+[ -n "$TASK_DESC" ] || { echo 'Usage: ai-start "task description" [--goal ID] [--sub-goal ID] [path]' >&2; exit 1; }
 
 ROOT="$(ai_find_project_root "$TARGET_DIR")"
 CURRENT_TASK="$(ai_current_task_file "$ROOT")"
@@ -34,6 +46,10 @@ Project Root: $ROOT
 ## Objective
 $TASK_DESC
 
+## Goal Link
+Goal ID: ${GOAL_ID:-TBD}
+Sub-goal ID: ${SUB_GOAL_ID:-TBD}
+
 ## Files Involved
 - To be determined
 
@@ -49,7 +65,7 @@ $TASK_DESC
 - Not run
 EOF
 
-ai_update_state "$ROOT" "ACTIVE" "$TASK_ID" "$TASK_DESC" "" "Inspect the current code and context"
+ai_update_state "$ROOT" "ACTIVE" "$TASK_ID" "$TASK_DESC" "" "Inspect the current code and context" "$GOAL_ID" "$SUB_GOAL_ID"
 ai_sync_registry "$ROOT"
 
 echo "Started task $TASK_ID"

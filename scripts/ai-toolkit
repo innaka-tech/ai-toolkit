@@ -14,7 +14,7 @@ Usage:
 Project context:
   init [path]                 Bootstrap/repair AGENTS.md, docs/ai, ai-state.json
   resume [path]               Show project context, active task, and latest handoff
-  start <task> [path]         Start or replace the active task
+  start <task> [options]       Start task; use --goal and --sub-goal to link it
   close [options]             Close task and write a handoff summary
   session [options]           Build one AI Session Brief for the next tool
 

@@ -39,6 +39,8 @@ NOW="$(ai_now_utc)"
 ai_ensure_initialized "$ROOT"
 
 OBJECTIVE="$(ai_extract_section "$CURRENT_TASK" "## Objective" | sed '/^[[:space:]]*$/d' | head -n 3)"
+GOAL_ID="$(ai_extract_section "$CURRENT_TASK" "## Goal Link" | awk -F': ' '/^Goal ID:/{print $2; exit}')"
+SUB_GOAL_ID="$(ai_extract_section "$CURRENT_TASK" "## Goal Link" | awk -F': ' '/^Sub-goal ID:/{print $2; exit}')"
 [ -n "$OBJECTIVE" ] || OBJECTIVE="No objective recorded."
 
 FILES="$(ai_git_changed_files "$ROOT" | sed 's/^/- /')"
@@ -79,7 +81,7 @@ ai_replace_line "$CURRENT_TASK" "Updated At: " "$NOW"
   fi
 } >> "$HANDOFF_FILE"
 
-ai_update_state "$ROOT" "$STATUS" "$(awk -F': ' '/^Task ID:/{print $2; exit}' "$CURRENT_TASK")" "$OBJECTIVE" "$SUMMARY" "$NEXT_STEP"
+ai_update_state "$ROOT" "$STATUS" "$(awk -F': ' '/^Task ID:/{print $2; exit}' "$CURRENT_TASK")" "$OBJECTIVE" "$SUMMARY" "$NEXT_STEP" "$GOAL_ID" "$SUB_GOAL_ID"
 ai_sync_registry "$ROOT"
 
 if ai_has_cmd uteke && [ -n "$SUMMARY" ]; then

@@ -147,6 +147,8 @@ ai_update_state() {
   local objective="${4:-}"
   local summary="${5:-}"
   local next_step="${6:-}"
+  local goal_id="${7:-}"
+  local sub_goal_id="${8:-}"
   local state_file
   state_file="$(ai_state_file "$root")"
   [ -f "$state_file" ] || return 0
@@ -157,7 +159,8 @@ ai_update_state() {
     AI_STATE_FILE="$state_file" AI_STATE_NOW="$(ai_now_utc)" \
       AI_STATE_STATUS="$status" AI_STATE_TASK_ID="$task_id" \
       AI_STATE_OBJECTIVE="$objective" AI_STATE_SUMMARY="$summary" \
-      AI_STATE_NEXT="$next_step" python3 - <<'PY'
+      AI_STATE_NEXT="$next_step" AI_STATE_GOAL_ID="$goal_id" \
+      AI_STATE_SUB_GOAL_ID="$sub_goal_id" python3 - <<'PY'
 import json
 import os
 import tempfile
@@ -179,6 +182,8 @@ state["active_task"] = {
     "status": os.environ["AI_STATE_STATUS"],
     "objective": os.environ["AI_STATE_OBJECTIVE"],
     "next_step": os.environ["AI_STATE_NEXT"],
+    "goal_id": os.environ["AI_STATE_GOAL_ID"],
+    "sub_goal_id": os.environ["AI_STATE_SUB_GOAL_ID"],
     "updated_at": os.environ["AI_STATE_NOW"],
 }
 summary = os.environ["AI_STATE_SUMMARY"].strip()
