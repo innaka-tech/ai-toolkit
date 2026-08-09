@@ -136,6 +136,14 @@ ai_handoff_file() {
   echo "$(ai_docs_dir "${1:-$PWD}")/handoff.md"
 }
 
+ai_knowledge_file() {
+  echo "$(ai_docs_dir "${1:-$PWD}")/knowledge.md"
+}
+
+ai_next_tasks_file() {
+  echo "$(ai_docs_dir "${1:-$PWD}")/next-tasks.md"
+}
+
 ai_state_file() {
   echo "$(ai_find_project_root "${1:-$PWD}")/ai-state.json"
 }
@@ -347,6 +355,8 @@ ai_ensure_initialized() {
 
   [ -f "$(ai_agents_file "$root")" ] || "$AI_TOOLKIT_ROOT/scripts/ai-init" "$root" >/dev/null
   [ -f "$docs_dir/current-task.md" ] || "$AI_TOOLKIT_ROOT/scripts/ai-init" "$root" >/dev/null
+  [ -f "$docs_dir/knowledge.md" ] || "$AI_TOOLKIT_ROOT/scripts/ai-init" "$root" >/dev/null
+  [ -f "$docs_dir/next-tasks.md" ] || "$AI_TOOLKIT_ROOT/scripts/ai-init" "$root" >/dev/null
 }
 
 ai_extract_section() {

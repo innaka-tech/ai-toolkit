@@ -1,15 +1,14 @@
 #!/bin/bash
-# ai-handoff v2 — standard handoff protocol for Anas multi-agent network
-# Usage: ai-handoff <to-agent> <task> [files] [--project NAME] [--scope tags]
-# Writes handoff JSON to bridge inbox + appends to coordination event log.
+# ai-handoff-remote — run on JAKA (or any remote agent) to send handoff to Novara
+# Usage: ssh wireguard "ai-handoff-remote novara 'task text' [--project NAME] [--scope tags]"
 set -euo pipefail
 
 TO="${1:-}"; TASK="${2:-}"
-[ -z "$TO" ] && echo "Usage: ai-handoff <to-agent> <task> [files]" && exit 1
+[ -z "$TO" ] && echo "Usage: ai-handoff-remote <to-agent> <task> [files]" && exit 1
 
 TS=$(date -u +%Y%m%d%H%M%S)
 TASK_ID="handoff-${TS}-${RANDOM}"
-FROM="novara"   # this machine
+FROM="jaka"
 PROJ="default"
 SCOPE=""
 FILES=""
@@ -38,15 +37,11 @@ cat > "$BRIDGE/inbox/${TASK_ID}.json" <<EOF
   "context_project": "$PROJ",
   "scope": "$SCOPE",
   "status": "pending",
-  "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "created_local": "$(date +%Y-%m-%dT%H:%M:%S%z)"
+  "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOF
 
-# Append to coordination event log (append-only, atomic via >>)
 printf '%s\n' "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event\":\"handoff_sent\",\"task_id\":\"$TASK_ID\",\"from\":\"$FROM\",\"to\":\"$TO\",\"project\":\"$PROJ\",\"scope\":\"$SCOPE\",\"task\":\"$TASK\"}" >> "$LOG"
 
 echo "✅ Handoff → $TO"
 echo "   ID: $TASK_ID"
-echo "   $TASK"
-echo "   Log: $LOG"

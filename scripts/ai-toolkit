@@ -15,7 +15,8 @@ Project context:
   init [path]                 Bootstrap/repair AGENTS.md, docs/ai, ai-state.json
   resume [path]               Show project context, active task, and latest handoff
   start <task> [options]       Start task; use --goal and --sub-goal to link it
-  close [options]             Close task and write a handoff summary
+  close [options]             Close task, handoff, and durable knowledge
+  next [options]              Generate evidence-based next-task suggestions
   session [options]           Build one AI Session Brief for the next tool
 
 Health and memory:
@@ -40,7 +41,7 @@ Examples:
   ai-toolkit init .
   ai-toolkit doctor
   ai-toolkit session --index
-  ai-toolkit close --summary "implemented auth flow"
+  ai-toolkit close --summary "implemented auth flow" --knowledge "OAuth callback now requires state validation"
 EOF
 }
 
@@ -56,6 +57,7 @@ case "$COMMAND" in
   resume) SCRIPT="ai-resume" ;;
   start) SCRIPT="ai-start" ;;
   close) SCRIPT="ai-close" ;;
+  next) SCRIPT="ai-next" ;;
   session) SCRIPT="ai-session" ;;
   doctor) SCRIPT="ai-doctor" ;;
   fix) SCRIPT="ai-fix" ;;

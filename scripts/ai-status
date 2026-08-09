@@ -35,6 +35,12 @@ else
   echo "⚠️  OpenCode           → NOT INSTALLED"
 fi
 
+if command -v freebuff &>/dev/null; then
+  echo "✅ Freebuff           → AVAILABLE ($(which freebuff))"
+else
+  echo "⚠️  Freebuff           → NOT INSTALLED"
+fi
+
 # Check anti-gravity
 AG_FILE="$HOME/.ai-toolkit/state/ag-accounts.json"
 if [ -f "$AG_FILE" ]; then

@@ -1,0 +1,23 @@
+#!/bin/bash
+# ai-agent-report-jaka — JAKA-side reporting to Colloseum (Fusion-AI coordination)
+# Usage: ai-agent-report-jaka <from-agent> <event-type> <message>
+# Uses JAKA's own Telegram bot via `hermes send` — no webhook dependency.
+set -euo pipefail
+
+FROM_AGENT="${1:-jaka}"
+EVENT="${2:-info}"
+MSG="${3:-}"
+COLLOSEUM="-1004377389254"
+
+HERMES_BIN="/home/anas.fikri/.hermes/hermes-agent/venv/bin/hermes"
+export PATH="/home/anas.fikri/.hermes/hermes-agent/venv/bin:$PATH"
+
+# Log event (append-only)
+LOG="$HOME/.ai-toolkit/logs/coordination-events.jsonl"
+mkdir -p "$(dirname "$LOG")"
+printf '%s\n' "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event\":\"report\",\"from\":\"$FROM_AGENT\",\"type\":\"$EVENT\",\"message\":\"$MSG\"}" >> "$LOG"
+
+# Send to Colloseum
+BODY="🤖 [$FROM_AGENT] $EVENT
+$MSG"
+"$HERMES_BIN" send -t "telegram:$COLLOSEUM" "$BODY" >/dev/null 2>&1 && echo "✅ Reported to Colloseum" || echo "❌ Report failed"

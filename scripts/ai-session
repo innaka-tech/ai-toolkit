@@ -36,6 +36,7 @@ PROJECT_NAME="$(basename "$ROOT")"
 CURRENT_TASK="$(ai_current_task_file "$ROOT")"
 PROJECT_CONTEXT="$(ai_project_context_file "$ROOT")"
 HANDOFF_FILE="$(ai_handoff_file "$ROOT")"
+NEXT_TASKS_FILE="$(ai_next_tasks_file "$ROOT")"
 STATE_FILE="$(ai_state_file "$ROOT")"
 OPERATING_MODEL="$(ai_docs_dir "$ROOT")/operating-model.md"
 GOALS_FILE="$(ai_docs_dir "$ROOT")/goals.md"
@@ -129,10 +130,13 @@ echo
 echo "## Uteke Recall"
 printf '%s\n' "$UTEKE_OUTPUT"
 echo
+echo "## Suggested Next Tasks"
+sed -n '1,120p' "$NEXT_TASKS_FILE" 2>/dev/null || echo "No suggestions generated yet. Run ai-next."
+echo
 if [ "$MAP_STATUS" = "true" ]; then
   echo "## Codebase Memory"
   printf '%s\n' "$MAP_OUTPUT"
   echo
 fi
 echo "## Prompt Starter"
-echo "Read AGENTS.md and docs/ai/*. Continue the active task, preserve existing conventions, and update docs/ai/current-task.md plus docs/ai/handoff.md before handing off."
+echo "Read AGENTS.md and docs/ai/*. Review docs/ai/next-tasks.md, select one suggestion only after checking user priority and dependencies, then update docs/ai/current-task.md plus docs/ai/handoff.md before handing off."

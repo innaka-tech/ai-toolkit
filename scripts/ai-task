@@ -9,7 +9,14 @@ case "$CMD" in
     "$SCRIPT_DIR/ai-start" "${2:-}" "${3:-$PWD}"
     ;;
   done)
-    "$SCRIPT_DIR/ai-close" --status COMPLETED --summary "${2:-Task marked done}" "${3:-$PWD}"
+    [ -n "${3:-}" ] || {
+      echo "Usage: ai-task done <summary> <knowledge> [path]" >&2
+      exit 2
+    }
+    "$SCRIPT_DIR/ai-close" --status COMPLETED \
+      --summary "${2:-Task marked done}" \
+      --knowledge "$3" \
+      "${4:-$PWD}"
     ;;
   list)
     find "$HOME/.ai-toolkit/context" -name "project.env" 2>/dev/null | while read -r f; do
@@ -19,6 +26,6 @@ case "$CMD" in
     done
     ;;
   *)
-    echo "Usage: ai-task <start|done|list>"
+    echo "Usage: ai-task done <summary> <knowledge> [path]"
     ;;
 esac

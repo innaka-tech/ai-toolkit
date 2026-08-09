@@ -15,6 +15,8 @@ Each project keeps AI-readable context inside the repository:
 - `docs/ai/current-task.md`
 - `docs/ai/decisions.md`
 - `docs/ai/handoff.md`
+- `docs/ai/knowledge.md`
+- `docs/ai/next-tasks.md`
 - `.ai-toolkit/project.env`
 
 That makes the project portable across Codex, Claude, OpenCode, Hermes, and any future tool that can read repository files.
@@ -156,10 +158,14 @@ OpenCode config. Other MCP servers remain intact.
 Close or checkpoint a task:
 
 ```bash
-~/.ai-toolkit/scripts/ai-close --summary "auth done, retry webhook next"
+~/.ai-toolkit/scripts/ai-close --summary "auth done, retry webhook next" \
+  --knowledge "Webhook retries are configured in .ai-toolkit/project.env"
 ```
 
 Commit all tracked changes:
+
+Generate or refresh next-task suggestions with `ai-next`. It writes
+`docs/ai/next-tasks.md` and is also run automatically after completed tasks.
 
 ```bash
 ~/.ai-toolkit/scripts/ai-commit "feat: add auth flow"
@@ -190,7 +196,9 @@ Deploy using project config:
 1. Run `ai-init` once per repository.
 2. Run `ai-start "..."` when you begin meaningful work.
 3. Let any AI tool read `AGENTS.md` and `docs/ai/*`.
-4. Run `ai-close --summary "..."` before switching tools or ending a session.
+4. Before completing a task, run `ai-close --summary "..." --knowledge "..."`.
+   The knowledge entry should capture durable discoveries from code, infra,
+   CI/CD, deployment, operations, constraints, bugs, or validation.
 5. Run `ai-commit "..."`.
 6. Run `ai-push`.
 7. Run `ai-deploy ...` if needed.
@@ -247,12 +255,15 @@ To remove them:
 ## Notes
 
 - `ai-commit` stages all changes with `git add -A`.
-- `ai-close` appends a handoff summary to `docs/ai/handoff.md`.
+- `ai-close` appends a handoff summary to `docs/ai/handoff.md`, requires
+  `--knowledge` for completed tasks, appends it to `docs/ai/knowledge.md`,
+  and synchronizes it to Uteke when available.
 - `ai-doctor` audits toolkit availability, project protocol files, git wiring, deploy config, and command dependencies.
 - `ai-fix` repairs safe issues such as missing protocol files, missing project config, missing registry entry, and missing hooks.
 - `ai-sync` stores a concise project summary in Uteke using the configured namespace.
 - `ai-recall` recalls project memory from Uteke.
 - `ai-session` combines local repo context, Uteke recall, and codebase-memory status into one AI-ready briefing.
+- `ai-next` ranks explicit next steps, risks, validation gaps, unfinished goals, and uncommitted work into `docs/ai/next-tasks.md`.
 - `ai-map` wraps `codebase-memory-mcp cli` for indexing, architecture, search, and call tracing.
 - `ai-deploy` runs commands from `.ai-toolkit/project.env` inside the repository root.
 - `Uteke` is used as optional secondary memory, not the primary source of truth.

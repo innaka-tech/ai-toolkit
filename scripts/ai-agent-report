@@ -1,0 +1,27 @@
+#!/bin/bash
+# ai-agent-report — Hermes helper: report agent activity to the user via webhook/Telegram.
+# Usage: ai-agent-report "<from-agent>" "<event-type>" "<message>"
+# Posts to the local Hermes webhook route 'agent-coord' which forwards to Telegram.
+set -euo pipefail
+
+FROM_AGENT="${1:-unknown}"
+EVENT="${2:-info}"
+MSG="${3:-}"
+
+WEBHOOK_URL="${AGENT_WEBHOOK_URL:-http://10.10.7.3:8644/webhooks/agent-coord}"
+SECRET="${AGENT_WEBHOOK_SECRET:-}"
+
+PAYLOAD=$(python3 -c "
+import json,sys
+d = {'from': sys.argv[1], 'event': sys.argv[2], 'message': sys.argv[3], 'ts': '$(date -u +%Y-%m-%dT%H:%M:%SZ)'}
+print(json.dumps(d))
+" "$FROM_AGENT" "$EVENT" "$MSG")
+
+TS=$(date +%s)
+SIG=$(printf '%s.%s' "$TS" "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')
+
+curl -s -X POST "$WEBHOOK_URL" \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Timestamp: $TS" \
+  -H "X-Webhook-Signature-V2: $SIG" \
+  -d "$PAYLOAD" >/dev/null 2>&1 && echo "✅ Reported: $FROM_AGENT / $EVENT" || echo "❌ Report failed"

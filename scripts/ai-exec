@@ -24,6 +24,7 @@ fi
 case "$AGENT" in
   hermes) echo "➡️  Hermes (this agent)" ;;
   opencode) command -v opencode >/dev/null && opencode || echo "⚠️  opencode not installed" ;;
+  freebuff|codebuff) command -v freebuff >/dev/null && freebuff || echo "⚠️  freebuff not installed" ;;
   claude-code|claude) command -v claude >/dev/null && claude --print "Execute current task" || echo "⚠️  claude not installed" ;;
   codex) command -v codex >/dev/null && codex || echo "⚠️  codex not installed" ;;
   *) echo "⚠️  Unknown: $AGENT" ;;

@@ -51,10 +51,11 @@ ai-fix                       # Repair safe project/tooling issues
 ai-sync                      # Push project summary to Uteke
 ai-recall                    # Recall project memory from Uteke
 ai-session                   # Build one briefing for the next AI session
+ai-next                     # Generate suggested next tasks
 ai-map                       # Query codebase-memory for this project
 ai-toolkit mcp status         # Check optional Browser MCP
 ai-start "refactor auth"     # Start active task
-ai-close --summary "..."     # Save handoff summary
+ai-close --summary "..." --knowledge "..." # Save handoff and durable finding
 ai-commit "feat: auth"       # Auto-sync context and commit
 ai-push                      # Push current branch
 ai-deploy production         # Run configured deploy command

@@ -9,6 +9,7 @@ STATUS="COMPLETED"
 SUMMARY=""
 TARGET_DIR="$PWD"
 NEXT_STEP=""
+KNOWLEDGE=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -24,6 +25,15 @@ while [ "$#" -gt 0 ]; do
       NEXT_STEP="${2:-}"
       shift 2
       ;;
+    --knowledge)
+      [ -n "${2:-}" ] || { echo "--knowledge requires a concise project finding" >&2; exit 2; }
+      if [ -n "$KNOWLEDGE" ]; then
+        KNOWLEDGE="$KNOWLEDGE; ${2}"
+      else
+        KNOWLEDGE="$2"
+      fi
+      shift 2
+      ;;
     *)
       TARGET_DIR="$1"
       shift
@@ -34,6 +44,7 @@ done
 ROOT="$(ai_find_project_root "$TARGET_DIR")"
 CURRENT_TASK="$(ai_current_task_file "$ROOT")"
 HANDOFF_FILE="$(ai_handoff_file "$ROOT")"
+KNOWLEDGE_FILE="$(ai_knowledge_file "$ROOT")"
 NOW="$(ai_now_utc)"
 
 ai_ensure_initialized "$ROOT"
@@ -42,6 +53,16 @@ OBJECTIVE="$(ai_extract_section "$CURRENT_TASK" "## Objective" | sed '/^[[:space
 GOAL_ID="$(ai_extract_section "$CURRENT_TASK" "## Goal Link" | awk -F': ' '/^Goal ID:/{print $2; exit}')"
 SUB_GOAL_ID="$(ai_extract_section "$CURRENT_TASK" "## Goal Link" | awk -F': ' '/^Sub-goal ID:/{print $2; exit}')"
 [ -n "$OBJECTIVE" ] || OBJECTIVE="No objective recorded."
+
+case "$STATUS" in
+  COMPLETED|DONE)
+    [ -n "$KNOWLEDGE" ] || {
+      echo "A completed task must include durable project knowledge." >&2
+      echo "Usage: ai-close --summary \"...\" --knowledge \"finding, constraint, decision, or validation\"" >&2
+      exit 2
+    }
+    ;;
+esac
 
 FILES="$(ai_git_changed_files "$ROOT" | sed 's/^/- /')"
 [ -n "$FILES" ] || FILES="- No local changes detected"
@@ -84,8 +105,33 @@ ai_replace_line "$CURRENT_TASK" "Updated At: " "$NOW"
 ai_update_state "$ROOT" "$STATUS" "$(awk -F': ' '/^Task ID:/{print $2; exit}' "$CURRENT_TASK")" "$OBJECTIVE" "$SUMMARY" "$NEXT_STEP" "$GOAL_ID" "$SUB_GOAL_ID"
 ai_sync_registry "$ROOT"
 
-if ai_has_cmd uteke && [ -n "$SUMMARY" ]; then
-  uteke remember "$SUMMARY" --tags "ai-toolkit,project-handoff,$(ai_project_slug "$ROOT")" --entity "$(basename "$ROOT")" --category "task-progress" >/dev/null 2>&1 || true
+if [ -n "$KNOWLEDGE" ]; then
+  {
+    echo
+    echo "## $NOW"
+    echo "- Task: $(awk -F': ' '/^Task ID:/{print $2; exit}' "$CURRENT_TASK")"
+    echo "- Status: $STATUS"
+    echo "- Finding: $KNOWLEDGE"
+  } >> "$KNOWLEDGE_FILE"
+fi
+
+case "$STATUS" in
+  COMPLETED|DONE)
+    if ! "$SCRIPT_DIR/ai-next" "$ROOT" >/dev/null 2>&1; then
+      echo "warning: could not generate next-task suggestions" >&2
+    fi
+    ;;
+esac
+
+if ai_has_cmd uteke; then
+  UTEKE_SUMMARY="project=$(basename "$ROOT"); status=$STATUS; summary=${SUMMARY:-n/a}; new_knowledge=${KNOWLEDGE:-none recorded}"
+  if ! uteke --namespace "$(ai_uteke_namespace "$ROOT")" remember "$UTEKE_SUMMARY" \
+    --tags "ai-toolkit,project-knowledge,$(ai_project_slug "$ROOT")" \
+    --entity "$(basename "$ROOT")" --category "task-progress" >/dev/null 2>&1; then
+    echo "warning: could not sync task knowledge to Uteke; local knowledge was saved to $KNOWLEDGE_FILE" >&2
+  fi
+else
+  echo "warning: uteke is not installed; local knowledge was saved to $KNOWLEDGE_FILE" >&2
 fi
 
 echo "Closed task context for $ROOT"
