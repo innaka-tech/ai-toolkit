@@ -9,10 +9,15 @@ ai_now_utc() {
 
 ai_find_project_root() {
   local start_dir="${1:-$PWD}"
+  # Guard against empty/("--") input that causes cd to barf
+  if [ -z "$start_dir" ] || [ "$start_dir" = "--" ]; then
+    start_dir="$PWD"
+  fi
   if git -C "$start_dir" rev-parse --show-toplevel >/dev/null 2>&1; then
     git -C "$start_dir" rev-parse --show-toplevel
   else
-    cd "$start_dir" && pwd
+    local dir
+    dir="$(cd "$start_dir" 2>/dev/null && pwd)" && echo "$dir" || echo "$PWD"
   fi
 }
 

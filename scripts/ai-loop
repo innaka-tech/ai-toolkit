@@ -1,0 +1,462 @@
+#!/bin/bash
+set -euo pipefail
+
+# ai-loop — Continuous development + bug scan + fix loop.
+# Provider-agnostic: delegates to whatever AI CLI tools are installed
+# (codex, opencode, gemini, claude, jcode, ag) — rotates between them for
+# fresh-eyes bug hunt passes. Does NOT require cron — runs as a foreground
+# or background process. Exits when: no more tasks, max iterations reached,
+# or all scanners clean.
+#
+# Usage:
+#   ai-loop [path]                         # run until clean or no tasks
+#   ai-loop --max-iterations 5 [path]      # limit iterations (default: 10)
+#   ai-loop --max-bug-passes 3 [path]      # bug hunt passes per task (default: 3)
+#   ai-loop --timeout 1800 [path]          # max seconds (default: 3600)
+#   ai-loop --scan-only [path]             # bug scan only, no task execution
+#   ai-loop --background [path]            # run in background, log to file
+#   ai-loop --status [path]                # check running loop status
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+MAX_ITERATIONS=10
+MAX_BUG_PASSES=3
+TIMEOUT_SEC=3600
+SCAN_ONLY="false"
+BACKGROUND="false"
+STATUS_CHECK="false"
+TARGET_DIR="$PWD"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --max-iterations) MAX_ITERATIONS="${2:-10}"; shift 2 ;;
+    --max-bug-passes) MAX_BUG_PASSES="${2:-3}"; shift 2 ;;
+    --timeout)        TIMEOUT_SEC="${2:-3600}"; shift 2 ;;
+    --scan-only)      SCAN_ONLY="true"; shift ;;
+    --background)     BACKGROUND="true"; shift ;;
+    --status)         STATUS_CHECK="true"; shift ;;
+    *)                TARGET_DIR="$1"; shift ;;
+  esac
+done
+
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+PROJECT="$(basename "$ROOT")"
+NOW="$(ai_now_utc)"
+LOG_FILE="$ROOT/.ai-toolkit/loop.log"
+PID_FILE="$ROOT/.ai-toolkit/loop.pid"
+STATE_FILE="$(ai_state_file "$ROOT")"
+TASKS_DIR="$(ai_tasks_dir "$ROOT")"
+CURRENT_TASK="$(ai_current_task_file "$ROOT")"
+HANDOFF_FILE="$(ai_handoff_file "$ROOT")"
+
+mkdir -p "$ROOT/.ai-toolkit" "$TASKS_DIR"
+
+# ── Status check mode ─────────────────────────────────────────────────
+if [ "$STATUS_CHECK" = "true" ]; then
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null; then
+    echo "LOOP RUNNING (PID $(cat "$PID_FILE"))"
+    echo "Project: $PROJECT"
+    echo "Log: $LOG_FILE"
+    echo "Last 10 lines:"
+    tail -10 "$LOG_FILE" 2>/dev/null || echo "  (no log yet)"
+  else
+    echo "LOOP NOT RUNNING"
+    rm -f "$PID_FILE" 2>/dev/null || true
+  fi
+  exit 0
+fi
+
+# ── Background mode ──────────────────────────────────────────────────
+if [ "$BACKGROUND" = "true" ]; then
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null; then
+    echo "Loop already running (PID $(cat "$PID_FILE")). Use --status to check."
+    exit 1
+  fi
+  echo "Starting loop in background..."
+  nohup "$0" --max-iterations "$MAX_ITERATIONS" --max-bug-passes "$MAX_BUG_PASSES" \
+    --timeout "$TIMEOUT_SEC" "$ROOT" > "$LOG_FILE" 2>&1 &
+  LOOP_PID=$!
+  echo "$LOOP_PID" > "$PID_FILE"
+  echo "Started (PID $LOOP_PID). Log: $LOG_FILE"
+  echo "Check: $0 --status $ROOT"
+  echo "Stop:  kill $(cat "$PID_FILE")"
+  exit 0
+fi
+
+# ── Write PID for foreground ─────────────────────────────────────────
+echo "$$" > "$PID_FILE"
+trap 'rm -f "$PID_FILE" 2>/dev/null || true' EXIT
+
+# ── Provider-agnostic agent rotation ─────────────────────────────────
+# Returns a command prefix for the Nth agent (rotates for fresh-eyes review)
+get_agent_cmd() {
+  local pass="$1"
+  local agents=()
+  
+  # Detect available coding agents (order = preference for rotation)
+  for cmd in codex opencode gemini claude jcode ag; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+      agents+=("$cmd")
+    fi
+  done
+
+  local count="${#agents[@]}"
+  if [ "$count" -eq 0 ]; then
+    echo ""  # No agent available — manual mode
+    return 1
+  fi
+
+  # Rotate: pass 1 = agent[0], pass 2 = agent[1 % count], etc.
+  local idx=$(( (pass - 1) % count ))
+  local agent="${agents[$idx]}"
+  echo "$agent"
+  return 0
+}
+
+# Build the actual command to send a prompt to an agent
+# Uses per-call timeout (default 120s) to prevent indefinite hangs.
+# On MacOS: prefers gtimeout (coreutils) over python alarm fallback.
+AGENT_TIMEOUT="${AGENT_TIMEOUT:-120}"
+
+# Resolve timeout command: gtimeout on MacOS, timeout on Linux
+TIMEOUT_CMD=""
+for candidate in gtimeout timeout; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    TIMEOUT_CMD="$candidate"
+    break
+  fi
+done
+if [ -z "$TIMEOUT_CMD" ]; then
+  # Use python3 alarm as last resort (Unix only, fails on Windows)
+  TIMEOUT_CMD="python3 -c \"import signal,sys; signal.alarm(int(sys.argv[1])); sys.argv=sys.argv[2:]; exec(sys.argv[0])\" $AGENT_TIMEOUT"
+fi
+
+send_to_agent() {
+  local agent="$1"
+  local prompt="$2"
+  local workdir="$3"
+  local output
+  local cmd
+  local rc
+
+  case "$agent" in
+    codex)
+      cmd="codex exec \"\$prompt\" 2>&1"
+      ;;
+    opencode)
+      cmd="opencode run \"\$prompt\" 2>&1"
+      ;;
+    gemini)
+      cmd="gemini -p \"\$prompt\" 2>&1"
+      ;;
+    claude)
+      cmd="claude --print \"\$prompt\" 2>&1"
+      ;;
+    jcode)
+      cmd="jcode run --json \"\$prompt\" 2>&1"
+      ;;
+    ag)
+      cmd="ag \"\$prompt\" 2>&1"
+      ;;
+    *)
+      echo "[ai-loop] No handler for agent: $agent" >&2
+      return 1
+      ;;
+  esac
+
+  # Execute with timeout
+  if [ -n "$TIMEOUT_CMD" ] && [[ "$TIMEOUT_CMD" != python3* ]]; then
+    # Native timeout available (gtimeout or timeout)
+    output="$(cd "$workdir" && $TIMEOUT_CMD "$AGENT_TIMEOUT" bash -c "$cmd" 2>&1)" || rc=$?
+  elif [ -n "$TIMEOUT_CMD" ]; then
+    # Python alarm fallback
+    output="$(cd "$workdir" && bash -c "$TIMEOUT_CMD" 2>&1)" || rc=$?
+  else
+    # No timeout available at all
+    output="$(cd "$workdir" && bash -c "$cmd" 2>&1)" || rc=$?
+  fi
+
+  # Handle non-zero exit (non-timeout failures still produce output)
+  if [ -n "${rc:-}" ]; then
+    if [ "$rc" -eq 124 ]; then
+      echo "[ai-loop] $agent timed out after ${AGENT_TIMEOUT}s" >&2
+    else
+      echo "[ai-loop] $agent exit code: $rc (output still available)" >&2
+    fi
+  fi
+
+  if [ -z "$output" ]; then
+    echo "[ai-loop] $agent: empty output (auth missing or MCP error)" >&2
+    return 1
+  fi
+
+  echo "$output"
+}
+
+# ── Logging ──────────────────────────────────────────────────────────
+log() {
+  local msg="$1"
+  local ts
+  ts="$(date -u +%H:%M:%S)"
+  echo "[$ts] $msg"
+  echo "[$ts $NOW] $msg" >> "$LOG_FILE"
+}
+
+# ── Check if scanners are clean ──────────────────────────────────────
+# Returns bug count as integer on stdout. Returns 0 if clean or scan fails.
+scan_clean() {
+  local result
+  # Capture both stdout+stderr, then extract only the JSON array
+  result="$("$SCRIPT_DIR/ai-bug-scan" --json "$ROOT" 2>/dev/null || echo "[]")"
+  # Defensive: if output doesn't start with [, force to []
+  case "$result" in
+    \[*) ;;  # looks like JSON array, keep
+    *)   result="[]" ;;
+  esac
+  local count
+  count="$(printf '%s' "$result" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")"
+  echo "$count"
+}
+
+# ── Get next task from ai-next ────────────────────────────────────────
+# Returns first suggestion title, or empty if none found.
+# Uses Python for robust extraction (handles bold/markdown artifacts).
+get_next_task() {
+  local suggestions
+  suggestions="$("$SCRIPT_DIR/ai-next" --no-write "$ROOT" 2>/dev/null || echo "")"
+  if [ -z "$suggestions" ]; then
+    echo ""
+    return 1
+  fi
+  # Use Python to extract first suggestion title robustly
+  local title
+  title="$(printf '%s' "$suggestions" | python3 -c "
+import sys, re
+content = sys.stdin.read()
+# Find first section: ## N. [PRIORITY] Title
+# Strip markdown/bold artifacts: **bold**, *italic*, [text](url), # headers
+patterns = [
+    # Pattern: ## N. [MEDIUM] Title text
+    r'##\s+\d+\.\s+\[[^\]]+\]\s+([^\n]+)',
+    # Pattern: ## N. Title text
+    r'##\s+\d+\.\s+([^\n]+)',
+]
+for pat in patterns:
+    m = re.search(pat, content, re.IGNORECASE)
+    if m:
+        title = m.group(1).strip()
+        # Strip markdown links, bold, italic
+        title = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', title)
+        title = re.sub(r'\*\*([^*]+)\*\*', r'\1', title)
+        title = re.sub(r'\*([^*]+)\*', r'\1', title)
+        title = re.sub(r'^[^\w]+', '', title)  # strip leading symbols
+        if title and title.lower() not in ('none', 'n/a', '—'):
+            print(title)
+            sys.exit(0)
+sys.exit(1)
+" 2>/dev/null)"
+  if [ -z "$title" ]; then
+    echo ""
+    return 1
+  fi
+  echo "$title"
+  return 0
+}
+
+# ── Main loop ────────────────────────────────────────────────────────
+START_TIME=$SECONDS
+ITERATION=0
+TOTAL_BUGS_FIXED=0
+TOTAL_TASKS_DONE=0
+
+log "=== ai-loop START ==="
+log "Project: $PROJECT ($ROOT)"
+log "Max iterations: $MAX_ITERATIONS | Max bug passes: $MAX_BUG_PASSES | Timeout: ${TIMEOUT_SEC}s"
+log "Scan-only: $SCAN_ONLY"
+
+# Detect available agents
+AVAILABLE_AGENTS=()
+for cmd in codex opencode gemini claude jcode ag; do
+  command -v "$cmd" >/dev/null 2>&1 && AVAILABLE_AGENTS+=("$cmd")
+done
+log "Available agents: ${AVAILABLE_AGENTS[*]:-none (manual mode)}"
+
+if [ "${#AVAILABLE_AGENTS[@]}" -eq 0 ] && [ "$SCAN_ONLY" = "false" ]; then
+  log "WARNING: No AI coding agent detected. Running scan-only mode."
+  log "Install at least one: codex, opencode, gemini, claude, jcode, or ag"
+  SCAN_ONLY="true"
+fi
+
+while [ "$ITERATION" -lt "$MAX_ITERATIONS" ]; do
+  ELAPSED=$(( SECONDS - START_TIME ))
+  if [ "$ELAPSED" -ge "$TIMEOUT_SEC" ]; then
+    log "Timeout reached (${ELAPSED}s >= ${TIMEOUT_SEC}s). Stopping."
+    break
+  fi
+
+  ITERATION=$((ITERATION + 1))
+  log ""
+  log "--- Iteration $ITERATION/$MAX_ITERATIONS (elapsed: ${ELAPSED}s) ---"
+
+  # Step 1: Bug scan
+  log "Step 1: Bug scan..."
+  BUG_COUNT="$(scan_clean)"
+  log "  Bugs found: $BUG_COUNT"
+
+  if [ "$BUG_COUNT" -gt 0 ]; then
+    # Create bug tasks
+    "$SCRIPT_DIR/ai-bug-scan" --create-tasks "$ROOT" 2>/dev/null || true
+    log "  Bug tasks created in $TASKS_DIR"
+
+    if [ "$SCAN_ONLY" = "true" ]; then
+      log "  Scan-only mode — skipping fix. Stopping."
+      break
+    fi
+
+    # Step 2: Fix bugs — delegate to first available agent
+    AGENT="$(get_agent_cmd 1)"
+    if [ -n "$AGENT" ]; then
+      log "Step 2: Delegating bug fix to $AGENT..."
+      FIX_PROMPT="Run ai-bug-scan in this project. Fix all bugs found. For each bug: identify root cause, apply fix, verify with lint/typecheck/test. Update ai-state.json bugs_found status to 'fixed' for each resolved bug. Do not suppress errors — fix root causes."
+      send_to_agent "$AGENT" "$FIX_PROMPT" "$ROOT" 2>&1 | tail -20 >> "$LOG_FILE" || true
+      log "  Bug fix pass complete."
+    else
+      log "  No agent available — manual fix required. Stopping."
+      break
+    fi
+
+    # Step 3: Verify — re-scan
+    log "Step 3: Re-scan after fix..."
+    REMAINING="$(scan_clean)"
+    FIXED=$(( BUG_COUNT - REMAINING ))
+    TOTAL_BUGS_FIXED=$((TOTAL_BUGS_FIXED + FIXED))
+    log "  Fixed: $FIXED | Remaining: $REMAINING"
+
+    if [ "$REMAINING" -gt 0 ]; then
+      log "  Some bugs remain. Will retry next iteration."
+    fi
+  fi
+
+  # Step 4: Pick next dev task (if scanners clean or scan-only)
+  if [ "$SCAN_ONLY" = "true" ]; then
+    if [ "$BUG_COUNT" -eq 0 ]; then
+      log "All clean. Stopping (scan-only mode)."
+      break
+    fi
+    continue
+  fi
+
+  log "Step 4: Pick next task..."
+  NEXT_TASK="$(get_next_task)"
+  if [ -z "$NEXT_TASK" ]; then
+    log "  No more tasks from ai-next."
+    # Final scan
+    FINAL_BUGS="$(scan_clean)"
+    if [ "$FINAL_BUGS" -eq 0 ]; then
+      log "  All scanners clean + no tasks. Done!"
+      break
+    else
+      log "  $FINAL_BUGS bugs still open. Will retry next iteration."
+      continue
+    fi
+  fi
+  log "  Next task: $NEXT_TASK"
+
+  # Step 5: Start task
+  log "Step 5: Starting task..."
+  "$SCRIPT_DIR/ai-start" "$NEXT_TASK" "$ROOT" 2>/dev/null || true
+
+  # Step 6: Execute task — delegate to agent
+  AGENT="$(get_agent_cmd 1)"
+  if [ -n "$AGENT" ]; then
+    log "Step 6: Executing with $AGENT..."
+    EXEC_PROMPT="Read docs/ai/current-task.md. Execute the task following the ai-development-protocol: implement, self-review (pass 1), run tests. Update current-task.md with progress. Do NOT mark as DONE — leave for bug hunt."
+    send_to_agent "$AGENT" "$EXEC_PROMPT" "$ROOT" 2>&1 | tail -30 >> "$LOG_FILE" || true
+    log "  Execution complete."
+  fi
+
+  # Step 7: Bug hunt passes (rotating agents for fresh eyes)
+  log "Step 7: Bug hunt ($MAX_BUG_PASSES passes, rotating agents)..."
+  PASS=1
+  while [ "$PASS" -le "$MAX_BUG_PASSES" ]; do
+    ELAPSED=$(( SECONDS - START_TIME ))
+    if [ "$ELAPSED" -ge "$TIMEOUT_SEC" ]; then
+      log "  Timeout during bug hunt pass $PASS. Stopping."
+      break 2
+    fi
+
+    REVIEW_AGENT="$(get_agent_cmd $((PASS + 1)))"
+    log "  Pass $PASS/$MAX_BUG_PASSES — reviewer: ${REVIEW_AGENT:-none}"
+
+    if [ -n "$REVIEW_AGENT" ]; then
+      REVIEW_PROMPT="You are reviewer pass $PASS for the current task in docs/ai/current-task.md. "
+      case "$PASS" in
+        1) REVIEW_PROMPT+="Self-review: check acceptance criteria, lint, tests, constraints. " ;;
+        2) REVIEW_PROMPT+="Flow logic: check state machine, transitions, process chains. " ;;
+        3) REVIEW_PROMPT+="Edge cases: qty 0/negative, duplicates, null, conflicts. " ;;
+        4) REVIEW_PROMPT+="Cross-module: events, permission 403, data leaks between roles. " ;;
+        5) REVIEW_PROMPT+="Security & data: OWASP, soft delete, append-only, encryption. " ;;
+        *) REVIEW_PROMPT+="Full regression: all previous pass angles. " ;;
+      esac
+      REVIEW_PROMPT+="Report bugs found as structured list: file, line, issue, severity. If no bugs, say 'PASS CLEAN'. Fix any bugs you find. Run tests after fixing."
+
+      send_to_agent "$REVIEW_AGENT" "$REVIEW_PROMPT" "$ROOT" 2>&1 | tail -20 >> "$LOG_FILE" || true
+    else
+      log "    No agent for pass $PASS — skipping."
+    fi
+
+    # Re-scan after each pass
+    PASS_BUGS="$(scan_clean)"
+    log "    Post-pass bugs: $PASS_BUGS"
+
+    if [ "$PASS_BUGS" -eq 0 ]; then
+      log "    Pass $PASS CLEAN. Task can be closed."
+      break
+    fi
+
+    PASS=$((PASS + 1))
+  done
+
+  # Step 8: Close task
+  log "Step 8: Closing task..."
+  FINAL_BUGS="$(scan_clean)"
+  if [ "$FINAL_BUGS" -eq 0 ]; then
+    "$SCRIPT_DIR/ai-close" \
+      --summary "Task completed via ai-loop iteration $ITERATION. $MAX_BUG_PASSES bug-hunt passes, 0 remaining bugs." \
+      --knowledge "Completed via ai-loop. Agent rotation: ${AVAILABLE_AGENTS[*]:-manual}." \
+      "$ROOT" 2>/dev/null || true
+    TOTAL_TASKS_DONE=$((TOTAL_TASKS_DONE + 1))
+    log "  Task closed (DONE)."
+  else
+    "$SCRIPT_DIR/ai-close" \
+      --status "WIP" \
+      --summary "Iteration $ITERATION incomplete. $FINAL_BUGS bugs remain after $MAX_BUG_PASSES passes." \
+      --next "Continue fixing remaining $FINAL_BUGS bugs" \
+      "$ROOT" 2>/dev/null || true
+    log "  Task left as WIP ($FINAL_BUGS bugs remain)."
+  fi
+done
+
+# ── Summary ──────────────────────────────────────────────────────────
+ELAPSED=$(( SECONDS - START_TIME ))
+log ""
+log "=== ai-loop END ==="
+log "Iterations: $ITERATION/$MAX_ITERATIONS"
+log "Tasks completed: $TOTAL_TASKS_DONE"
+log "Bugs fixed: $TOTAL_BUGS_FIXED"
+log "Elapsed: ${ELAPSED}s"
+log "Log saved: $LOG_FILE"
+
+# Final scan
+FINAL="$(scan_clean)"
+log "Final bug count: $FINAL"
+
+if [ "$FINAL" -eq 0 ] && [ "$TOTAL_TASKS_DONE" -gt 0 ]; then
+  log "✅ All clean."
+elif [ "$FINAL" -gt 0 ]; then
+  log "⚠️  $FINAL bugs remain. Re-run: $0 $ROOT"
+else
+  log "ℹ️  No tasks were completed. Check ai-next output."
+fi

@@ -1,0 +1,418 @@
+#!/bin/bash
+set -euo pipefail
+
+# ai-bug-scan — Provider-agnostic automated bug scanner.
+# Runs lint + typecheck + test commands (auto-detected from project config or
+# sensible defaults), parses output, writes bug entries to ai-state.json, and
+# creates task files per bug. Does NOT invoke any AI provider — pure static
+# analysis + test runner. Works with any project that has a test/lint command.
+#
+# Usage:
+#   ai-bug-scan [path]              # scan + write bugs to ai-state.json
+#   ai-bug-scan --dry-run [path]    # scan only, print report, don't write
+#   ai-bug-scan --json [path]       # output JSON to stdout
+#   ai-bug-scan --create-tasks [path]  # also create BUG-XXX.md task files
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+DRY_RUN="false"
+JSON_OUT="false"
+CREATE_TASKS="false"
+TARGET_DIR="$PWD"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dry-run)   DRY_RUN="true"; shift ;;
+    --json)      JSON_OUT="true"; shift ;;
+    --create-tasks) CREATE_TASKS="true"; shift ;;
+    *)           TARGET_DIR="$1"; shift ;;
+  esac
+done
+
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+NOW="$(ai_now_utc)"
+PROJECT="$(basename "$ROOT")"
+STATE_FILE="$(ai_state_file "$ROOT")"
+TASKS_DIR="$(ai_tasks_dir "$ROOT")"
+CONFIG_FILE="$(ai_local_config_file "$ROOT")"
+
+# ── Load project config ──────────────────────────────────────────────
+LINT_CMD=""
+TYPECHECK_CMD=""
+TEST_CMD=""
+if [ -f "$CONFIG_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE" 2>/dev/null || true
+fi
+# Env overrides
+LINT_CMD="${BUG_SCAN_LINT:-${LINT_CMD:-}}"
+TYPECHECK_CMD="${BUG_SCAN_TYPECHECK:-${TYPECHECK_CMD:-}}"
+TEST_CMD="${BUG_SCAN_TEST:-${TEST_CMD:-}}"
+
+# ── Auto-detect commands if not configured ──────────────────────────
+detect_cmd() {
+  local root="$1"
+  local pkg_json="$root/package.json"
+  local py_project="$root/pyproject.toml"
+  local setup_py="$root/setup.py"
+  local requirements="$root/requirements.txt"
+  local go_mod="$root/go.mod"
+  local cargo_toml="$root/Cargo.toml"
+  local pom_xml="$root/pom.xml"
+  local build_gradle="$root/build.gradle"
+
+  # Node/JS project
+  if [ -f "$pkg_json" ]; then
+    if [ -z "$LINT_CMD" ]; then
+      if grep -q '"eslint"' "$pkg_json" 2>/dev/null; then
+        LINT_CMD="npx --no-install eslint . --format compact 2>&1 || true"
+      elif grep -q '"biome"' "$pkg_json" 2>/dev/null; then
+        LINT_CMD="npx --no-install biome check . 2>&1 || true"
+      fi
+    fi
+    if [ -z "$TYPECHECK_CMD" ] && grep -q '"tsc"\|"typescript"' "$pkg_json" 2>/dev/null; then
+      TYPECHECK_CMD="npx --no-install tsc --noEmit 2>&1 || true"
+    fi
+    if [ -z "$TEST_CMD" ]; then
+      if grep -q '"test"' "$pkg_json" 2>/dev/null; then
+        TEST_CMD="npm test -- --silent 2>&1 || true"
+      elif grep -q '"vitest"' "$pkg_json" 2>/dev/null; then
+        TEST_CMD="npx --no-install vitest run 2>&1 || true"
+      fi
+    fi
+  fi
+
+  # Python project
+  if [ -f "$py_project" ] || [ -f "$setup_py" ] || [ -f "$requirements" ]; then
+    if [ -z "$LINT_CMD" ]; then
+      if command -v ruff >/dev/null 2>&1; then
+        LINT_CMD="ruff check . 2>&1 || true"
+      elif command -v flake8 >/dev/null 2>&1; then
+        LINT_CMD="flake8 . 2>&1 || true"
+      fi
+    fi
+    if [ -z "$TYPECHECK_CMD" ] && command -v mypy >/dev/null 2>&1; then
+      TYPECHECK_CMD="mypy . --ignore-missing-imports 2>&1 || true"
+    fi
+    if [ -z "$TEST_CMD" ]; then
+      if command -v pytest >/dev/null 2>&1; then
+        TEST_CMD="pytest --tb=short -q 2>&1 || true"
+      fi
+    fi
+  fi
+
+  # Go project
+  if [ -f "$go_mod" ]; then
+    [ -z "$LINT_CMD" ] && command -v golangci-lint >/dev/null 2>&1 && LINT_CMD="golangci-lint run 2>&1 || true"
+    [ -z "$TEST_CMD" ] && TEST_CMD="go test ./... 2>&1 || true"
+  fi
+
+  # Rust project
+  if [ -f "$cargo_toml" ]; then
+    [ -z "$LINT_CMD" ] && LINT_CMD="cargo clippy 2>&1 || true"
+    [ -z "$TEST_CMD" ] && TEST_CMD="cargo test 2>&1 || true"
+  fi
+
+  # Java project
+  if [ -f "$pom_xml" ] || [ -f "$build_gradle" ]; then
+    [ -z "$TEST_CMD" ] && TEST_CMD="mvn test -q 2>&1 || true"
+  fi
+}
+
+detect_cmd "$ROOT"
+
+# ── Run scanners ─────────────────────────────────────────────────────
+BUGS_JSON="[]"
+LINT_OUTPUT=""
+TYPECHECK_OUTPUT=""
+TEST_OUTPUT=""
+
+run_scanner() {
+  local label="$1"
+  local cmd="$2"
+  local output
+  if [ -z "$cmd" ]; then
+    echo "SKIP  $label (no command configured/detected)"
+    return 0
+  fi
+  echo "RUN   $label: $cmd" >&2
+  output="$(cd "$ROOT" && eval "$cmd" 2>&1 || true)"
+  echo "$output" | head -50 >&2
+  echo "---" >&2
+  # Write to temp file for Python parser (NOT stdout — reserved for --json)
+  printf '%s' "$output" > "/tmp/ai-bug-scan-$$-$label.txt"
+  echo "$label"
+}
+
+LINT_OUTPUT="$(run_scanner lint "$LINT_CMD")"
+TYPECHECK_OUTPUT="$(run_scanner typecheck "$TYPECHECK_CMD")"
+TEST_OUTPUT="$(run_scanner test "$TEST_CMD")"
+
+# ── Parse outputs into structured bugs via Python ────────────────────
+LINT_FILE="/tmp/ai-bug-scan-$$-lint.txt"
+TYPECHECK_FILE="/tmp/ai-bug-scan-$$-typecheck.txt"
+TEST_FILE="/tmp/ai-bug-scan-$$-test.txt"
+
+BUGS_JSON="$(LINT_FILE="$LINT_FILE" TYPECHECK_FILE="$TYPECHECK_FILE" TEST_FILE="$TEST_FILE" \
+  PROJECT="$PROJECT" ROOT="$ROOT" NOW="$NOW" python3 - <<'PY'
+import json, os, re, sys
+
+bugs = []
+
+def parse_lint(filepath, source):
+    if not os.path.isfile(filepath):
+        return
+    with open(filepath, errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            # ESLint compact: path:line:col: severity message (rule)
+            # Also handles: path:line:col: severity: message
+            m = re.match(r'^(.+?):(\d+):(\d+):\s*(error|warning|info)\s*[:\s]\s*(.+)$', line, re.I)
+            if m:
+                bugs.append({
+                    "source": source,
+                    "file": m.group(1),
+                    "line": int(m.group(2)),
+                    "severity": m.group(4).lower(),
+                    "issue": m.group(5)[:200],
+                    "status": "open",
+                })
+                continue
+            # Ruff/flake8: path:line:col: CODE message
+            m = re.match(r'^(.+?):(\d+):(\d+):\s*([A-Z]\d+)\s+(.+)$', line)
+            if m:
+                bugs.append({
+                    "source": source,
+                    "file": m.group(1),
+                    "line": int(m.group(2)),
+                    "severity": "warning",
+                    "issue": f"{m.group(4)}: {m.group(5)[:200]}",
+                    "status": "open",
+                })
+                continue
+            # Generic: path:line: message
+            m = re.match(r'^(.+?):(\d+):\s*(.+)$', line)
+            if m and not line.startswith("RUN") and not line.startswith("SKIP"):
+                bugs.append({
+                    "source": source,
+                    "file": m.group(1),
+                    "line": int(m.group(2)),
+                    "severity": "warning",
+                    "issue": m.group(3)[:200],
+                    "status": "open",
+                })
+
+def parse_typecheck(filepath, source):
+    if not os.path.isfile(filepath):
+        return
+    with open(filepath, errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            # TS: path(line,col): error TS1234: message
+            m = re.match(r'^(.+?)\((\d+),\d+\):\s*error\s+(TS\d+):\s*(.+)$', line)
+            if m:
+                bugs.append({
+                    "source": source,
+                    "file": m.group(1),
+                    "line": int(m.group(2)),
+                    "severity": "error",
+                    "issue": f"{m.group(3)}: {m.group(4)[:200]}",
+                    "status": "open",
+                })
+                continue
+            # mypy: path:line: error: message
+            m = re.match(r'^(.+?):(\d+):\s*error:\s*(.+)$', line)
+            if m:
+                bugs.append({
+                    "source": source,
+                    "file": m.group(1),
+                    "line": int(m.group(2)),
+                    "severity": "error",
+                    "issue": m.group(3)[:200],
+                    "status": "open",
+                })
+
+def parse_test(filepath, source):
+    if not os.path.isfile(filepath):
+        return
+    with open(filepath, errors="replace") as f:
+        content = f.read()
+    # pytest: FAILED test_file::test_name - reason
+    for m in re.finditer(r'FAILED\s+(\S+?)::(\S+?)(?:\s+-\s+(.+))?$', content, re.M):
+        bugs.append({
+            "source": source,
+            "file": m.group(1),
+            "line": 0,
+            "severity": "error",
+            "issue": f"Test failed: {m.group(2)}: {(m.group(3) or 'no detail')[:200]}",
+            "status": "open",
+        })
+    # jest/vitest: ● test name (path:line)
+    for m in re.finditer(r'●\s+(.+?)\s*\((.+?):(\d+)\)', content):
+        bugs.append({
+            "source": source,
+            "file": m.group(2),
+            "line": int(m.group(3)),
+            "severity": "error",
+            "issue": f"Test failed: {m.group(1)[:200]}",
+            "status": "open",
+        })
+    # Go: --- FAIL: TestName (path)
+    for m in re.finditer(r'---\s*FAIL:\s*(\S+)\s+\((.+?)\)', content):
+        bugs.append({
+            "source": source,
+            "file": m.group(2),
+            "line": 0,
+            "severity": "error",
+            "issue": f"Go test failed: {m.group(1)[:200]}",
+            "status": "open",
+        })
+    # Rust: test name ... FAILED
+    for m in re.finditer(r'^test\s+(\S+)\s+\.\.\.\s+FAILED', content, re.M):
+        bugs.append({
+            "source": source,
+            "file": "",
+            "line": 0,
+            "severity": "error",
+            "issue": f"Rust test failed: {m.group(1)[:200]}",
+            "status": "open",
+        })
+
+parse_lint(os.environ.get("LINT_FILE", ""), "lint")
+parse_typecheck(os.environ.get("TYPECHECK_FILE", ""), "typecheck")
+parse_test(os.environ.get("TEST_FILE", ""), "test")
+
+# Deduplicate by file+line+issue
+seen = set()
+unique = []
+for b in bugs:
+    key = f"{b['file']}:{b['line']}:{b['issue'][:80]}"
+    if key not in seen:
+        seen.add(key)
+        unique.append(b)
+
+print(json.dumps(unique, indent=2))
+PY
+)"
+
+# Cleanup temp files
+rm -f /tmp/ai-bug-scan-$$-*.txt 2>/dev/null || true
+
+# ── Output ───────────────────────────────────────────────────────────
+BUG_COUNT="$(printf '%s' "$BUGS_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")"
+
+if [ "$JSON_OUT" = "true" ]; then
+  # Pure JSON to stdout, nothing else
+  echo "$BUGS_JSON"
+  exit 0
+fi
+
+# All non-JSON output goes to stderr except final summary
+if [ "$DRY_RUN" = "true" ]; then
+  echo "=== Bug Scan Report (dry-run) ===" >&2
+  echo "Project: $PROJECT" >&2
+  echo "Root: $ROOT" >&2
+  echo "Date: $NOW" >&2
+  echo "Bugs found: $BUG_COUNT" >&2
+  echo >&2
+  if [ "$BUG_COUNT" -gt 0 ]; then
+    printf '%s' "$BUGS_JSON" | python3 -c "
+import json,sys
+bugs = json.load(sys.stdin)
+for i, b in enumerate(bugs, 1):
+    print(f\"  {i}. [{b['severity'].upper()}] {b['file']}:{b['line']} — {b['issue']}\")
+" >&2
+  else
+    echo "  ✅ No bugs detected." >&2
+  fi
+  # For dry-run, print bug count to stdout for piping
+  echo "$BUG_COUNT"
+  exit 0
+fi
+
+echo "=== Bug Scan Complete ===" >&2
+echo "Project: $PROJECT" >&2
+echo "Bugs found: $BUG_COUNT" >&2
+
+# ── Write to ai-state.json ───────────────────────────────────────────
+if [ "$BUG_COUNT" -gt 0 ] && [ -f "$STATE_FILE" ]; then
+  BUGS_JSON="$BUGS_JSON" STATE_FILE="$STATE_FILE" NOW="$NOW" python3 - <<'PY'
+import json, os, tempfile
+
+path = os.environ["STATE_FILE"]
+try:
+    with open(path, encoding="utf-8") as f:
+        state = json.load(f)
+except (OSError, json.JSONDecodeError):
+    state = {"version": 1, "modules": {}, "bugs_found": [], "progress": []}
+
+state.setdefault("bugs_found", [])
+new_bugs = json.loads(os.environ["BUGS_JSON"])
+existing_keys = {f"{b.get('file','')}:{b.get('line',0)}:{b.get('issue','')[:80]}" for b in state["bugs_found"]}
+added = 0
+for b in new_bugs:
+    key = f"{b.get('file','')}:{b.get('line',0)}:{b.get('issue','')[:80]}"
+    if key not in existing_keys:
+        b["discovered_at"] = os.environ["NOW"]
+        state["bugs_found"].append(b)
+        existing_keys.add(key)
+        added += 1
+
+directory = os.path.dirname(path) or "."
+fd, tmp = tempfile.mkstemp(prefix=".ai-state.", dir=directory, text=True)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(state, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+os.replace(tmp, path)
+print(f"  → {added} new bugs written to ai-state.json")
+PY
+fi
+
+# ── Create task files per bug ────────────────────────────────────────
+if [ "$CREATE_TASKS" = "true" ] && [ "$BUG_COUNT" -gt 0 ]; then
+  mkdir -p "$TASKS_DIR"
+  BUGS_JSON="$BUGS_JSON" TASKS_DIR="$TASKS_DIR" NOW="$NOW" python3 - <<'PY'
+import json, os
+
+bugs = json.loads(os.environ["BUGS_JSON"])
+tasks_dir = os.environ["TASKS_DIR"]
+now = os.environ["NOW"]
+
+for i, b in enumerate(bugs, 1):
+    bug_id = f"BUG-{now[:10].replace('-','')}-{i:03d}"
+    filepath = os.path.join(tasks_dir, f"{bug_id}.md")
+    content = f"""# {bug_id}
+
+Status: OPEN
+Severity: {b.get('severity', 'warning')}
+Source: {b.get('source', 'unknown')}
+Discovered: {now}
+
+## Issue
+{b.get('issue', 'N/A')}
+
+## Location
+- File: `{b.get('file', 'unknown')}`
+- Line: {b.get('line', 0)}
+
+## Acceptance Criteria
+- [ ] Root cause identified
+- [ ] Fix applied
+- [ ] {b.get('source', 'scan')} passes without this error
+- [ ] No new regressions introduced
+
+## Constraints
+- Do not suppress the error — fix the root cause
+- Run full test suite after fix
+"""
+    with open(filepath, "w") as f:
+        f.write(content)
+    print(f"  → Created {bug_id}.md")
+PY
+fi
+
+echo "Done."
