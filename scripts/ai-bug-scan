@@ -77,7 +77,16 @@ detect_cmd() {
     fi
     if [ -z "$TEST_CMD" ]; then
       if grep -q '"test"' "$pkg_json" 2>/dev/null; then
-        TEST_CMD="npm test -- --silent 2>&1 || true"
+        # `-- --silent` hanya diterima runner tertentu (jest/vitest/mocha).
+        # `node --test` menolak flag itu (bad option: --silent) → test TIDAK
+        # pernah jalan → scan palsu "0 bugs". Deteksi dari isi script test.
+        TEST_SCRIPT="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('scripts',{}).get('test',''))" "$pkg_json" 2>/dev/null || true)"
+        case "$TEST_SCRIPT" in
+          *"node --test"*|node:test*)
+            TEST_CMD="npm test 2>&1 || true" ;;
+          *)
+            TEST_CMD="npm test -- --silent 2>&1 || true" ;;
+        esac
       elif grep -q '"vitest"' "$pkg_json" 2>/dev/null; then
         TEST_CMD="npx --no-install vitest run 2>&1 || true"
       fi
