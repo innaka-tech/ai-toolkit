@@ -51,6 +51,8 @@ ai-fix                       # Repair safe project/tooling issues
 ai-sync                      # Push project summary to Uteke
 ai-recall                    # Recall project memory from Uteke
 ai-session                   # Build one briefing for the next AI session
+ai-toolkit preflight         # Run mandatory risk/context gate
+ai-toolkit exec auto          # Invoke provider only after toolkit preflight
 ai-next                     # Generate suggested next tasks
 ai-map                       # Query codebase-memory for this project
 ai-toolkit mcp status         # Check optional Browser MCP
@@ -105,6 +107,9 @@ Full usage guide: [USAGE.md](/Users/anasfikri/.ai-toolkit/USAGE.md:1)
 - `ai-commit` stages all changes, updates handoff context, and commits.
 - `ai-push` pushes to the configured upstream or sets `origin/<branch>` on first push.
 - `ai-deploy` reads commands from `.ai-toolkit/project.env`.
+- `ai-exec` runs an AI provider through the mandatory toolkit preflight. Every
+  task must record impact, security, compatibility, edge cases, mitigations,
+  and validation before implementation.
 
 Example `.ai-toolkit/project.env`:
 

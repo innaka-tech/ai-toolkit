@@ -45,6 +45,7 @@ Before making meaningful changes, read these repository-local files:
 
 **ENGINE STANDARD (WAJIB — dari ~/.ai-toolkit/conventions/):**
 - \`STANDARD_DEVELOPMENT.md\` — task lifecycle (5 stage + bug hunt loop), rotasi fokus, bukti per task, grounding rules anti-halusinasi, onboarding checklist. Berlaku SEMUA project.
+- \`RISK_ANALYSIS_PROTOCOL.md\` — mandatory pre-implementation risk, security, compatibility, and validation analysis for every task/provider.
 
 Keep the files current while working. Update \`docs/ai/current-task.md\` at
 start/close, append important handoffs to \`docs/ai/handoff.md\`, and record

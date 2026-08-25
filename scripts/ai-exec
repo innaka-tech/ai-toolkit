@@ -1,10 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 AGENT="${1:-auto}"
+TARGET_DIR="${2:-$PWD}"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+"$SCRIPT_DIR/ai-preflight" "$TARGET_DIR"
+echo
 
 auto_select() {
   local task_file desc
-  task_file="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/docs/ai/current-task.md"
+  task_file="$(git -C "$TARGET_DIR" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$TARGET_DIR")/docs/ai/current-task.md"
   [ -f "$task_file" ] || { echo "hermes"; return; }
   desc="$(awk '/^## Objective/{getline; print; exit}' "$task_file" | xargs || true)"
   if echo "$desc" | grep -qiE "refactor|migrate|rewrite|architecture|redesign"; then

@@ -70,6 +70,17 @@ Pass 1 (self): X bug · Pass 2 (flow): Y bug · Pass 3 (edge): Z bug ...
 - [ ] `ai-close --summary "<ringkasan>" --knowledge "<temuan durable>"` dijalankan
 - [ ] Task berikutnya TIDAK dimulai sebelum ini
 
+## 5.1 Mandatory risk gate
+
+Every task, including lightweight tasks, must complete a risk analysis before
+implementation. Use `conventions/RISK_ANALYSIS_PROTOCOL.md` as the minimum
+checklist and record the result in the active task's `## Risk Analysis` section.
+
+The analysis must cover impact surface, failure and edge cases, security,
+compatibility/consistency, mitigations, and validation. Unverified high-impact
+assumptions block implementation. The selected AI provider does not change this
+requirement.
+
 ## 5. Integrasi ai-toolkit
 
 | Momen | Aksi |

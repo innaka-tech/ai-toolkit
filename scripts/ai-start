@@ -58,11 +58,23 @@ Sub-goal ID: ${SUB_GOAL_ID:-TBD}
 - Execute the task
 - Update handoff notes before switching tools
 
+## Risk Analysis
+- Status: REQUIRED BEFORE IMPLEMENTATION
+- Risk level: UNASSESSED
+- Impact surface: Not assessed
+- Security concerns: Not assessed
+- Compatibility concerns: Not assessed
+- Failure modes/edge cases: Not assessed
+- Mitigations: Not assessed
+- Validation plan: Not assessed
+- Open risks/assumptions: Not assessed
+
 ## Risks
-- None recorded
+- Complete `## Risk Analysis` before changing implementation files.
 
 ## Validation
-- Not run
+- Risk analysis: REQUIRED
+- Tests/checks: Not run
 EOF
 
 ai_update_state "$ROOT" "ACTIVE" "$TASK_ID" "$TASK_DESC" "" "Inspect the current code and context" "$GOAL_ID" "$SUB_GOAL_ID"
