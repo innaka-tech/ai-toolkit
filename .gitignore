@@ -15,3 +15,7 @@ docs/plans/
 # build output
 /bin/
 /dist/
+
+# local tool state
+.omo/
+.claude/settings.local.json

@@ -94,8 +94,9 @@ func securityOpen(t *task.Task) (bool, []string) {
 // AuditResult is the outcome of aitk audit.
 type AuditResult struct {
 	task.Audit
-	Task     string   `json:"task,omitempty"`
-	Warnings []string `json:"-"`
+	Task     string            `json:"task,omitempty"`
+	Tasks    *AuditTasksResult `json:"fix_tasks,omitempty"`
+	Warnings []string          `json:"-"`
 }
 
 // Audit runs the security scanners and records evidence on the active task.
@@ -150,6 +151,9 @@ func AgentInEnv() string {
 	}
 	if t := os.Getenv("AITK_TOOL"); t != "" && t != "human" {
 		return t
+	}
+	if os.Getenv(RunEnv) != "" { // started by aitk run, whatever the tool
+		return "aitk-run-agent"
 	}
 	return ""
 }
@@ -242,6 +246,7 @@ func UATAccept(p *project.Project, id, by, note string) (*UATDecision, error) {
 		} else if target == task.Done {
 			t.Status, t.Closed = task.Done, now
 			res.Status = task.Done
+			syncSource(p, t)
 			claims.Release(p, t.ID, true)
 			s := session.Load(p)
 			if s.Active() == t.ID {

@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/compat"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/conv"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/knowledge"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/plugins"
@@ -572,6 +575,9 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 		if t.Evidence == nil {
 			t.Evidence = &task.Evidence{}
 		}
+		if in.Status == "" && IsBugTask(t) && len(t.Evidence.RegressionTests) == 0 {
+			t.Evidence.RegressionTests = capList(regressionTests(p, t), 10)
+		}
 		if cs := t.Criteria(); len(cs) > 0 {
 			n := 0
 			for _, c := range cs {
@@ -622,6 +628,14 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 		}
 		if len(changes) > 40 || total > 2000 {
 			res.Notes = append(res.Notes, fmt.Sprintf("large change (%d files, %d lines): smaller tasks are easier to review and safer to revert", len(changes), total))
+		}
+		// Last, after aitk's own records: the plan file of an imported task.
+		if target == task.Done {
+			if ok, err := syncSource(p, t); ok {
+				res.Notes = append(res.Notes, "checked off in "+fmt.Sprint(t.Legacy["file"]))
+			} else if err != nil {
+				res.Notes = append(res.Notes, "could not check off the source item: "+err.Error())
+			}
 		}
 		if target == task.InReview {
 			if prof == "strict" && !reviewDone(t) {
@@ -679,6 +693,11 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 	}
 	if len(open) > 0 {
 		return "", apperr.New("E_DOD_ACCEPTANCE", apperr.ExitGate, fmt.Sprintf("aitk task update %s --ac-done %s", t.ID, strings.Join(open, ",")), "acceptance criteria not yet satisfied: %s", strings.Join(open, ", "))
+	}
+	if p.Config.RegressionTestsRequired() && IsBugTask(t) && !regressionTested(p, t) {
+		return "", apperr.New("E_DOD_REGRESSION_TEST", apperr.ExitGate,
+			"add a test that fails without the fix and passes with it, then run: aitk check (or remove the bug tag if this is not a bug fix)",
+			"bug fix %s changes no test file: add a regression test so the bug cannot come back unnoticed", t.ID)
 	}
 	if prof == "strict" {
 		if !t.RiskFilled() {
@@ -797,4 +816,115 @@ func mergeUnique(a, b []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// IsBugTask reports whether t is a bug fix (tagged bug).
+func IsBugTask(t *task.Task) bool {
+	return contains(t.Tags, "bug")
+}
+
+// regressionTested reports whether a bug task changed a test file. Evidence recorded by a
+// successful close counts (a later UAT acceptance, after the work is committed or merged, still
+// sees it); otherwise the task's own changes are inspected.
+func regressionTested(p *project.Project, t *task.Task) bool {
+	if t.Evidence != nil && len(t.Evidence.RegressionTests) > 0 {
+		return true
+	}
+	return len(regressionTests(p, t)) > 0
+}
+
+// regressionTests lists test files added or modified by the task: in commits made since it was
+// created that do not name another task in an AI-Task trailer, and in uncommitted changes.
+// Deleting a test is not a regression test.
+func regressionTests(p *project.Project, t *task.Task) []string {
+	var tests []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if IsTestPath(path) && !seen[path] {
+			seen[path] = true
+			tests = append(tests, path)
+		}
+	}
+	for _, c := range taskCommits(p, t) {
+		out, _ := gitx.RunRaw(p.Root, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root", "--diff-filter=AMR", c)
+		for _, f := range strings.Split(string(out), "\x00") {
+			if f != "" {
+				add(f)
+			}
+		}
+	}
+	out, _ := gitx.RunRaw(p.Root, "status", "--porcelain", "-z", "--untracked-files=all")
+	toks := strings.Split(string(out), "\x00")
+	for i := 0; i < len(toks); i++ {
+		e := toks[i]
+		if len(e) < 4 {
+			continue
+		}
+		if e[0] != 'D' && e[1] != 'D' {
+			add(e[3:])
+		}
+		if e[0] == 'R' || e[0] == 'C' {
+			i++
+		}
+	}
+	sort.Strings(tests)
+	return tests
+}
+
+// taskCommits are the recent commits made at or after the task's creation that belong to it:
+// with its ID in an AI-Task trailer, or with no AI-Task trailer at all. Commit times are read
+// per commit, so one commit with a skewed date does not hide the others.
+func taskCommits(p *project.Project, t *task.Task) []string {
+	created, err := time.Parse("2006-01-02T15:04:05Z", t.Created)
+	if err != nil || gitx.Head(p.Root) == "" {
+		return nil
+	}
+	out, _ := gitx.RunRaw(p.Root, "log", "-n", "500", "--format=%H%x1f%ct%x1f%(trailers:key=AI-Task,valueonly,separator=%x2c)%x1e")
+	var cs []string
+	for _, rec := range strings.Split(string(out), "\x1e") {
+		f := strings.Split(strings.TrimSpace(rec), "\x1f")
+		if len(f) != 3 {
+			continue
+		}
+		ct, _ := strconv.ParseInt(f[1], 10, 64)
+		if ct <= created.Unix() { // the second the task was created belongs to the past (second resolution)
+			continue
+		}
+		if ids := strings.TrimSpace(f[2]); ids != "" && !containsFold(strings.Split(ids, ","), t.ID) {
+			continue // another task's commit
+		}
+		cs = append(cs, f[0])
+	}
+	return cs
+}
+
+func containsFold(xs []string, s string) bool {
+	for _, x := range xs {
+		if strings.EqualFold(strings.TrimSpace(x), s) {
+			return true
+		}
+	}
+	return false
+}
+
+var testFile = regexp.MustCompile(`((?i:_test\.[a-z0-9]+|\.(test|spec)\.(js|jsx|ts|tsx|mjs|cjs|vue|svelte|py|rb|php|go|java|kt|cs|swift|dart|ex|exs|rs|c|cc|cpp|scala|sh|lua)|_spec\.rb|_tests?\.exs?)|^tests?\.py|^test_[^/]+\.py|^conftest\.py|[A-Za-z0-9](Test|Tests|Spec|IT)\.(java|kt|cs|php|swift|scala|groovy))$`)
+
+// IsTestPath reports whether a repository path is a test file, by common naming conventions.
+func IsTestPath(path string) bool {
+	path = strings.ReplaceAll(path, "\\", "/")
+	parts := strings.Split(path, "/")
+	for _, d := range parts[:len(parts)-1] {
+		switch strings.ToLower(d) {
+		case "test", "tests", "__tests__", "spec", "e2e", "testing", "testdata", "integration-tests":
+			return true
+		}
+	}
+	return testFile.MatchString(parts[len(parts)-1])
+}
+
+func capList(xs []string, n int) []string {
+	if len(xs) > n {
+		return xs[:n]
+	}
+	return xs
 }

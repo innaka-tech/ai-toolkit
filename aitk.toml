@@ -1,0 +1,13 @@
+# aitk project configuration — https://github.com/innaka-tech/ai-toolkit/blob/main/docs/spec/cli.md
+
+[project]
+name = "ai-toolkit"
+default_branch = "main"
+
+[check]
+cmd = "go vet ./... && go test -short ./..."
+timeout = "10m"
+
+[risk]
+# Changes matching these globs make a task "strict" (risk analysis + independent review).
+sensitive_paths = [".github/**", ".goreleaser.yaml", "install.sh", "install.ps1", "action/**", "internal/secrets/**", "internal/gates/gates.go", "internal/audit/install.go"]

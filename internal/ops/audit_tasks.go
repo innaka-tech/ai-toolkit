@@ -1,0 +1,166 @@
+package ops
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os/exec"
+	"regexp"
+	"strings"
+
+	"github.com/innaka-tech/ai-toolkit/v2/internal/audit"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/task"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/textx"
+)
+
+// AuditTasksResult lists fix tasks created from audit findings.
+type AuditTasksResult struct {
+	Created []string `json:"created"`
+	Open    []string `json:"already_open"` // findings that already have an open task
+}
+
+var nonID = regexp.MustCompile(`[^A-Za-z0-9]+`)
+
+// AuditTasks turns the findings of a failed audit into fix tasks: one per vulnerable dependency
+// (from osv-scanner, with the version that fixes every advisory) and one per other failing
+// scanner. Findings that already have an open task are not duplicated.
+func AuditTasks(p *project.Project, r *AuditResult) (*AuditTasksResult, error) {
+	out := &AuditTasksResult{Created: []string{}, Open: []string{}}
+	var items []NewTaskInput
+	var ids []string
+	for _, res := range r.Results {
+		if res.ExitCode == 0 {
+			continue
+		}
+		if strings.HasPrefix(res.Name, "osv-scanner") {
+			// The audit's own output is a table; a JSON rescan gives one task per package. When that
+			// fails or finds nothing, fall back to one task for the scanner's findings.
+			if _, err := exec.LookPath("osv-scanner"); err == nil {
+				if pkgs, err := audit.OSVPackages(p.Root); err == nil && len(pkgs) > 0 {
+					for _, v := range pkgs {
+						ids = append(ids, auditID("VULN", v.Ecosystem+"-"+v.Name))
+						items = append(items, vulnTask(v))
+					}
+					continue
+				}
+			}
+		}
+		ids = append(ids, auditID("AUDIT", res.Name))
+		items = append(items, NewTaskInput{
+			Title:     textx.Truncate("Fix the findings of "+res.Name, 120),
+			Objective: "The security audit failed in " + res.Name + ". Fix every finding (or record why one is a false positive), then run aitk audit.\n\n```\n" + textx.Truncate(res.Summary, 1500) + "\n```",
+			Criteria:  []string{"Given the fix, when aitk audit runs, then " + res.Name + " passes"},
+			Tags:      []string{"security"},
+		})
+	}
+	tasks, _ := task.List(p)
+	seen := map[string]bool{}
+	for i, in := range items {
+		id := ids[i]
+		if seen[strings.ToLower(id)] {
+			continue
+		}
+		seen[strings.ToLower(id)] = true
+		open, n := false, 0
+		for _, t := range tasks {
+			if sameFinding(t.ID, id) {
+				n++
+				if t.Status != task.Done && t.Status != task.Cancelled {
+					open = true
+					out.Open = append(out.Open, t.ID)
+					break
+				}
+			}
+		}
+		if open {
+			continue
+		}
+		if n > 0 { // fixed before, vulnerable again
+			id = fmt.Sprintf("%s-%d", id, n+1)
+		}
+		in.ID = id
+		t, err := TaskNew(p, in)
+		if err != nil && strings.Contains(in.Objective, "```") {
+			// The scanner output may hold text the credential guard refuses; keep the task without it.
+			in.Objective = in.Objective[:strings.Index(in.Objective, "```")] + "Run aitk audit to see the findings."
+			t, err = TaskNew(p, in)
+		}
+		if err != nil {
+			return out, err
+		}
+		out.Created = append(out.Created, t.ID)
+	}
+	return out, nil
+}
+
+// auditID is a stable task ID for a finding. Names that do not fit are truncated and given a
+// short hash of the full name, so "log4j-core" and "log4j-api" never share an ID. 28 characters
+// leave room for a "-NN" suffix when a fixed finding comes back.
+func auditID(prefix, name string) string {
+	s := strings.Trim(nonID.ReplaceAllString(name, "-"), "-")
+	if len(prefix)+1+len(s) <= 28 {
+		return prefix + "-" + s
+	}
+	sum := sha256.Sum256([]byte(name))
+	keep := 28 - len(prefix) - 1 - 5
+	return prefix + "-" + strings.TrimRight(s[:keep], "-") + "-" + hex.EncodeToString(sum[:])[:4]
+}
+
+// sameFinding: id, or id with a "-N" recurrence suffix.
+func sameFinding(taskID, id string) bool {
+	if strings.EqualFold(taskID, id) {
+		return true
+	}
+	rest, ok := strings.CutPrefix(strings.ToLower(taskID), strings.ToLower(id)+"-")
+	if !ok || rest == "" {
+		return false
+	}
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func vulnTask(v audit.VulnPackage) NewTaskInput {
+	var upgrades, found []string
+	for _, vv := range v.Versions {
+		to := "no fixed version published yet"
+		if vv.FixedIn != "" {
+			to = vv.FixedIn + " or later"
+		}
+		upgrades = append(upgrades, vv.Version+" → "+to)
+		found = append(found, vv.Version+" in "+strings.Join(vv.Sources, ", "))
+	}
+	n := len(v.Advisories)
+	adv := plural(n, "advisory", "advisories")
+	title := fmt.Sprintf("Upgrade %s %s (%s)", v.Name, strings.Join(upgrades, "; "), adv)
+	if len([]rune(title)) > 120 {
+		title = fmt.Sprintf("Upgrade %s past %s (%d versions)", v.Name, adv, len(v.Versions))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s package %s has %s", v.Ecosystem, v.Name, adv)
+	if v.MaxSeverity > 0 {
+		fmt.Fprintf(&b, " (highest CVSS %.1f)", v.MaxSeverity)
+	}
+	fmt.Fprintf(&b, ".\n\nFound: %s.\nUpgrade: %s.\nAdvisories: %s.\n\nUpgrade it (directly, or the dependency that pulls it in), run the check to catch breaking changes, then run aitk audit.",
+		strings.Join(found, "; "), strings.Join(upgrades, "; "), strings.Join(v.Advisories, ", "))
+	return NewTaskInput{
+		Title:     title,
+		Objective: b.String(),
+		Criteria: []string{
+			fmt.Sprintf("Given the lockfiles, when aitk audit runs, then osv-scanner reports no advisory for %s", v.Name),
+			"Given the upgrade, when aitk check runs, then it passes",
+		},
+		Tags: []string{"security", "dependencies"},
+	}
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}

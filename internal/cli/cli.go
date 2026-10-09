@@ -208,7 +208,7 @@ func (a *app) root() *cobra.Command {
 	root.PersistentFlags().StringVarP(&a.dir, "path", "C", "", "run as if started in this directory")
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
-		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd())
+		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd(), a.runCmd(), a.impactCmd())
 	return root
 }
 
@@ -355,7 +355,7 @@ func (a *app) briefCmd() *cobra.Command {
 
 func (a *app) taskCmd() *cobra.Command {
 	c := &cobra.Command{Use: "task", Short: "Create, start, list, show, and update tasks"}
-	c.AddCommand(a.taskNew(), a.taskStart(), a.taskList(), a.taskShow(), a.taskUpdate(), a.taskBlock(), a.taskClaim(), a.taskRelease())
+	c.AddCommand(a.taskNew(), a.taskStart(), a.taskNext(), a.taskList(), a.taskShow(), a.taskUpdate(), a.taskBlock(), a.taskClaim(), a.taskRelease())
 	return c
 }
 
@@ -410,7 +410,160 @@ func (a *app) taskStart() *cobra.Command {
 			return nil, err
 		}
 		compat.Write(p)
-		return &result{data: t, human: fmt.Sprintf("active: %s %s (%s)\nnext: aitk brief", t.ID, t.Title, t.Status)}, nil
+		res := &result{data: t, human: fmt.Sprintf("active: %s %s (%s)\nnext: aitk brief", t.ID, t.Title, t.Status)}
+		tasks, _ := task.List(p)
+		byID := map[string]*task.Task{}
+		for _, x := range tasks {
+			byID[strings.ToLower(x.ID)] = x
+		}
+		if open := ops.OpenDependencies(t, byID); len(open) > 0 {
+			res.warnings = append(res.warnings, t.ID+" depends on unfinished tasks: "+strings.Join(open, ", ")+" (aitk task next shows what is ready)")
+		}
+		return res, nil
+	})
+	return c
+}
+
+func (a *app) taskNext() *cobra.Command {
+	var f ops.NextFilter
+	var start bool
+	c := &cobra.Command{Use: "next", Short: "Show the tasks that can be worked on now, in order (dependencies done, not claimed elsewhere)", Args: cobra.NoArgs}
+	c.Flags().StringVar(&f.Goal, "goal", "", "only tasks of this goal")
+	c.Flags().StringVar(&f.Tag, "tag", "", "only tasks with this tag")
+	c.Flags().BoolVar(&start, "start", false, "start the first ready task")
+	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		var p *project.Project
+		var err error
+		if start {
+			p, err = a.openWrite()
+		} else {
+			p, err = a.open()
+		}
+		if err != nil {
+			return nil, err
+		}
+		nx := ops.Next(p, f)
+		var b strings.Builder
+		if len(nx.Ready) == 0 {
+			b.WriteString("no task is ready")
+			if len(nx.Waiting) > 0 {
+				fmt.Fprintf(&b, " (%d waiting)", len(nx.Waiting))
+			}
+			b.WriteString("\n")
+		}
+		for i, r := range nx.Ready {
+			fmt.Fprintf(&b, "%d. %-14s %-12s %s\n", i+1, r.ID, r.Status, r.Title)
+		}
+		for _, w := range nx.Waiting {
+			why := "waiting on " + strings.Join(w.WaitingOn, ", ")
+			if w.ClaimedBy != "" {
+				why = "claimed by " + w.ClaimedBy
+			}
+			fmt.Fprintf(&b, "   %-14s %-12s %s (%s)\n", w.ID, w.Status, w.Title, why)
+		}
+		res := &result{data: nx}
+		if start && len(nx.Ready) > 0 {
+			t, err := ops.TaskStart(p, nx.Ready[0].ID)
+			if err != nil {
+				return nil, err
+			}
+			compat.Write(p)
+			fmt.Fprintf(&b, "active: %s %s\nnext: aitk brief", t.ID, t.Title)
+		}
+		res.human = strings.TrimRight(b.String(), "\n")
+		return res, nil
+	})
+	return c
+}
+
+func (a *app) runCmd() *cobra.Command {
+	var in ops.RunInput
+	var timeout int
+	c := &cobra.Command{Use: "run", Short: "Work through ready tasks with a headless agent, one at a time, until done or stuck (tasks finish only through aitk close)", Args: cobra.NoArgs,
+		Long: "aitk run takes the next ready task (aitk task next), starts it, and runs an agent on it with the brief and the rules.\n" +
+			"A task counts as finished only when the agent's own `aitk close` passes the Definition of Done. Tasks that need a person\n" +
+			"(review or UAT) stay in_review; tasks the agent cannot finish after --max-attempts are handed over as blocked.\n" +
+			"The run stops when no task is ready, after --max-tasks, or after two unfinished tasks in a row.\n\n" +
+			"Done is verified: a handoff from aitk close, the Definition of Done on the current files, and the check run by aitk itself.\n" +
+			"Built-in agents run headless: claude-code (edit files, run aitk, read git), codex (exec --sandbox workspace-write),\n" +
+			"opencode (run; your OpenCode permission rules apply), gemini-cli (--approval-mode auto_edit). The prompt is passed as a file.\n" +
+			"Extra permissions are your choice: [run] args in aitk.toml. Any other tool: --cmd \"<command>\" (prompt on stdin and in $AITK_RUN_PROMPT_FILE)."}
+	c.Flags().StringVar(&in.Agent, "agent", "", "claude-code, codex, opencode, or gemini-cli (default: [run] agent)")
+	c.Flags().StringVar(&in.Cmd, "cmd", "", "custom agent command, run through the shell")
+	c.Flags().IntVar(&in.MaxTasks, "max-tasks", 0, "stop after this many tasks (default 10)")
+	c.Flags().IntVar(&in.MaxAttempts, "max-attempts", 0, "agent runs per task before handing it over as blocked (default 2)")
+	c.Flags().IntVar(&timeout, "timeout", 0, "minutes per agent run (default 60)")
+	c.Flags().StringVar(&in.Goal, "goal", "", "only tasks of this goal")
+	c.Flags().StringVar(&in.Tag, "tag", "", "only tasks with this tag")
+	var commit bool
+	c.Flags().BoolVar(&commit, "commit", false, "one commit per task: finished work as a Conventional Commit, unfinished work stashed (needs a clean tree; default: [run] commit)")
+	c.Flags().BoolVar(&in.DryRun, "dry-run", false, "show the order without running anything")
+	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		in.Timeout = time.Duration(timeout) * time.Minute
+		if c.Flags().Changed("commit") {
+			in.Commit = &commit
+		}
+		r, err := ops.Run(p, in, a.stderr)
+		if err != nil {
+			return nil, err
+		}
+		var b strings.Builder
+		if r.DryRun {
+			fmt.Fprintf(&b, "agent: %s; would work on, in order:\n", r.Agent)
+			for i, t := range r.Planned {
+				fmt.Fprintf(&b, "%d. %s %s\n", i+1, t.ID, t.Title)
+			}
+		}
+		for _, t := range r.Tasks {
+			fmt.Fprintf(&b, "%-10s %-14s %s (attempts: %d)", t.Status, t.ID, t.Title, t.Attempts)
+			if t.Commit != "" {
+				b.WriteString(" commit " + t.Commit)
+			}
+			if t.Note != "" {
+				b.WriteString("\n           " + t.Note)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("stopped: " + r.Stopped)
+		compat.Write(p)
+		return &result{data: r, human: b.String()}, nil
+	})
+	return c
+}
+
+func (a *app) impactCmd() *cobra.Command {
+	c := &cobra.Command{Use: "impact", Short: "Blast radius of the current change: what references each changed file, and which tests cover it", Args: cobra.NoArgs}
+	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		r := ops.Impact(p)
+		var b strings.Builder
+		for _, f := range r.Files {
+			fmt.Fprintf(&b, "%s (%d lines): referenced by %d file(s), tests: %d\n", f.Path, f.Lines, len(f.ReferencedBy)+f.More, len(f.Tests))
+			for _, x := range f.ReferencedBy {
+				fmt.Fprintf(&b, "    ← %s\n", x)
+			}
+			if f.More > 0 {
+				fmt.Fprintf(&b, "    … %d more\n", f.More)
+			}
+		}
+		if len(r.Files) == 0 {
+			b.WriteString("no changed source files\n")
+		}
+		res := &result{data: r, human: strings.TrimRight(b.String(), "\n")}
+		if len(r.Untested) > 0 {
+			res.warnings = append(res.warnings, "no test appears to cover: "+strings.Join(r.Untested, ", ")+" (add tests before closing; a side effect there would go unnoticed)")
+		}
+		for _, d := range r.Deleted {
+			res.warnings = append(res.warnings, "deleted "+d.Path+" is still referenced by "+strings.Join(d.ReferencedBy, ", "))
+		}
+		return res, nil
 	})
 	return c
 }
@@ -1492,6 +1645,8 @@ func (a *app) securityCmd() *cobra.Command {
 
 func (a *app) auditCmd() *cobra.Command {
 	c := &cobra.Command{Use: "audit", Short: "Security audit: dependency vulnerabilities, static analysis, and secrets; records evidence on the active task", Args: cobra.NoArgs}
+	var mkTasks bool
+	c.Flags().BoolVar(&mkTasks, "tasks", false, "create fix tasks from the findings (one per vulnerable dependency, one per other failing scanner)")
 	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
 		p, err := a.openWrite()
 		if err != nil {
@@ -1499,6 +1654,17 @@ func (a *app) auditCmd() *cobra.Command {
 		}
 		r, err := ops.Audit(p, !a.json)
 		res := &result{}
+		if mkTasks && r != nil && !r.Passed {
+			tr, terr := ops.AuditTasks(p, r)
+			if terr != nil {
+				return nil, terr
+			}
+			r.Tasks = tr
+			compat.Write(p)
+			defer func() {
+				res.human += fmt.Sprintf("\nfix tasks: %d created, %d already open (aitk task next)", len(tr.Created), len(tr.Open))
+			}()
+		}
 		if r != nil {
 			res.data, res.warnings = r, r.Warnings
 			var b strings.Builder

@@ -1,6 +1,8 @@
 package ops
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/apperr"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/task"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/textx"
@@ -21,6 +24,8 @@ type ImportResult struct {
 	Imported []string `json:"imported"`
 	Skipped  []string `json:"skipped"` // already present
 	DryRun   bool     `json:"dry_run"`
+	Synced   []string `json:"synced,omitempty"`                 // done in aitk, now checked in the source file
+	Drift    []string `json:"checked_in_source_only,omitempty"` // checked in the source file, not done in aitk
 }
 
 var checkbox = regexp.MustCompile(`^\s*[-*] \[( |x|X)\] (.+)$`)
@@ -30,6 +35,7 @@ type importItem struct {
 	done                 bool
 	status, profile      string // optional: explicit status; pinned profile
 	criteria, tags       []string
+	dependsOn            []string
 	legacy               map[string]any
 }
 
@@ -37,8 +43,24 @@ func importItems(p *project.Project, source string, items []importItem, dry bool
 	res := &ImportResult{Source: source, Imported: []string{}, Skipped: []string{}, DryRun: dry}
 	err := WithLock(p, func() error {
 		for _, it := range items {
-			if _, err := task.Find(p, it.id); err == nil {
+			if t, err := task.Find(p, it.id); err == nil {
 				res.Skipped = append(res.Skipped, it.id)
+				switch {
+				case t.Status == task.Done && !it.done && !dry:
+					if ok, _ := syncSource(p, t); ok {
+						res.Synced = append(res.Synced, t.ID)
+					}
+				case t.Status == task.Done && !it.done:
+					res.Synced = append(res.Synced, t.ID)
+				case it.done && t.Status != task.Done && t.Status != task.Cancelled:
+					res.Drift = append(res.Drift, t.ID)
+				}
+				if len(t.DependsOn) == 0 && len(it.dependsOn) > 0 && !dry { // imported before dependencies existed
+					t.DependsOn, t.Updated = it.dependsOn, task.Now()
+					if err := task.Save(p, t); err != nil {
+						return err
+					}
+				}
 				continue
 			}
 			res.Imported = append(res.Imported, it.id)
@@ -62,7 +84,7 @@ func importItems(p *project.Project, source string, items []importItem, dry bool
 				prof, pinned = it.profile, true
 			}
 			t := &task.Task{Meta: task.Meta{ID: it.id, Title: title, Status: st, Profile: prof, ProfilePinned: pinned, Tags: slugs(it.tags),
-				Created: now, Updated: now, CreatedBy: Tool(), Legacy: it.legacy}, Body: task.NewBody(it.objective, it.criteria)}
+				Created: now, Updated: now, CreatedBy: Tool(), Legacy: it.legacy, DependsOn: it.dependsOn}, Body: task.NewBody(it.objective, it.criteria)}
 			if st == task.Done {
 				t.Closed = now
 			}
@@ -132,10 +154,19 @@ func ImportGitHub(p *project.Project, repo, label, state string, limit int, dry 
 	return importItems(p, "github-issues", items, dry)
 }
 
-var taskIDToken = regexp.MustCompile(`^(T\d{3,})\b\s*(?:\[[^\]]*\]\s*)*(.*)$`)
+var taskIDToken = regexp.MustCompile(`^(T\d{3,})\b\s*((?:\[[^\]]*\]\s*)*)(.*)$`)
+var marker = regexp.MustCompile(`\[([^\]]*)\]`)
+
+// explicitDeps finds "depends on T012, T013" (and "after T005") in a Spec Kit description.
+var explicitDeps = regexp.MustCompile(`(?i)(?:depends on|after|requires)\s+((?:T\d{3,}(?:\s*(?:,|and|&)\s*)?)+)`)
+var specTaskID = regexp.MustCompile(`T\d{3,}`)
 
 // ImportChecklist imports Spec Kit (specs/*/tasks.md) or OpenSpec (openspec/changes/*/tasks.md)
 // checklists: each checkbox line becomes a task; "T001 …" keeps its ID (prefixed by the spec name).
+// Spec Kit markers become tags ([P] → parallel, [US1] → us1) and its phases become dependencies:
+// a task waits for the previous sequential task, and a sequential task waits for the parallel
+// tasks before it. Tasks link the feature's spec.md and plan.md. Importing again checks off the
+// items of tasks done in aitk and reports items checked only in the file.
 func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) (*ImportResult, error) {
 	if len(paths) == 0 && kind == "markdown" {
 		return nil, apperr.Usage("give the markdown file(s) to import")
@@ -148,6 +179,7 @@ func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) 
 		}
 	}
 	var items []importItem
+	batchPrefixes := map[string]string{} // prefix → file, for features imported together
 	for _, path := range paths {
 		b, err := os.ReadFile(path)
 		if err != nil {
@@ -163,26 +195,186 @@ func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) 
 			feature = "spec"
 		}
 		rel, _ := filepath.Rel(p.Root, path)
+		var context []string
+		if kind == "spec-kit" {
+			for _, f := range []string{"spec.md", "plan.md", "data-model.md", "research.md", "quickstart.md"} {
+				if _, err := os.Stat(filepath.Join(filepath.Dir(path), f)); err == nil {
+					context = append(context, filepath.ToSlash(filepath.Join(filepath.Dir(rel), f)))
+				}
+			}
+		}
 		n := 0
+		prefix := checklistPrefix(p, feature, filepath.ToSlash(rel))
+		if owner, ok := batchPrefixes[prefix]; ok && owner != filepath.ToSlash(rel) {
+			sum := sha256.Sum256([]byte(filepath.ToSlash(rel)))
+			prefix = strings.ToUpper(feature[:min(len(feature), 7)]) + "-" + strings.ToUpper(hex.EncodeToString(sum[:])[:4])
+		}
+		batchPrefixes[prefix] = filepath.ToSlash(rel)
+		barriers, group := []string(nil), []string(nil)
 		for _, l := range strings.Split(string(b), "\n") {
+			if kind == "spec-kit" && strings.HasPrefix(strings.TrimSpace(l), "## ") && len(group) > 0 {
+				// A new phase waits for the whole parallel group that ended the previous one.
+				barriers, group = group, nil
+				continue
+			}
 			m := checkbox.FindStringSubmatch(l)
 			if m == nil {
 				continue
 			}
 			n++
-			text := strings.TrimSpace(m[2])
-			id := fmt.Sprintf("%s-%d", strings.ToUpper(feature[:min(len(feature), 12)]), n)
+			item := strings.TrimSpace(m[2])
+			text := item
+			id := fmt.Sprintf("%s-%d", prefix, n)
+			ref := ""
+			var tags []string
+			parallel := false
 			if tm := taskIDToken.FindStringSubmatch(text); tm != nil {
-				id = strings.ToUpper(feature[:min(len(feature), 12)]) + "-" + tm[1]
-				text = strings.TrimSpace(tm[2])
+				ref = tm[1]
+				id = prefix + "-" + tm[1]
+				text = strings.TrimSpace(tm[3])
+				for _, mk := range marker.FindAllStringSubmatch(tm[2], -1) {
+					switch v := strings.ToLower(strings.TrimSpace(mk[1])); v {
+					case "p":
+						parallel = true
+						tags = append(tags, "parallel")
+					case "":
+					default:
+						tags = append(tags, v)
+					}
+				}
+			}
+			if text == "" {
+				text = item
 			}
 			id = strings.Trim(regexp.MustCompile(`[^A-Za-z0-9-]+`).ReplaceAllString(id, "-"), "-")
 			if !task.IDPattern.MatchString(id) {
 				id = "S-" + id
 			}
-			items = append(items, importItem{id: id, title: text, done: m[1] != " ", objective: text,
-				legacy: map[string]any{"source": kind, "file": filepath.ToSlash(rel)}})
+			it := importItem{id: id, title: text, done: m[1] != " ", objective: text, tags: tags,
+				legacy: map[string]any{"source": kind, "file": filepath.ToSlash(rel), "item": item}}
+			if ref != "" {
+				it.legacy["ref"] = ref
+			}
+			if len(context) > 0 {
+				it.objective += "\n\nContext: " + strings.Join(context, ", ")
+			}
+			if kind == "spec-kit" {
+				for _, m := range explicitDeps.FindAllStringSubmatch(text, -1) {
+					for _, dep := range specTaskID.FindAllString(m[1], -1) {
+						if d := prefix + "-" + dep; d != id && !contains(it.dependsOn, d) {
+							it.dependsOn = append(it.dependsOn, d)
+						}
+					}
+				}
+				wait := barriers
+				if !parallel && len(group) > 0 {
+					wait = group
+				}
+				for _, d := range wait {
+					if d != id && !contains(it.dependsOn, d) {
+						it.dependsOn = append(it.dependsOn, d)
+					}
+				}
+				if parallel {
+					group = append(group, id)
+				} else {
+					barriers, group = []string{id}, nil
+				}
+			}
+			items = append(items, it)
 		}
 	}
 	return importItems(p, kind, items, dry)
+}
+
+// checklistPrefix is the ID prefix for a feature's tasks: its name, up to 12 characters. When
+// another source file already uses that prefix (two features starting with the same 12
+// characters), a short hash of the file keeps the IDs apart.
+func checklistPrefix(p *project.Project, feature, file string) string {
+	prefix := strings.ToUpper(feature[:min(len(feature), 12)])
+	tasks, _ := task.List(p)
+	for _, t := range tasks {
+		other, _ := t.Legacy["file"].(string)
+		if other != "" && other != file && strings.HasPrefix(strings.ToUpper(t.ID), prefix+"-") {
+			sum := sha256.Sum256([]byte(file))
+			return strings.ToUpper(feature[:min(len(feature), 7)]) + "-" + strings.ToUpper(hex.EncodeToString(sum[:])[:4])
+		}
+	}
+	return prefix
+}
+
+// syncSource checks off the checklist item an imported task came from (Spec Kit, OpenSpec,
+// markdown). It reports whether the file changed.
+func syncSource(p *project.Project, t *task.Task) (bool, error) {
+	src, _ := t.Legacy["source"].(string)
+	file, _ := t.Legacy["file"].(string)
+	if (src != "spec-kit" && src != "openspec" && src != "markdown") || file == "" {
+		return false, nil
+	}
+	clean := filepath.Clean(filepath.FromSlash(file))
+	if filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") || !strings.EqualFold(filepath.Ext(clean), ".md") {
+		return false, nil // only markdown files inside the repository
+	}
+	path := p.Path(clean)
+	// Never write through a symlink that leaves the repository.
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false, nil
+	}
+	root, _ := filepath.EvalSymlinks(p.Root)
+	if rel, err := filepath.Rel(root, real); err != nil || strings.HasPrefix(rel, "..") {
+		return false, nil
+	}
+	b, err := os.ReadFile(real)
+	if err != nil {
+		return false, nil
+	}
+	ref, _ := t.Legacy["ref"].(string)
+	item, _ := t.Legacy["item"].(string)
+	if ref == "" && src == "spec-kit" { // imported by an older aitk: the ref is in the ID
+		if m := refInID.FindStringSubmatch(t.ID); m != nil {
+			ref = m[1]
+		}
+	}
+	lines := strings.Split(string(b), "\n")
+	for i, l := range lines {
+		m := checkbox.FindStringSubmatch(strings.TrimRight(l, "\r"))
+		if m == nil {
+			continue
+		}
+		text := strings.TrimSpace(m[2])
+		var match bool
+		switch {
+		case ref != "":
+			tm := taskIDToken.FindStringSubmatch(text)
+			match = tm != nil && tm[1] == ref
+		case item != "":
+			match = text == item
+		default:
+			match = titleMatches(t.Title, text)
+		}
+		if !match || m[1] != " " {
+			continue // keep looking: the same text may appear again, unchecked
+		}
+		lines[i] = strings.Replace(l, "[ ]", "[x]", 1)
+		return true, fsx.WriteFileKeep(real, []byte(strings.Join(lines, "\n")), 0o644)
+	}
+	return false, nil
+}
+
+var refInID = regexp.MustCompile(`-(T\d{3,})$`)
+
+// titleMatches compares a task title with a checklist item, allowing for Spec Kit markers in
+// the item and for titles truncated to 120 characters.
+func titleMatches(title, item string) bool {
+	if tm := taskIDToken.FindStringSubmatch(item); tm != nil {
+		item = strings.TrimSpace(tm[3])
+	}
+	if title == item {
+		return true
+	}
+	if short, ok := strings.CutSuffix(title, "…"); ok {
+		return strings.HasPrefix(item, short)
+	}
+	return false
 }

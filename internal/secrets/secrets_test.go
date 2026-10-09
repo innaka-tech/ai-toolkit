@@ -14,10 +14,10 @@ func TestRules(t *testing.T) {
 		"slack-token":               "SLACK=" + fake("xo"+"xb-", "123456789012-abcdefghijkl"),
 		"stripe-live-key":           `stripe("` + fake("sk"+"_live_", "4eC39HqLyjWDarjtT1zdp7dc") + `")`,
 		"google-api-key":            "key=" + fake("AI"+"za", "SyD3x7Kq9Lm2Np4Rs6Tv8Wx0Yz1Ab3Cd5Ef"),
-		"anthropic-api-key":         "ANTHROPIC_API_KEY=" + fake("sk-"+"ant-", "api03-Zq8xW2vY4uT6sR8pN0mL2kJ4hG6fD8sA0qW"),
+		"anthropic-api-key":         "ANTHROPIC_API_KEY=" + fake("sk-"+"ant-", "api03-Zq8xW2vY4uT6sR8pN0mL2kJ4hG6fD8sA0qW"), // aitk:allow-secret (fake fixture)
 		"cloudflare-api-token":      "Authorization: Bearer " + fake("cf"+"at_", "Qx7Lm2Np4Rs6Tv8Wx0Yz1Ab3Cd5EfGh7Jk9Mn2Pq4"),
 		"jwt":                       fake("ey"+"J", "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"),
-		"generic-secret-assignment": `DB_PASSWORD="k8#Vq2!xR9zL4mPw"`,
+		"generic-secret-assignment": `DB_PASSWORD="k8#Vq2!xR9zL4mPw"`, // aitk:allow-secret (fake fixture)
 	}
 	for rule, line := range pos {
 		fs := ScanLine("f", 1, line)

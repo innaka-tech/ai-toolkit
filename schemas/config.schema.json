@@ -208,6 +208,71 @@
           "description": "Replaces auto-detected scanners"
         }
       }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "aitk run: autonomous task loop",
+      "properties": {
+        "agent": {
+          "enum": [
+            "claude-code",
+            "codex",
+            "opencode",
+            "gemini-cli"
+          ],
+          "description": "Built-in headless agent command"
+        },
+        "cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Custom agent command run through the shell; the prompt is on stdin and in $AITK_RUN_PROMPT_FILE. Overrides agent"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Extra arguments appended to the built-in agent command"
+        },
+        "max_tasks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "default": 10,
+          "description": "0 means the default"
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10,
+          "default": 2,
+          "description": "0 means the default"
+        },
+        "timeout_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1440,
+          "default": 60,
+          "description": "0 means the default"
+        },
+        "commit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Commit each finished task (one commit per task, Conventional Commit with AI-Task/AI-Tool trailers)"
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "regression_tests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Tasks tagged bug must change a test file before they can be done"
+        }
+      }
     }
   }
 }

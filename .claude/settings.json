@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "aitk brief",
+            "type": "command"
+          }
+        ],
+        "matcher": "startup|resume|compact"
+      }
+    ]
+  }
+}

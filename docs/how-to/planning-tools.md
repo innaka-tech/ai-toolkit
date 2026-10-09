@@ -16,6 +16,7 @@ Every import has `--dry-run` and can be repeated: tasks already imported are ski
 Typical flows:
 
 - **BMAD**: refine stories with BMAD's agents → `aitk import bmad` → agents work each `BM-…` task with `aitk brief` / `check` / `close` → `aitk release`.
+- **Spec Kit**: `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `aitk import spec-kit`. Phases and `[P]` markers become dependencies, so `aitk task next` (and `aitk run`) take tasks in Spec Kit's order and run parallel ones in any order; `[US1]` story markers become tags; each task links `spec.md` and `plan.md`. Closing a task checks off its line in `tasks.md`; importing again re-checks done tasks and reports lines checked only in the file (`checked_in_source_only`).
 - **Superpowers**: `writing-plans` produces the plan → `aitk import superpowers` → `executing-plans` or `subagent-driven-development` works the steps, and `aitk close` verifies each task (check, criteria, review) before it counts as done.
 
 The Agent Skill (`skills/aitk/SKILL.md`, installed for Claude Code by `aitk adapters sync`) tells agents to run this loop automatically.
