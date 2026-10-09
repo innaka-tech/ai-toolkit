@@ -16,6 +16,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - Gates: `aitk hooks install|uninstall` (pre-commit secret scan + schema validation, Conventional Commits with `AI-Task`/`AI-Tool` trailers, pre-push check; existing hooks and `core.hooksPath` respected), `aitk ci`, and a composite GitHub Action.
 
+- Parallel work: task claims (`task claim|release`, automatic on start/close), `aitk work` (worktree + branch per task), union-merge `.gitattributes` so parallel branches merge without conflicts (tested: 3 worktrees, 0 conflicts).
+- `aitk switch <tool>` (handoff + brief prompt; starts Claude Code, Codex, Gemini CLI, OpenCode), `aitk report`, `aitk log`.
+- Plugins: `aitk-<name>` executables with JSON hooks `brief.sections`, `close.after`, `doctor.checks`, `knowledge.search`; per-plugin settings; timeouts and failures are warnings; `aitk plugin list`.
+- `aitk import github-issues|spec-kit|openspec`, `aitk deploy`.
+
 ### Changed
 - Project lock is now a kernel lock (flock / LockFileEx); no stale locks.
 - Spec: config is validated from TOML; knowledge entries may carry `file`; checks record a `tree` fingerprint; session keeps `last_check`; hand-written and v1-frontmatter task files migrate (ID collisions get a fresh ID with `legacy.v1_id`).

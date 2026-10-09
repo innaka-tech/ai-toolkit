@@ -2,12 +2,15 @@
 package brief
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/innaka-tech/ai-toolkit/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/internal/knowledge"
+	"github.com/innaka-tech/ai-toolkit/internal/plugins"
 	"github.com/innaka-tech/ai-toolkit/internal/profile"
 	"github.com/innaka-tech/ai-toolkit/internal/project"
 	"github.com/innaka-tech/ai-toolkit/internal/session"
@@ -30,7 +33,17 @@ type Brief struct {
 	Budget    int                `json:"budget"`
 	Dropped   int                `json:"knowledge_dropped,omitempty"`
 	Changed   []profile.Change   `json:"changed_files,omitempty"`
+	Plugins   []PluginSection    `json:"plugin_sections,omitempty"`
+	PluginErr []string           `json:"plugin_errors,omitempty"`
 	Markdown  string             `json:"markdown"`
+}
+
+// PluginSection is contributed by a plugin's brief.sections hook.
+type PluginSection struct {
+	Plugin string  `json:"plugin"`
+	Title  string  `json:"title"`
+	Body   string  `json:"body"`
+	Rank   float64 `json:"rank"`
 }
 
 type ProjectInfo struct {
@@ -142,6 +155,35 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 		query += " " + strings.Join(parts, " ")
 	}
 	b.Knowledge = knowledge.Search(knowledge.LoadAll(p), query, tags, 15)
+	if len(p.Config.Plugins.Enabled) > 0 {
+		var taskRef any
+		if b.Task != nil {
+			taskRef = map[string]any{"id": b.Task.ID, "title": b.Task.Title}
+		}
+		paths := make([]string, 0, len(b.Changed))
+		for _, c := range b.Changed {
+			paths = append(paths, c.Path)
+		}
+		for _, r := range plugins.Call(p, "brief.sections", map[string]any{"changed_paths": paths, "budget": budget}, taskRef) {
+			if r.Err != "" {
+				b.PluginErr = append(b.PluginErr, r.Plugin+": "+r.Err)
+				continue
+			}
+			var secs []PluginSection
+			if json.Unmarshal(r.Data, &secs) != nil {
+				b.PluginErr = append(b.PluginErr, r.Plugin+": brief.sections data is not a list of {title, body, rank}")
+				continue
+			}
+			for _, s := range secs {
+				if strings.TrimSpace(s.Body) != "" {
+					s.Plugin = r.Plugin
+					s.Body = textx.Truncate(s.Body, 2000)
+					b.Plugins = append(b.Plugins, s)
+				}
+			}
+		}
+		sort.SliceStable(b.Plugins, func(i, j int) bool { return b.Plugins[i].Rank > b.Plugins[j].Rank })
+	}
 	b.Rules = rules(b.Profile, p.Config.Check.Cmd != "")
 	b.Next = next(b, p)
 	// Fit the budget: drop knowledge from the lowest rank, then shorten handoff, then legacy.
@@ -152,6 +194,8 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 			break
 		}
 		switch {
+		case len(b.Plugins) > 0:
+			b.Plugins = b.Plugins[:len(b.Plugins)-1]
 		case len(b.Knowledge) > 0:
 			b.Knowledge = b.Knowledge[:len(b.Knowledge)-1]
 			b.Dropped++
@@ -311,6 +355,9 @@ func render(b *Brief) string {
 		if b.Dropped > 0 {
 			fmt.Fprintf(&s, "(%d more omitted for budget: aitk knowledge search \"<topic>\")\n", b.Dropped)
 		}
+	}
+	for _, ps := range b.Plugins {
+		fmt.Fprintf(&s, "\n## %s (plugin %s)\n%s\n", ps.Title, ps.Plugin, strings.TrimSpace(ps.Body))
 	}
 	s.WriteString("\n## Rules\n")
 	for _, r := range b.Rules {

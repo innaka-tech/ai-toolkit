@@ -14,9 +14,12 @@ import (
 	"github.com/innaka-tech/ai-toolkit/internal/agentsmd"
 	"github.com/innaka-tech/ai-toolkit/internal/apperr"
 	"github.com/innaka-tech/ai-toolkit/internal/checkrun"
+	"github.com/innaka-tech/ai-toolkit/internal/claims"
+	"github.com/innaka-tech/ai-toolkit/internal/compat"
 	"github.com/innaka-tech/ai-toolkit/internal/fsx"
 	"github.com/innaka-tech/ai-toolkit/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/internal/knowledge"
+	"github.com/innaka-tech/ai-toolkit/internal/plugins"
 	"github.com/innaka-tech/ai-toolkit/internal/profile"
 	"github.com/innaka-tech/ai-toolkit/internal/project"
 	"github.com/innaka-tech/ai-toolkit/internal/schema"
@@ -44,6 +47,37 @@ func Tool() string {
 		return "human"
 	}
 	return "unknown"
+}
+
+// DefaultClaimTTL is how long a task claim lasts without renewal (task start renews it).
+const DefaultClaimTTL = 4 * time.Hour
+
+// Claim claims id for this worktree, failing when another worktree holds it.
+func Claim(p *project.Project, id string, ttl time.Duration) (claims.Claim, error) {
+	var c claims.Claim
+	err := WithLock(p, func() error {
+		t, err := task.Find(p, id)
+		if err != nil {
+			return apperr.TaskNotFound(id)
+		}
+		if h := claims.Holder(p, t.ID); h != nil {
+			return apperr.New("E_TASK_CLAIMED", apperr.ExitConflict, "pick another task (aitk task list)", "task %s is claimed by %s until %s", t.ID, h.By, h.Expires)
+		}
+		c, err = claims.Take(p, t.ID, Tool(), ttl)
+		return err
+	})
+	return c, err
+}
+
+// Release drops this worktree's claim (or any claim with force).
+func Release(p *project.Project, id string, force bool) (bool, error) {
+	var ok bool
+	err := WithLock(p, func() error {
+		var err error
+		ok, err = claims.Release(p, id, force)
+		return err
+	})
+	return ok, err
 }
 
 // WithLock runs fn while holding the project lock.
@@ -132,6 +166,11 @@ func Init(dir, name, check string, dryRun bool) (*InitResult, error) {
 			}
 		}
 	}
+	if changed, err := compat.EnsureGitattributes(p, dryRun); err != nil {
+		return nil, err
+	} else if changed {
+		res.Updated = append(res.Updated, ".gitattributes")
+	}
 	if !dryRun {
 		if q, err := project.Open(p.Root); err == nil {
 			handoff.WriteIndex(q)
@@ -209,6 +248,13 @@ func TaskStart(p *project.Project, id string) (*task.Task, error) {
 		}
 		if t.Status == task.Done || t.Status == task.Cancelled {
 			return apperr.New("E_USAGE", apperr.ExitUsage, fmt.Sprintf("aitk task update %s --status todo", t.ID), "task %s is %s; reopen it first", t.ID, t.Status)
+		}
+		if h := claims.Holder(p, t.ID); h != nil {
+			return apperr.New("E_TASK_CLAIMED", apperr.ExitConflict, "pick another task (aitk task list), or wait until "+h.Expires,
+				"task %s is claimed by %s in another worktree until %s", t.ID, h.By, h.Expires)
+		}
+		if _, err := claims.Take(p, t.ID, Tool(), DefaultClaimTTL); err != nil {
+			return err
 		}
 		now := task.Now()
 		if t.Status == task.Todo || t.Status == task.Blocked {
@@ -410,6 +456,16 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 		return nil, apperr.Usage("--status only accepts in_progress or blocked (to hand over unfinished work)")
 	}
 	var res *CloseResult
+	defer func() {
+		if res == nil || res.Handoff == "" || len(p.Config.Plugins.Enabled) == 0 {
+			return
+		}
+		for _, r := range plugins.Call(p, "close.after", map[string]any{"task": res.Task, "status": res.Status, "handoff_path": res.Handoff, "knowledge": in.Knowledge}, map[string]any{"id": res.Task}) {
+			if r.Err != "" {
+				res.Notes = append(res.Notes, "plugin "+r.Plugin+": "+r.Err)
+			}
+		}
+	}()
 	err := WithLock(p, func() error {
 		s := session.Load(p)
 		changes := profile.Diff(p)
@@ -504,6 +560,7 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 		}
 		if target == task.Done || target == task.Blocked {
 			s.SetActive("", "", "")
+			claims.Release(p, t.ID, false)
 		}
 		if target == task.InReview {
 			res.Notes = append(res.Notes, "strict task needs ≥2 review passes (last with 0 findings, one by a different tool/session) before it can be done: aitk review pass --findings N")
