@@ -1,0 +1,41 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TARGET_DIR="${1:-$PWD}"
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+CURRENT_TASK="$(ai_current_task_file "$ROOT")"
+PROTOCOL="$AI_TOOLKIT_ROOT/conventions/RISK_ANALYSIS_PROTOCOL.md"
+
+ai_ensure_initialized "$ROOT"
+
+if [ ! -f "$CURRENT_TASK" ]; then
+  echo "AI Toolkit preflight failed: no active task found." >&2
+  echo "Start task with: ai-start \"<task description>\"" >&2
+  exit 2
+fi
+
+STATUS="$(awk -F': ' '/^Status:/{print $2; exit}' "$CURRENT_TASK")"
+if [ "$STATUS" != "ACTIVE" ] && [ "$STATUS" != "IN_PROGRESS" ]; then
+  echo "AI Toolkit preflight failed: task status is ${STATUS:-unknown}." >&2
+  echo "Start or resume an active task before invoking an AI provider." >&2
+  exit 2
+fi
+
+echo "# AI Toolkit Mandatory Preflight"
+echo
+echo "Project: $ROOT"
+echo "Task: $(awk -F': ' '/^Task ID:/{print $2; exit}' "$CURRENT_TASK")"
+echo
+echo "Before implementation, provider MUST:"
+echo "1. Read AGENTS.md and docs/ai/*."
+echo "2. Read $PROTOCOL."
+echo "3. Verify relevant code, routes, schemas, configs, and state transitions."
+echo "4. Record risk level, impact surface, security, compatibility, edge cases, mitigations, and validation in docs/ai/current-task.md."
+echo "5. Stop and escalate unverified high-impact assumptions."
+echo "6. Run focused and regression validation before completion."
+echo
+echo "No implementation is authorized by this preflight until risk analysis is recorded."

@@ -1,31 +1,5 @@
-#!/bin/bash
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CMD="${1:-}"
-
-case "$CMD" in
-  start)
-    "$SCRIPT_DIR/ai-start" "${2:-}" "${3:-$PWD}"
-    ;;
-  done)
-    [ -n "${3:-}" ] || {
-      echo "Usage: ai-task done <summary> <knowledge> [path]" >&2
-      exit 2
-    }
-    "$SCRIPT_DIR/ai-close" --status COMPLETED \
-      --summary "${2:-Task marked done}" \
-      --knowledge "$3" \
-      "${4:-$PWD}"
-    ;;
-  list)
-    find "$HOME/.ai-toolkit/context" -name "project.env" 2>/dev/null | while read -r f; do
-      echo "--- $(basename "$(dirname "$f")") ---"
-      sed -n '1,3p' "$f"
-      echo
-    done
-    ;;
-  *)
-    echo "Usage: ai-task done <summary> <knowledge> [path]"
-    ;;
-esac
+#!/bin/sh
+# ai-task: v1 command kept for compatibility; see scripts/_shim.sh.
+. "$(dirname "$0")/_shim.sh"
+if shim_is_v1; then shim_v1 ai-task "$@"; fi
+shim_aitk task list

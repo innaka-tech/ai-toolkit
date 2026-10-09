@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CMD="${1:-}"
+
+case "$CMD" in
+  init)
+    "$SCRIPT_DIR/ai-init" "${2:-$PWD}"
+    ;;
+  save)
+    "$SCRIPT_DIR/ai-close" --status ACTIVE --summary "${2:-Manual context save}" "${3:-$PWD}"
+    ;;
+  load)
+    "$SCRIPT_DIR/ai-resume" "${2:-$PWD}"
+    ;;
+  *)
+    echo "Usage: ai-context <init|save|load>"
+    ;;
+esac

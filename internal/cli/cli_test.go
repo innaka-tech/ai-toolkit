@@ -458,3 +458,20 @@ func copyTree(t *testing.T, src, dst string) {
 		write(t, dst, rel, string(b))
 	}
 }
+
+func TestLiteStillRequiresWrittenCriteria(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "aitk init")
+	newStarted(t, dir, "Small change", "--ac", "it works")
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "check"))
+	expect(t, aitk(t, dir, "close", "--summary", "s", "--knowledge", "none"), 3, "E_DOD_ACCEPTANCE")
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	r := aitk(t, dir, "close", "--summary", "s", "--knowledge", "none")
+	mustOK(t, r)
+	if data(r)["profile"] != "lite" {
+		t.Fatalf("expected lite profile, got %v", data(r)["profile"])
+	}
+}

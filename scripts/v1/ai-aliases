@@ -1,0 +1,79 @@
+#!/bin/bash
+set -euo pipefail
+
+RC_FILE="${HOME}/.zshrc"
+MARKER_START="# >>> ai-toolkit aliases >>>"
+MARKER_END="# <<< ai-toolkit aliases <<<"
+CMD="${1:-install}"
+
+install_aliases() {
+  local block
+  block=$(cat <<'EOF'
+# >>> ai-toolkit aliases >>>
+alias aii="$HOME/.ai-toolkit/scripts/ai-init"
+alias air="$HOME/.ai-toolkit/scripts/ai-resume"
+alias ais="$HOME/.ai-toolkit/scripts/ai-start"
+alias aix="$HOME/.ai-toolkit/scripts/ai-close"
+alias aio="$HOME/.ai-toolkit/scripts/ai-doctor"
+alias aif="$HOME/.ai-toolkit/scripts/ai-fix"
+alias aim="$HOME/.ai-toolkit/scripts/ai-map"
+alias aiy="$HOME/.ai-toolkit/scripts/ai-sync"
+alias airl="$HOME/.ai-toolkit/scripts/ai-recall"
+alias aisn="$HOME/.ai-toolkit/scripts/ai-session"
+alias aic="$HOME/.ai-toolkit/scripts/ai-commit"
+alias aip="$HOME/.ai-toolkit/scripts/ai-push"
+alias aid="$HOME/.ai-toolkit/scripts/ai-deploy"
+alias ait="$HOME/.ai-toolkit/scripts/ai-toolkit"
+# <<< ai-toolkit aliases <<<
+EOF
+)
+
+  if [ -f "$RC_FILE" ] && grep -Fq "$MARKER_START" "$RC_FILE"; then
+    # Upgrade an older alias block without duplicating it. This matters when
+    # new shortcuts are added after the initial installation.
+    local tmp_file="$RC_FILE.tmp"
+    awk '
+      $0 == "# <<< ai-toolkit aliases <<<" {
+        if (!seen_aisn) print "alias aisn=\"$HOME/.ai-toolkit/scripts/ai-session\""
+        if (!seen_ait) print "alias ait=\"$HOME/.ai-toolkit/scripts/ai-toolkit\""
+      }
+      /alias aisn=/ { seen_aisn=1 }
+      /alias ait=/ { seen_ait=1 }
+      { print }
+    ' "$RC_FILE" > "$tmp_file"
+    mv "$tmp_file" "$RC_FILE"
+    echo "Aliases installed/upgraded in $RC_FILE"
+    return
+  fi
+
+  printf '\n%s\n' "$block" >> "$RC_FILE"
+  echo "Installed aliases into $RC_FILE"
+}
+
+uninstall_aliases() {
+  if [ ! -f "$RC_FILE" ] || ! grep -Fq "$MARKER_START" "$RC_FILE"; then
+    echo "No ai-toolkit alias block found in $RC_FILE"
+    return
+  fi
+
+  awk -v start="$MARKER_START" -v end="$MARKER_END" '
+    $0 == start { skip=1; next }
+    $0 == end { skip=0; next }
+    !skip { print }
+  ' "$RC_FILE" > "$RC_FILE.tmp"
+  mv "$RC_FILE.tmp" "$RC_FILE"
+  echo "Removed aliases from $RC_FILE"
+}
+
+case "$CMD" in
+  install)
+    install_aliases
+    ;;
+  uninstall)
+    uninstall_aliases
+    ;;
+  *)
+    echo "Usage: ai-aliases <install|uninstall>"
+    exit 1
+    ;;
+esac

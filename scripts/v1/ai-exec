@@ -1,0 +1,44 @@
+#!/bin/bash
+# ai-exec — run the mandatory toolkit preflight, then start the chosen AI tool.
+# Usage: ai-exec <provider> [path]
+#        ai-exec --agent <provider> [path]
+#        ai-exec [auto] [path]     # preflight only; prints how to start a tool
+set -euo pipefail
+
+AGENT="${1:-auto}"
+if [ "$AGENT" = "--agent" ]; then
+  AGENT="${2:-}"
+  TARGET_DIR="${3:-$PWD}"
+else
+  TARGET_DIR="${2:-$PWD}"
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+"$SCRIPT_DIR/ai-preflight" "$TARGET_DIR"
+echo
+
+run() {
+  if command -v "$1" >/dev/null; then
+    cd "$TARGET_DIR" && exec "$@"
+  fi
+  echo "⚠️  $1 not installed" >&2
+  exit 1
+}
+
+case "$AGENT" in
+  auto|--auto|"")
+    echo "Preflight passed. Start the AI tool of your choice in this project, e.g.:"
+    echo "  ai-exec claude | codex | opencode | gemini | hermes | freebuff"
+    ;;
+  claude-code|claude) run claude ;;
+  codex) run codex ;;
+  opencode) run opencode ;;
+  gemini) run gemini ;;
+  hermes) run hermes ;;
+  freebuff|codebuff) run freebuff ;;
+  *)
+    echo "Unknown provider: $AGENT" >&2
+    echo "Supported: claude, codex, opencode, gemini, hermes, freebuff" >&2
+    exit 2
+    ;;
+esac

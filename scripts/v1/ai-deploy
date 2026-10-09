@@ -1,0 +1,38 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TARGET="${1:-default}"
+TARGET_DIR="${2:-$PWD}"
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+CONFIG_FILE="$(ai_local_config_file "$ROOT")"
+
+ai_ensure_initialized "$ROOT"
+ai_load_local_config "$ROOT"
+
+[ -f "$CONFIG_FILE" ] || { echo "Missing $CONFIG_FILE" >&2; exit 1; }
+
+case "$TARGET" in
+  default) DEPLOY_COMMAND="${DEPLOY_DEFAULT:-}" ;;
+  staging) DEPLOY_COMMAND="${DEPLOY_STAGING:-}" ;;
+  production) DEPLOY_COMMAND="${DEPLOY_PRODUCTION:-}" ;;
+  *)
+    DEPLOY_COMMAND="$TARGET"
+    ;;
+esac
+
+[ -n "${DEPLOY_COMMAND:-}" ] || {
+  echo "No deploy command configured for target '$TARGET' in $CONFIG_FILE" >&2
+  exit 1
+}
+
+echo "Deploying from $ROOT"
+bash -lc "cd '$ROOT' && $DEPLOY_COMMAND"
+
+if [ -n "${POST_DEPLOY_CHECK:-}" ]; then
+  echo "Running post-deploy check"
+  bash -lc "cd '$ROOT' && $POST_DEPLOY_CHECK"
+fi

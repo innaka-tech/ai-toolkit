@@ -1,0 +1,63 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+SUBCOMMAND="${1:-status}"
+shift || true
+
+TARGET_DIR="$PWD"
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+PROJECT="$(ai_codebase_project "$ROOT")"
+
+ai_check_cmd_quiet codebase-memory-mcp || { echo "codebase-memory-mcp is not installed" >&2; exit 1; }
+
+run_cli() {
+  codebase-memory-mcp cli "$@"
+}
+
+case "$SUBCOMMAND" in
+  index)
+    MODE="${1:-fast}"
+    [ -n "${2:-}" ] && TARGET_DIR="$2"
+    ROOT="$(ai_find_project_root "$TARGET_DIR")"
+    PROJECT="$(ai_codebase_project "$ROOT")"
+    run_cli index_repository --repo-path "$ROOT" --mode "$MODE" --name "$PROJECT" --persistence true
+    ;;
+  status)
+    if [ -n "${1:-}" ] && [ -d "$1" ]; then TARGET_DIR="$1"; fi
+    ROOT="$(ai_find_project_root "$TARGET_DIR")"
+    PROJECT="$(ai_codebase_project "$ROOT")"
+    run_cli list_projects | sed -n '1,200p'
+    printf '\n[project-check] %s\n' "$PROJECT"
+    run_cli index_status --project "$PROJECT"
+    ;;
+  search)
+    QUERY="${1:-}"
+    [ -n "$QUERY" ] || { echo 'Usage: ai-map search "query" [path]' >&2; exit 1; }
+    [ -n "${2:-}" ] && TARGET_DIR="$2"
+    ROOT="$(ai_find_project_root "$TARGET_DIR")"
+    PROJECT="$(ai_codebase_project "$ROOT")"
+    run_cli search_graph --project "$PROJECT" --query "$QUERY" --limit 20
+    ;;
+  trace)
+    FUNCTION_NAME="${1:-}"
+    [ -n "$FUNCTION_NAME" ] || { echo 'Usage: ai-map trace "functionName" [path]' >&2; exit 1; }
+    [ -n "${2:-}" ] && TARGET_DIR="$2"
+    ROOT="$(ai_find_project_root "$TARGET_DIR")"
+    PROJECT="$(ai_codebase_project "$ROOT")"
+    run_cli trace_path --project "$PROJECT" --function-name "$FUNCTION_NAME" --direction both --depth 3 --mode calls --risk-labels true
+    ;;
+  architecture|arch)
+    [ -n "${1:-}" ] && [ -d "$1" ] && TARGET_DIR="$1"
+    ROOT="$(ai_find_project_root "$TARGET_DIR")"
+    PROJECT="$(ai_codebase_project "$ROOT")"
+    run_cli get_architecture --project "$PROJECT" --aspects '["overview"]'
+    ;;
+  *)
+    echo "Usage: ai-map <index [fast|moderate|full] [path]|status [path]|search \"query\" [path]|trace \"function\" [path]|architecture [path]>"
+    exit 1
+    ;;
+esac

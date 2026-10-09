@@ -1,0 +1,38 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TARGET_DIR="${1:-$PWD}"
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+DOCS_DIR="$(ai_docs_dir "$ROOT")"
+CURRENT_TASK="$(ai_current_task_file "$ROOT")"
+PROJECT_CONTEXT="$(ai_project_context_file "$ROOT")"
+HANDOFF_FILE="$(ai_handoff_file "$ROOT")"
+
+ai_ensure_initialized "$ROOT"
+
+echo "Project: $(basename "$ROOT")"
+echo "Root: $ROOT"
+echo "Branch: $(ai_git_branch "$ROOT")"
+
+CHANGED="$(ai_git_changed_files "$ROOT" | wc -l | tr -d ' ')"
+if [ "$CHANGED" -gt 0 ]; then
+  echo "Uncommitted Entries: $CHANGED"
+else
+  echo "Uncommitted Entries: 0"
+fi
+
+echo
+echo "[Project Context]"
+sed -n '1,24p' "$PROJECT_CONTEXT"
+
+echo
+echo "[Current Task]"
+sed -n '1,24p' "$CURRENT_TASK"
+
+echo
+echo "[Latest Handoff]"
+sed -n '1,18p' "$HANDOFF_FILE"

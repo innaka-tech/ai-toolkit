@@ -141,7 +141,7 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 	// Knowledge ranking: task tags + topics of changed paths + title words.
 	b.Changed = profile.Diff(p)
 	b.Profile = profile.Compute(p, b.Changed)
-	if t != nil && (t.ProfilePinned || rank(t.Profile) > rank(b.Profile)) {
+	if t != nil && t.ProfilePinned {
 		b.Profile = t.Profile
 	}
 	var tags []string

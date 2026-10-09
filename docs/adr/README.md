@@ -11,3 +11,4 @@ Format: [MADR 4](https://adr.github.io/madr/). One file per decision; never edit
 - [ADR-0007](0007-plugins-as-executables.md): Plugins are executables speaking JSON
 - [ADR-0008](0008-license-and-language.md): Apache-2.0; English by default
 - [ADR-0009](0009-task-ids.md): Short random task IDs
+- [ADR-0010](0010-defer-indonesian-cli.md): Ship v2.0 in English; Indonesian CLI output in v2.1

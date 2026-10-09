@@ -1,0 +1,15 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+QUERY="${1:-project progress and architecture}"
+TARGET_DIR="${2:-$PWD}"
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+NAMESPACE="$(ai_uteke_namespace "$ROOT")"
+
+ai_check_cmd_quiet uteke || { echo "uteke is not installed" >&2; exit 1; }
+
+uteke --namespace "$NAMESPACE" recall "$QUERY"

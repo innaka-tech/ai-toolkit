@@ -1,0 +1,66 @@
+#!/bin/bash
+# ai-status: Check all AI provider availability
+set -euo pipefail
+
+CONFIG="$HOME/.ai-toolkit/config.yaml"
+STATE="$HOME/.ai-toolkit/state/provider-status.json"
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+echo "🤖 AI Toolkit Provider Status"
+echo "============================"
+echo "Time: $NOW"
+echo ""
+
+# Check Hermes
+if command -v hermes &>/dev/null; then
+  echo "✅ Hermes             → AVAILABLE ($(which hermes))"
+else
+  echo "⚠️  Hermes             → NOT INSTALLED"
+fi
+
+# Check Claude Code
+if command -v claude &>/dev/null; then
+  echo "✅ Claude Code        → AVAILABLE ($(which claude))"
+else
+  echo "⚠️  Claude Code        → NOT INSTALLED"
+fi
+
+# Check Codex
+if command -v codex &>/dev/null; then
+  echo "✅ Codex              → AVAILABLE ($(which codex))"
+else
+  echo "⚠️  Codex              → NOT INSTALLED"
+fi
+
+# Check OpenCode
+if command -v opencode &>/dev/null; then
+  echo "✅ OpenCode           → AVAILABLE ($(which opencode))"
+else
+  echo "⚠️  OpenCode           → NOT INSTALLED"
+fi
+
+if command -v freebuff &>/dev/null; then
+  echo "✅ Freebuff           → AVAILABLE ($(which freebuff))"
+else
+  echo "⚠️  Freebuff           → NOT INSTALLED"
+fi
+
+
+# Check Kiro (VS Code extension)
+VSCODE_EXT="$HOME/.vscode/extensions"
+if ls "$VSCODE_EXT"/*kiro* 2>/dev/null | head -1 >/dev/null; then
+  echo "✅ Kiro               → INSTALLED (VS Code)"
+else
+  echo "⚠️  Kiro               → NOT FOUND"
+fi
+
+# Check Gemini CLI
+if command -v gemini &>/dev/null; then
+  echo "✅ Gemini CLI         → AVAILABLE ($(which gemini))"
+else
+  echo "⚠️  Gemini CLI         → NOT INSTALLED"
+fi
+
+echo ""
+echo "📁 Context: $HOME/.ai-toolkit/context/"
+echo "📁 Logs:    $HOME/.ai-toolkit/logs/"

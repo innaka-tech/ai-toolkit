@@ -15,10 +15,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: ShellCheck
         run: |
-          files=$(ls scripts/ai-* | grep -v '\.ps1$')
-          shellcheck -S warning $files install.sh tests/*.sh
+          files=$(ls scripts/ai-* scripts/v1/ai-* | grep -v '\.ps1$')
+          shellcheck -x -S warning $files scripts/_shim.sh install.sh tests/*.sh
       - name: Syntax check
-        run: for f in $(ls scripts/ai-* | grep -v '\.ps1$') install.sh tests/*.sh; do bash -n "$f"; done
+        run: for f in $(ls scripts/ai-* scripts/v1/ai-* | grep -v '\.ps1$') install.sh tests/*.sh; do bash -n "$f"; done
 
   smoke:
     strategy:
@@ -30,8 +30,13 @@ jobs:
       - name: Install jq (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y jq
-      - name: Smoke test
+      - name: Smoke test (v1)
         run: bash tests/smoke.sh
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Compatibility shims
+        run: go build -o "$RUNNER_TEMP/aitk" ./cmd/aitk && AITK="$RUNNER_TEMP/aitk" bash tests/shims.sh
 
   spec:
     runs-on: ubuntu-latest
