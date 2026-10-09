@@ -125,8 +125,25 @@ func New(root, version string, exec Exec) *mcp.Server {
 			a := []string{"report"}
 			return opt(a, "--since", in.Since)
 		})
-	add(s, h, "audit", "Security audit (dependency vulnerabilities, static analysis, secrets). Required before close for strict tasks by default.",
-		func(struct{}) []string { return []string{"audit"} })
+	add(s, h, "audit", "Security audit (dependency vulnerabilities, static analysis, secrets). Required before close for strict tasks by default. With tasks=true, findings become fix tasks.",
+		func(in auditIn) []string {
+			if in.Tasks {
+				return []string{"audit", "--tasks"}
+			}
+			return []string{"audit"}
+		})
+	add(s, h, "task_next", "Tasks that can be worked on now, in order (dependencies done, not claimed by another worktree). With start=true, starts the first one.",
+		func(in taskNextIn) []string {
+			a := []string{"task", "next"}
+			a = opt(a, "--goal", in.Goal)
+			a = opt(a, "--tag", in.Tag)
+			if in.Start {
+				a = append(a, "--start")
+			}
+			return a
+		})
+	add(s, h, "impact", "Blast radius of the current change: files that reference each changed file and the tests that cover it. Run before close; add tests for files no test covers.",
+		func(struct{}) []string { return []string{"impact"} })
 	add(s, h, "security_checklist", "Add the OWASP ASVS checklist to a task (strict tasks need every item verified or marked N/A with a reason).",
 		func(in optIDIn) []string { return withID([]string{"security", "checklist"}, in.ID) })
 	add(s, h, "uat_script", "Write a user acceptance test script for a person. Only the user can accept or reject (aitk uat accept|reject in their terminal).",
@@ -298,6 +315,16 @@ type taskUpdateIn struct {
 	Tags    []string `json:"tags,omitempty" jsonschema:"tags to add"`
 	Profile string   `json:"profile,omitempty" jsonschema:"pin risk profile"`
 }
+type auditIn struct {
+	Tasks bool `json:"tasks,omitempty" jsonschema:"create fix tasks from the findings"`
+}
+
+type taskNextIn struct {
+	Goal  string `json:"goal,omitempty" jsonschema:"only tasks of this goal"`
+	Tag   string `json:"tag,omitempty" jsonschema:"only tasks with this tag"`
+	Start bool   `json:"start,omitempty" jsonschema:"start the first ready task"`
+}
+
 type taskListIn struct {
 	Status string `json:"status,omitempty" jsonschema:"only this status"`
 	All    bool   `json:"all,omitempty" jsonschema:"include done and cancelled"`

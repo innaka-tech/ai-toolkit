@@ -28,6 +28,34 @@ type Config struct {
 	UAT       UATCfg       `toml:"uat,omitempty" json:"uat,omitempty"`
 	Release   ReleaseCfg   `toml:"release,omitempty" json:"release,omitempty"`
 	Security  SecurityCfg  `toml:"security,omitempty" json:"security,omitempty"`
+	Run       *RunCfg      `toml:"run,omitempty" json:"run,omitempty"`
+	Quality   QualityCfg   `toml:"quality,omitempty" json:"quality,omitempty"`
+}
+
+type RunCfg struct {
+	Agent          string   `toml:"agent,omitempty" json:"agent,omitempty"`
+	Cmd            string   `toml:"cmd,omitempty" json:"cmd,omitempty"`
+	Args           []string `toml:"args,omitempty" json:"args,omitempty"`
+	MaxTasks       int      `toml:"max_tasks,omitempty" json:"max_tasks,omitempty"`
+	MaxAttempts    int      `toml:"max_attempts,omitempty" json:"max_attempts,omitempty"`
+	TimeoutMinutes int      `toml:"timeout_minutes,omitempty" json:"timeout_minutes,omitempty"`
+	Commit         bool     `toml:"commit,omitempty" json:"commit,omitempty"`
+}
+type QualityCfg struct {
+	RegressionTests *bool `toml:"regression_tests,omitempty" json:"regression_tests,omitempty"`
+}
+
+// RunSettings returns [run], empty when not configured.
+func (c Config) RunSettings() RunCfg {
+	if c.Run == nil {
+		return RunCfg{}
+	}
+	return *c.Run
+}
+
+// RegressionTestsRequired reports whether bug tasks must change a test file (default true).
+func (c Config) RegressionTestsRequired() bool {
+	return c.Quality.RegressionTests == nil || *c.Quality.RegressionTests
 }
 
 type UATCfg struct {

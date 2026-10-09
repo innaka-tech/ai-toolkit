@@ -41,13 +41,16 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | Command | Purpose |
 |---|---|
 | `aitk task new "<title>" [--id ID] [--ac "<criterion>"]... [--tag T]... [--goal G] [--profile P]` | Create a task (`todo`). |
-| `aitk task start <id>` | Set the session's active task; status → `in_progress`; claim it (§Parallel work). |
+| `aitk task start <id>` | Set the session's active task; status → `in_progress`; claim it (§Parallel work). Warns when `depends_on` tasks are unfinished. |
+| `aitk task next [--goal G] [--tag T] [--start]` | Tasks that can start now, in order: this worktree's active task, then `in_progress`, then `todo`, oldest first; only tasks whose `depends_on` are done or cancelled and that no other worktree claims. Others are listed as waiting. `--start` starts the first. |
 | `aitk task list [--status S] [--all-branches]` | List tasks. |
 | `aitk task show <id>` | Print one task. |
 | `aitk task update <id> [--status S] [--ac-done N] [--add-ac "<c>"] [--note "<text>"] [--tag T]` | Edit structured fields without hand-editing YAML. |
 | `aitk task block <id> --reason "<text>"` | Status → `blocked`. |
 | `aitk check` | Run `check.cmd` with `check.timeout`; record evidence on the active task. Exit 1 if the command fails. |
 | `aitk close --summary "<text>" --knowledge "<text>\|none" [--next "<step>"]... [--status S]` | Apply the Definition of Done, write evidence, handoff, and knowledge. |
+| `aitk run [--agent A \| --cmd C] [--max-tasks N] [--max-attempts N] [--timeout MIN] [--goal G] [--tag T] [--commit] [--dry-run]` | Autonomous loop: for each ready task (as `task next`), start it and run a headless agent with the brief and rules (`$AITK_RUN_TASK`, `$AITK_RUN_PROMPT_FILE`, `AITK_RUN=1`). Never changes a task to done itself: the agent's `close` must pass the Definition of Done. Afterwards `done`/`in_review`/`blocked` move on; anything else after `--max-attempts` is closed as `blocked` with a handoff. Stops when nothing is ready, after `--max-tasks`, or after two unfinished tasks in a row. Defaults from `[run]`. |
+| `aitk impact` | For each changed source file: files referencing it (by file name, and by Go import path) and the tests covering it (referencing tests, tests of the same unit, tests changed with it); `untested` lists changed files without any. Heuristic, not a call graph. |
 | `aitk review start\|pass --findings N\|done` | Record bug-hunt passes for strict tasks. |
 | `aitk switch <tool> [--note "…"] [--print]` | Write a handoff (`outcome: switched`, `to: <tool>`) and a prompt file containing the brief; on a terminal start the tool with it (`claude`, `codex`, `gemini -i`, `opencode --prompt`), otherwise or with `--print` print how to. Unknown tools get the prompt file only, never a guessed command. |
 
@@ -76,7 +79,8 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 
 | Command | Purpose |
 |---|---|
-| `aitk audit` | Dependency vulnerabilities (osv-scanner, npm/pnpm audit, govulncheck, pip-audit, composer audit, cargo audit — whichever apply and are installed, or `security.scanners`), static analysis (semgrep OWASP Top 10 when installed), and a secret scan of tracked files; records evidence on the active task |
+| `aitk audit [--tasks]` | Dependency vulnerabilities (osv-scanner, npm/pnpm audit, govulncheck, pip-audit, composer audit, cargo audit — whichever apply and are installed, or `security.scanners`), static analysis (semgrep OWASP Top 10 when installed), and a secret scan of tracked files; records evidence on the active task. `--tasks`: findings become fix tasks (`VULN-<ecosystem>-<package>` per vulnerable dependency with the fixing version, `AUDIT-<scanner>` otherwise); open ones are not duplicated |
+| `aitk audit install [--dir D] [--no-brew]` | Install osv-scanner (Homebrew on macOS, else the release binary verified against its SHA-256 checksum file) |
 | `aitk security checklist [id]` | Add the OWASP ASVS 4.0.3 checklist to a task |
 | `aitk uat script [id]` / `uat accept [id] [--by] [--note]` / `uat reject [id] --reason` | User acceptance (a person only) |
 | `aitk goal add "<outcome>" [--id] [--parent]` / `goal list` / `goal status <id> <status>` | Goals with task progress |
@@ -92,7 +96,7 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `aitk ci` | Run every gate non-interactively; for CI pipelines. |
 | `aitk mcp [--http :PORT]` | Serve MCP over stdio (default) or streamable HTTP. |
 | `aitk import github-issues [--repo] [--label] [--state] [--dry-run]` | Issues become tasks `GH-<n>` (checkboxes → criteria, labels → tags, closed → done) via `gh`. |
-| `aitk import spec-kit\|openspec [tasks.md…] [--dry-run]` | Checklist lines become tasks (`<FEATURE>-T001` keeps Spec Kit IDs); re-imports skip existing tasks. |
+| `aitk import spec-kit\|openspec [tasks.md…] [--dry-run]` | Checklist lines become tasks (`<FEATURE>-T001` keeps Spec Kit IDs). Spec Kit: `[P]` → tag `parallel`, other markers (`[US1]`) → tags; a task depends on the previous sequential task, and a sequential task on the parallel tasks before it; tasks link the feature's spec.md, plan.md, data-model.md, research.md, quickstart.md. Re-imports skip existing tasks, check off lines of done tasks (`synced`), and report lines checked only in the file (`checked_in_source_only`). `close` to done (and `uat accept`) checks off the task's line. |
 | `aitk plugin list` | Discovered `aitk-*` plugins, their hooks, and whether they are enabled. |
 | `aitk deploy [target]` | Run `deploy.targets.<target>` then `deploy.post_check`; without a target, list targets. |
 | `aitk version` | Version, commit, build date, supported schema versions. |
@@ -121,6 +125,9 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `E_DOD_CHECK_STALE` | 3 | No passing check for the current tree | `aitk check` |
 | `E_DOD_ACCEPTANCE` | 3 | Criteria missing or unchecked | `aitk task update <id> --ac-done N` |
 | `E_DOD_RISK` | 3 | Strict task without risk analysis | edit the Risk section |
+| `E_DOD_REGRESSION_TEST` | 3 | Task tagged `bug`/`fix` changes no test file (`quality.regression_tests`) | add a regression test |
+| `E_RUN_NESTED` | 3 | `aitk run` started by an agent that `aitk run` started | finish the task with `aitk close` |
+| `E_INSTALL` | 1 | `aitk audit install` could not install osv-scanner | install it manually |
 | `E_SCHEMA` | 3 | A file fails its JSON Schema | `aitk doctor --fix` |
 | `E_USAGE` | 2 | Invalid flags or arguments | `aitk <command> --help` |
 | `E_GIT` | 1 | git failed | message includes git's stderr |

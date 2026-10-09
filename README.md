@@ -66,15 +66,17 @@ No server, no account, works offline. The active task lives in the git directory
 | Cursor | always-on rule | `.cursor/mcp.json` | |
 | anything else | `AGENTS.md` | | git hooks |
 
-`aitk mcp` exposes the workflow as 18 MCP tools; every tool runs the same code as the CLI. Verified end-to-end with Claude Code and OpenCode.
+`aitk mcp` exposes the workflow as 20 MCP tools; every tool runs the same code as the CLI. Verified end-to-end with Claude Code and OpenCode.
 
 ## More than a task list
 
+- **Autopilot**: `aitk run --agent claude-code|codex|opencode|gemini-cli` works through the ready tasks one by one, in dependency order (`aitk task next`). The Definition of Done still decides: unfinished work is handed over as blocked, work needing a person waits for them, and the run stops when it gets stuck.
+- **Bug hunting**: `aitk audit --tasks` turns vulnerable dependencies and scanner findings into fix tasks; bug fixes need a regression test; `aitk impact` shows what a change can break and which changed files no test covers.
 - **Parallel work**: `aitk work <id>` creates a worktree and branch, claims the task, and starts it there. Three agents on three tasks, merged back with zero conflicts, is part of the test suite.
 - **Switch tools mid-task**: `aitk switch codex` writes a handoff and starts Codex with the brief.
 - **Gates**: `aitk hooks install` adds a secret scan, schema validation, Conventional Commits with `AI-Task`/`AI-Tool` trailers, and a pre-push check. Your existing hooks keep running. `aitk ci` runs the same gates in CI (GitHub Action: `uses: innaka-tech/ai-toolkit/action@v2`).
 - **Reports**: `aitk report --since 7d` shows what was done, by which tool, with evidence.
-- **Imports**: GitHub Issues, Spec Kit, and OpenSpec task lists become aitk tasks.
+- **Imports**: GitHub Issues, Spec Kit, and OpenSpec task lists become aitk tasks; Spec Kit phases become dependencies and finished tasks are checked off in `tasks.md`.
 - **Plugins**: any `aitk-<name>` executable on PATH can add to briefs, doctor checks, and knowledge search (JSON over stdin/stdout).
 - **Delivery standards for your project**: OWASP ASVS checklist and `aitk audit` (dependency vulnerabilities, static analysis, secrets) for risky work; user acceptance by a person (`aitk uat accept`); `aitk release` for SemVer, changelog, and tags from Conventional Commits; project conventions shown to every agent; goals with progress.
 - **Plans from other tools**: import BMAD tickets, Superpowers plans, Spec Kit / OpenSpec task lists, GitHub Issues, or any markdown checklist, then execute them with aitk's verification. An Agent Skill teaches agents the workflow.
@@ -95,7 +97,7 @@ One static binary, no runtime dependencies besides git. The script also installs
 ## Documentation
 
 - [Tutorial: your first project in 10 minutes](docs/tutorial.md)
-- How-to: [set up AI tools](docs/how-to/ai-tools.md) · [security, UAT, conventions](docs/how-to/quality.md) · [release your project](docs/how-to/release.md) · [BMAD, Superpowers, Spec Kit](docs/how-to/planning-tools.md) · [work in parallel](docs/how-to/parallel.md) · [gates and CI](docs/how-to/ci.md) · [migrate from v1](docs/how-to/migrate-v1.md) · [write a plugin](docs/how-to/plugins.md)
+- How-to: [set up AI tools](docs/how-to/ai-tools.md) · [security, UAT, conventions](docs/how-to/quality.md) · [release your project](docs/how-to/release.md) · [BMAD, Superpowers, Spec Kit](docs/how-to/planning-tools.md) · [autopilot: aitk run](docs/how-to/autopilot.md) · [work in parallel](docs/how-to/parallel.md) · [gates and CI](docs/how-to/ci.md) · [migrate from v1](docs/how-to/migrate-v1.md) · [write a plugin](docs/how-to/plugins.md)
 - Reference: [CLI](docs/reference/cli.md) · [specification](docs/spec/README.md) · [JSON Schemas](schemas/)
 - Explanation: [architecture decisions](docs/adr/README.md)
 

@@ -52,7 +52,11 @@ aitk adr new "<title>"
 Security audit: dependency vulnerabilities, static analysis, and secrets; records evidence on the active task
 
 ```
-aitk audit
+aitk audit [flags]
+```
+
+```
+      --tasks   create fix tasks from the findings (one per vulnerable dependency, one per other failing scanner)
 ```
 
 ## `aitk audit install`
@@ -180,6 +184,14 @@ Remove aitk from the git hooks
 
 ```
 aitk hooks uninstall
+```
+
+## `aitk impact`
+
+Blast radius of the current change: what references each changed file, and which tests cover it
+
+```
+aitk impact
 ```
 
 ## `aitk import bmad`
@@ -403,6 +415,26 @@ aitk review pass [flags]
       --findings int   number of problems found in this pass (required) (default -1)
 ```
 
+## `aitk run`
+
+Work through ready tasks with a headless agent, one at a time, until done or stuck (tasks finish only through aitk close)
+
+```
+aitk run [flags]
+```
+
+```
+      --agent string       claude-code, codex, opencode, or gemini-cli (default: [run] agent)
+      --cmd string         custom agent command, run through the shell
+      --commit             commit each finished task (one Conventional Commit per task)
+      --dry-run            show the order without running anything
+      --goal string        only tasks of this goal
+      --max-attempts int   agent runs per task before handing it over as blocked (default 2)
+      --max-tasks int      stop after this many tasks (default 10)
+      --tag string         only tasks with this tag
+      --timeout int        minutes per agent run (default 60)
+```
+
 ## `aitk security checklist`
 
 Add the OWASP ASVS checklist to a task (required for strict tasks)
@@ -477,6 +509,20 @@ aitk task new "<title>" [flags]
       --profile string     pin the risk profile: lite, standard, strict
       --start              start the task immediately
       --tag stringArray    tag (repeatable)
+```
+
+## `aitk task next`
+
+Show the tasks that can be worked on now, in order (dependencies done, not claimed elsewhere)
+
+```
+aitk task next [flags]
+```
+
+```
+      --goal string   only tasks of this goal
+      --start         start the first ready task
+      --tag string    only tasks with this tag
 ```
 
 ## `aitk task release`

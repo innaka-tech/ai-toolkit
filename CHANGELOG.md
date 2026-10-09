@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [2.4.0] - 2026-10-10
+
+Autonomous work with the same Definition of Done.
+
+### Added
+- **`aitk run`**: works through ready tasks with a headless agent (`--agent claude-code|codex|opencode|gemini-cli`, or `--cmd` for any tool), one task at a time. Tasks finish only through the agent's own `aitk close`; tasks needing a person stay `in_review`; unfinished tasks are handed over as `blocked` with a handoff after `--max-attempts`; the run stops after two unfinished tasks in a row; nested runs are refused. `--commit` makes one Conventional Commit per finished task; `--dry-run` shows the order. Configurable in `[run]`.
+- **`aitk task next`** (and MCP `task_next`): the tasks that can start now, in order, honouring `depends_on` and other worktrees' claims; `--start` takes the first. `aitk task start` warns about unfinished dependencies.
+- **`aitk impact`** (and MCP `impact`): for each changed source file, the files that reference it (by name, and by Go import path) and the tests that cover it; warns about changed files no test covers.
+- **`aitk audit --tasks`**: findings become fix tasks, one per vulnerable dependency (osv-scanner JSON, titled with the version that fixes every advisory) and one per other failing scanner, without duplicating open ones.
+- **Regression tests for bug fixes**: a task tagged `bug` or `fix` cannot be done until a test file changed with it (`E_DOD_REGRESSION_TEST`; `[quality] regression_tests = false` turns it off).
+- **Spec Kit, both ways**: phases and `[P]` markers become `depends_on`, `[US1]` markers become tags, tasks link the feature's spec.md and plan.md; closing a task checks off its line in tasks.md (also OpenSpec and markdown imports); importing again re-checks done tasks and reports lines checked only in the file.
+
+### Changed
+- The AGENTS.md block and the Agent Skill mention `aitk task next` and `aitk impact`; `aitk doctor --fix` updates the block.
+
 ## [2.3.0] - 2026-10-09
 
 ### Added
@@ -11,7 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `aitk doctor` warns when a project has dependency manifests but no scanner is installed, with the fix command; `aitk audit` warnings name it too.
 
 ### Fixed
-- `aitk audit` failed in repositories without dependency manifests once osv-scanner was installed (osv-scanner exits 128 when there is nothing to scan).
+- `aitk audit` failed in repositories without dependency manifests once osv-scanner was installed (osv-scanner exits 128 when there is nothing to scan). With manifests present, exit 128 still fails the audit.
 
 ## [2.2.0] - 2026-10-09
 

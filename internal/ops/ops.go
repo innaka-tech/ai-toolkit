@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -600,6 +601,13 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			return err
 		}
 		res.Handoff, res.Status = h.File, target
+		if target == task.Done {
+			if ok, err := syncSource(p, t); ok {
+				res.Notes = append(res.Notes, "checked off in "+fmt.Sprint(t.Legacy["file"]))
+			} else if err != nil {
+				res.Notes = append(res.Notes, "could not check off the source item: "+err.Error())
+			}
+		}
 		if entry != nil {
 			if err := knowledge.Add(p, *entry); err != nil {
 				return err
@@ -679,6 +687,11 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 	}
 	if len(open) > 0 {
 		return "", apperr.New("E_DOD_ACCEPTANCE", apperr.ExitGate, fmt.Sprintf("aitk task update %s --ac-done %s", t.ID, strings.Join(open, ",")), "acceptance criteria not yet satisfied: %s", strings.Join(open, ", "))
+	}
+	if p.Config.RegressionTestsRequired() && IsBugTask(t) && !touchesTests(p, t) {
+		return "", apperr.New("E_DOD_REGRESSION_TEST", apperr.ExitGate,
+			"add a test that fails without the fix and passes with it, then run: aitk check (or remove the bug tag if this is not a bug fix)",
+			"bug fix %s changes no test file: add a regression test so the bug cannot come back unnoticed", t.ID)
 	}
 	if prof == "strict" {
 		if !t.RiskFilled() {
@@ -797,4 +810,38 @@ func mergeUnique(a, b []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// IsBugTask reports whether t is a bug fix (tagged bug or fix).
+func IsBugTask(t *task.Task) bool {
+	return contains(t.Tags, "bug") || contains(t.Tags, "fix")
+}
+
+// touchesTests reports whether the task's changes include a test file.
+func touchesTests(p *project.Project, t *task.Task) bool {
+	paths := append([]string{}, t.Paths...)
+	for _, c := range profile.Diff(p) {
+		paths = append(paths, c.Path)
+	}
+	for _, path := range paths {
+		if IsTestPath(path) {
+			return true
+		}
+	}
+	return false
+}
+
+var testFile = regexp.MustCompile(`((?i:_test\.[a-z0-9]+|\.(test|spec)\.[a-z0-9]+|_spec\.rb)|^test_[^/]+\.py|[a-z0-9](Test|Tests|Spec)\.(java|kt|cs|php|swift|scala|groovy))$`)
+
+// IsTestPath reports whether a repository path is a test file, by common naming conventions.
+func IsTestPath(path string) bool {
+	path = strings.ReplaceAll(path, "\\", "/")
+	parts := strings.Split(path, "/")
+	for _, d := range parts[:len(parts)-1] {
+		switch strings.ToLower(d) {
+		case "test", "tests", "__tests__", "spec", "e2e", "testing", "integration-tests":
+			return true
+		}
+	}
+	return testFile.MatchString(parts[len(parts)-1])
 }

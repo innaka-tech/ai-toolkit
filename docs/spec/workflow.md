@@ -40,8 +40,8 @@ aitk owns exactly one block, delimited by markers. Everything outside the marker
 ## Working in this repository (aitk)
 
 1. Run `aitk brief` and read its output. Do not read other files under docs/ai/ unless the brief points to them.
-2. Run `aitk task start <id>` to continue a task, or `aitk task new "<title>"` to create one.
-3. Do the work. Run `aitk check` until it passes.
+2. Run `aitk task next --start` (or `aitk task start <id>`) to take a task, or `aitk task new "<title>"` to create one.
+3. Do the work. Run `aitk check` until it passes, and `aitk impact` to see what your change can break.
 4. Run `aitk close --summary "<what changed>" --knowledge "<lasting finding, or none>"`.
 5. If unsure, blocked, the change is risky, or the check fails twice: stop and ask the user.
 
@@ -123,6 +123,7 @@ The profile is computed from the diff between the merge base with `default_branc
 | `check.cmd` configured → latest check passed on the current tree | ✔ | ✔ | ✔ |
 | Every acceptance criterion written on the task is checked | ✔ | ✔ | ✔ |
 | At least one acceptance criterion exists | | ✔ | ✔ |
+| Task tagged `bug` or `fix` → a test file is among the changed paths (`quality.regression_tests`, default true) | ✔ | ✔ | ✔ |
 | Risk section filled (no placeholder text) | | | ✔ |
 | OWASP ASVS 4.0.3 checklist present and every item verified or marked N/A (`security.asvs_level` ≥ 1, default 1) | | | ✔ |
 | Security audit passed on the current tree (`security.audit`: `strict` by default, `all`, or `off`) | `all` | `all` | ✔ |
@@ -185,6 +186,8 @@ aitk restrains agents where prompts alone do not:
 | Sensitive paths | A diff touching `risk.sensitive_paths` is strict even when the task pins a lower profile. |
 | Independent review | Review passes count as independent only when made by a tool outside `workers` (tools that started or closed the task), the creator, and the closing tool. |
 | Large changes | `close` warns above 40 files or 2,000 changed lines. |
+| Regression tests | A bug fix cannot be done without a changed test file (§5). |
+| Autonomous runs | `aitk run` never sets a status to done; it hands unfinished tasks over as `blocked` after `run.max_attempts`, stops after two unfinished tasks in a row, refuses to start inside an agent it started (`E_RUN_NESTED`), and leaves user acceptance to a person. |
 
 ## 11. Self-healing
 
