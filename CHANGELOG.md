@@ -13,7 +13,7 @@ Autonomous work with the same Definition of Done.
 - **`aitk impact`** (and MCP `impact`): for each changed source file, the files that reference it (by name, and by Go import path) and the tests that cover it; warns about changed files no test covers.
 - **`aitk audit --tasks`**: findings become fix tasks, one per vulnerable dependency (osv-scanner JSON, titled with the version that fixes every advisory) and one per other failing scanner, without duplicating open ones.
 - **Regression tests for bug fixes**: a task tagged `bug` or `fix` cannot be done until a test file changed with it (`E_DOD_REGRESSION_TEST`; `[quality] regression_tests = false` turns it off).
-- **Spec Kit, both ways**: phases and `[P]` markers become `depends_on`, `[US1]` markers become tags, tasks link the feature's spec.md and plan.md; closing a task checks off its line in tasks.md (also OpenSpec and markdown imports); importing again re-checks done tasks and reports lines checked only in the file.
+- **Spec Kit, both ways**: phases, `[P]` markers, and explicit "(depends on T012, T013)" become `depends_on`, `[US1]` markers become tags, tasks link the feature's spec.md and plan.md; closing a task checks off its line in tasks.md (also OpenSpec and markdown imports); importing again re-checks done tasks and reports lines checked only in the file.
 
 ### Changed
 - The AGENTS.md block and the Agent Skill mention `aitk task next` and `aitk impact`; `aitk doctor --fix` updates the block.
