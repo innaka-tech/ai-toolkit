@@ -489,8 +489,8 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 				t.Evidence = &task.Evidence{Check: &c}
 			}
 		}
-		prof := computed
-		if t.ProfilePinned || rank(t.Profile) > rank(computed) {
+		prof := computed // the diff decides, unless the task pins a profile
+		if t.ProfilePinned {
 			prof = t.Profile
 		}
 		res = &CloseResult{Task: t.ID, Profile: prof}
@@ -599,10 +599,10 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 			return "", apperr.New("E_DOD_CHECK_STALE", apperr.ExitGate, "aitk check", "files changed after the last passing check")
 		}
 	}
-	if prof == "lite" {
-		return task.Done, nil
-	}
 	cs := t.Criteria()
+	if len(cs) == 0 && prof == "lite" {
+		return task.Done, nil // lite: criteria optional, but any written must be met (below)
+	}
 	if len(cs) == 0 {
 		return "", apperr.New("E_DOD_ACCEPTANCE", apperr.ExitGate, fmt.Sprintf(`aitk task update %s --add-ac "Given …, when …, then …"`, t.ID), "a %s task needs at least one acceptance criterion", prof)
 	}
@@ -615,7 +615,7 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 	if len(open) > 0 {
 		return "", apperr.New("E_DOD_ACCEPTANCE", apperr.ExitGate, fmt.Sprintf("aitk task update %s --ac-done %s", t.ID, strings.Join(open, ",")), "acceptance criteria not yet satisfied: %s", strings.Join(open, ", "))
 	}
-	if prof == "standard" {
+	if prof == "lite" || prof == "standard" {
 		return task.Done, nil
 	}
 	if !t.RiskFilled() {

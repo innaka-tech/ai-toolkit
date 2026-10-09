@@ -1,53 +1,84 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+# Install aitk: download a release, verify its SHA-256 checksum (and cosign signature
+# when cosign is installed), and place the binary in ~/.local/bin (no sudo).
+#
+#   curl -fsSL https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/install.sh | sh
+#
+# Environment: AITK_VERSION (e.g. v2.0.0; default: latest), AITK_INSTALL_DIR (default: ~/.local/bin).
+# The v1 bash toolkit is still available: git clone --branch v1.0.0 https://github.com/innaka-tech/ai-toolkit.git
+set -eu
 
-# Portable installer for macOS, Linux, WSL, and Git Bash.
-# Usage from a cloned checkout: ./install.sh
-# Usage from elsewhere:       curl .../install.sh | bash (when published)
+REPO="innaka-tech/ai-toolkit"
+BASE="${AITK_DOWNLOAD_URL:-https://github.com/$REPO/releases/download}"
+DEST="${AITK_INSTALL_DIR:-$HOME/.local/bin}"
 
-SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="${AI_TOOLKIT_DIR:-$HOME/.ai-toolkit}"
-REPO_URL="${AI_TOOLKIT_REPO:-https://github.com/innaka-tech/ai-toolkit.git}"
+say() { printf 'aitk-install: %s\n' "$*" >&2; }
+die() { say "error: $*"; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
 
-if [ "$SOURCE_DIR" != "$INSTALL_DIR" ]; then
-  if [ -d "$INSTALL_DIR/.git" ]; then
-    echo "Updating existing toolkit at $INSTALL_DIR"
-    git -C "$INSTALL_DIR" pull --ff-only
-  elif [ -e "$INSTALL_DIR" ] && [ "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
-    echo "Install directory is not empty: $INSTALL_DIR" >&2
-    echo "Set AI_TOOLKIT_DIR to a new path or move the existing directory." >&2
-    exit 1
-  else
-    echo "Cloning toolkit into $INSTALL_DIR"
-    mkdir -p "$(dirname "$INSTALL_DIR")"
-    git clone "$REPO_URL" "$INSTALL_DIR"
+need curl
+need tar
+need uname
+
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+case "$os" in
+  darwin|linux) ;;
+  mingw*|msys*|cygwin*) die "on Windows, download the .zip from https://github.com/$REPO/releases or run: go install github.com/$REPO/cmd/aitk@latest" ;;
+  *) die "unsupported OS: $os" ;;
+esac
+arch=$(uname -m)
+case "$arch" in
+  x86_64|amd64) arch=amd64 ;;
+  arm64|aarch64) arch=arm64 ;;
+  *) die "unsupported architecture: $arch" ;;
+esac
+
+version="${AITK_VERSION:-}"
+if [ -z "$version" ]; then
+  url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest") || die "cannot reach GitHub"
+  version=${url##*/}
+fi
+case "$version" in v*) ;; *) version="v$version" ;; esac
+num=${version#v}
+
+archive="aitk_${num}_${os}_${arch}.tar.gz"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT INT TERM
+
+say "downloading aitk $version for $os/$arch"
+curl -fsSL "$BASE/$version/$archive" -o "$tmp/$archive" || die "download failed: $BASE/$version/$archive"
+curl -fsSL "$BASE/$version/checksums.txt" -o "$tmp/checksums.txt" || die "checksums.txt not found for $version"
+
+expected=$(grep " $archive\$" "$tmp/checksums.txt" | cut -d' ' -f1)
+[ -n "$expected" ] || die "$archive is not listed in checksums.txt"
+if command -v sha256sum >/dev/null 2>&1; then
+  actual=$(sha256sum "$tmp/$archive" | cut -d' ' -f1)
+else
+  need shasum
+  actual=$(shasum -a 256 "$tmp/$archive" | cut -d' ' -f1)
+fi
+[ "$expected" = "$actual" ] || die "checksum mismatch for $archive (expected $expected, got $actual)"
+say "checksum verified"
+
+if command -v cosign >/dev/null 2>&1; then
+  if curl -fsSL "$BASE/$version/checksums.txt.sig" -o "$tmp/checksums.txt.sig" 2>/dev/null &&
+     curl -fsSL "$BASE/$version/checksums.txt.pem" -o "$tmp/checksums.txt.pem" 2>/dev/null; then
+    cosign verify-blob --certificate "$tmp/checksums.txt.pem" --signature "$tmp/checksums.txt.sig" \
+      --certificate-identity-regexp "^https://github.com/$REPO/" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com "$tmp/checksums.txt" >/dev/null 2>&1 ||
+      die "cosign signature verification failed"
+    say "signature verified (cosign)"
   fi
 fi
 
-chmod +x "$INSTALL_DIR/scripts"/* 2>/dev/null || true
+tar -xzf "$tmp/$archive" -C "$tmp"
+mkdir -p "$DEST"
+mv "$tmp/aitk" "$DEST/aitk"
+chmod 755 "$DEST/aitk"
+say "installed $("$DEST/aitk" version 2>/dev/null || echo aitk) to $DEST/aitk"
 
-SHELL_NAME="$(basename "${SHELL:-bash}")"
-case "$SHELL_NAME" in
-  zsh) RC_FILE="${ZDOTDIR:-$HOME}/.zshrc" ;;
-  fish) RC_FILE="$HOME/.config/fish/config.fish" ;;
-  *) RC_FILE="$HOME/.bashrc" ;;
+case ":$PATH:" in
+  *":$DEST:"*) ;;
+  *) say "add $DEST to your PATH, e.g.: echo 'export PATH=\"$DEST:\$PATH\"' >> ~/.profile" ;;
 esac
-
-mkdir -p "$(dirname "$RC_FILE")"
-PATH_LINE="export PATH=\"$INSTALL_DIR/scripts:\$PATH\""
-if [ "$SHELL_NAME" = "fish" ]; then
-  PATH_LINE="set -gx PATH $INSTALL_DIR/scripts \$PATH"
-fi
-
-if ! grep -Fq "$INSTALL_DIR/scripts" "$RC_FILE" 2>/dev/null; then
-  {
-    printf '\n# ai-toolkit\n'
-    printf '%s\n' "$PATH_LINE"
-  } >> "$RC_FILE"
-fi
-
-"$INSTALL_DIR/scripts/ai-aliases" install >/dev/null 2>&1 || true
-
-echo "AI Toolkit installed at $INSTALL_DIR"
-echo "Reload your shell: source $RC_FILE"
-echo "Then run: ai-toolkit --help"
+say "next: cd <your repo> && aitk init (or aitk migrate for a v1 project) && aitk adapters sync"

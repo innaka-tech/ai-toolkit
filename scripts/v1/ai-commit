@@ -1,0 +1,58 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+MESSAGE="${1:-}"
+TARGET_DIR="${2:-$PWD}"
+PUSH_AFTER="false"
+DEPLOY_TARGET=""
+
+[ -n "$MESSAGE" ] || { echo 'Usage: ai-commit "commit message" [path] [--push] [--deploy target]' >&2; exit 1; }
+
+shift || true
+if [ "$#" -gt 0 ] && [ -d "$1" ]; then
+  TARGET_DIR="$1"
+  shift
+fi
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --push)
+      PUSH_AFTER="true"
+      shift
+      ;;
+    --deploy)
+      DEPLOY_TARGET="${2:-default}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+ai_require_git_repo "$ROOT"
+ai_ensure_initialized "$ROOT"
+
+"$SCRIPT_DIR/ai-close" --status ACTIVE --summary "Prepared commit: $MESSAGE" "$ROOT" >/dev/null
+
+git -C "$ROOT" add -A
+
+if git -C "$ROOT" diff --cached --quiet; then
+  echo "Nothing to commit."
+  exit 0
+fi
+
+git -C "$ROOT" commit -m "$MESSAGE"
+
+if [ "$PUSH_AFTER" = "true" ]; then
+  "$SCRIPT_DIR/ai-push" "$ROOT"
+fi
+
+if [ -n "$DEPLOY_TARGET" ]; then
+  "$SCRIPT_DIR/ai-deploy" "$DEPLOY_TARGET" "$ROOT"
+fi

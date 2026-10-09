@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/aitk-smoke.XXXXXX")"
 export HOME="$WORK/home"
-export PATH="$ROOT/scripts:$PATH"
+export PATH="$ROOT/scripts/v1:$PATH"
 export UTEKE_DISABLED=1
 mkdir -p "$HOME"
 
@@ -43,7 +43,7 @@ check "close with knowledge succeeds" "ai-close --summary 'did it' --knowledge '
 check "knowledge recorded" "grep -q 'smoke finding' docs/ai/knowledge.md"
 check "handoff recorded" "grep -q 'did it' docs/ai/handoff.md"
 check "ai-state.json still valid JSON" "jq -e . ai-state.json"
-check "removed Fusion commands are absent" "[ ! -e '$ROOT/scripts/ai-handoff' ] && [ ! -e '$ROOT/scripts/ai-agent-report' ]"
+check "removed Fusion commands are absent" "[ ! -e '$ROOT/scripts/v1/ai-handoff' ] && [ ! -e '$ROOT/scripts/v1/ai-agent-report' ]"
 
 echo
 echo "passed: $pass  failed: $fail  (workdir: $WORK)"

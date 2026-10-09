@@ -1,0 +1,163 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TARGET_DIR="$PWD"
+LIMIT=5
+WRITE_OUTPUT="true"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --limit)
+      LIMIT="${2:-5}"
+      shift 2
+      ;;
+    --no-write)
+      WRITE_OUTPUT="false"
+      shift
+      ;;
+    *)
+      TARGET_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+ai_ensure_initialized "$ROOT"
+
+DOCS_DIR="$(ai_docs_dir "$ROOT")"
+CURRENT_TASK="$(ai_current_task_file "$ROOT")"
+GOALS_FILE="$DOCS_DIR/goals.md"
+KNOWLEDGE_FILE="$(ai_knowledge_file "$ROOT")"
+OUTPUT_FILE="$DOCS_DIR/next-tasks.md"
+NOW="$(ai_now_utc)"
+PROJECT="$(basename "$ROOT")"
+
+case "$LIMIT" in
+  ''|*[!0-9]*) LIMIT=5 ;;
+esac
+[ "$LIMIT" -gt 0 ] || LIMIT=5
+
+SUGGESTIONS=()
+SOURCES=()
+
+add_suggestion() {
+  local priority="$1"
+  local title="$2"
+  local reason="$3"
+  local source="$4"
+  [ "${#SUGGESTIONS[@]}" -lt "$LIMIT" ] || return 0
+  SUGGESTIONS+=("$priority|$title|$reason")
+  SOURCES+=("$source")
+}
+
+clean_text() {
+  printf '%s' "$1" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//'
+}
+
+extract_bullets() {
+  local file="$1"
+  local heading="$2"
+  [ -f "$file" ] || return 0
+  ai_extract_section "$file" "$heading" |
+    sed -n 's/^[[:space:]]*-[[:space:]]*//p' |
+    sed '/^[[:space:]]*$/d' |
+    head -n 8
+}
+
+while IFS= read -r item; do
+  [ -n "$item" ] || continue
+  case "$item" in
+    "Define the first task"|"Inspect the current code and context"|"Execute the task"|"Update handoff notes before switching tools"|"To be determined") continue ;;
+  esac
+  add_suggestion "MEDIUM" "$item" "Explicit next step recorded on active task." "current-task.md"
+done < <(extract_bullets "$CURRENT_TASK" "## Next Steps")
+
+while IFS= read -r item; do
+  [ -n "$item" ] || continue
+  case "$item" in
+    None|none|"None recorded"|"None recorded."|"No risks recorded"|"No risks recorded.") continue ;;
+  esac
+  item="$(clean_text "$item")"
+  add_suggestion "HIGH" "Resolve risk: $item" "Risk was recorded but not marked resolved." "current-task.md"
+done < <(extract_bullets "$CURRENT_TASK" "## Risks")
+
+VALIDATION="$(extract_bullets "$CURRENT_TASK" "## Validation" | head -n 1 || true)"
+case "$VALIDATION" in
+  ""|"Not run"|"TBD"|"None"|"None recorded."|"No validation recorded.") ;;
+  *)
+    VALIDATION="$(clean_text "$VALIDATION")"
+    add_suggestion "HIGH" "Run or verify validation: $VALIDATION" "Current task contains validation work that still needs explicit confirmation." "current-task.md"
+    ;;
+esac
+
+RECENT_KNOWLEDGE="$(sed -n 's/^- Finding:[[:space:]]*//p' "$KNOWLEDGE_FILE" 2>/dev/null | tail -n 1 || true)"
+if [ -n "$RECENT_KNOWLEDGE" ]; then
+  RECENT_KNOWLEDGE="$(clean_text "$RECENT_KNOWLEDGE")"
+  add_suggestion "MEDIUM" "Follow up on discovered knowledge: $RECENT_KNOWLEDGE" "Latest completed-task finding may imply documentation, validation, or follow-up work." "knowledge.md"
+fi
+
+if [ -f "$GOALS_FILE" ]; then
+  while IFS='|' read -r heading status; do
+    [ -n "$heading" ] || continue
+    heading="$(clean_text "$heading" | sed 's/^###[[:space:]]*//; s/^##[[:space:]]*//')"
+    status="$(clean_text "$status" | sed 's/^- Status:[[:space:]]*//')"
+    add_suggestion "MEDIUM" "Advance goal: $heading" "Goal remains $status." "goals.md"
+  done < <(
+    awk '
+      /^###[[:space:]]|^##[[:space:]]Goal[[:space:]]/ { heading=$0 }
+      /^-[[:space:]]Status:[[:space:]]*(PLANNED|ACTIVE|IN_PROGRESS|WIP|TBD)/ {
+        if (heading != "") print heading "|" $0
+      }
+    ' "$GOALS_FILE" | head -n 8
+  )
+fi
+
+CHANGED_COUNT="$(ai_git_changed_files "$ROOT" | wc -l | tr -d ' ')"
+if [ "${CHANGED_COUNT:-0}" -gt 0 ]; then
+  add_suggestion "LOW" "Review and commit current changes" "$CHANGED_COUNT uncommitted file entries remain in the project." "git status"
+fi
+
+if [ "${#SUGGESTIONS[@]}" -eq 0 ]; then
+  add_suggestion "LOW" "Inspect project backlog and define next task" "No explicit risks, validation gaps, next steps, or unfinished goals were found." "project context"
+fi
+
+render_output() {
+  echo "# Suggested Next Tasks"
+  echo
+  echo "Project: $PROJECT"
+  echo "Generated At: $NOW"
+  echo
+  echo "Suggestions are evidence-based from current task state, goals, validation, risks, and repository state. Review before starting work."
+  echo
+  index=1
+  for suggestion in "${SUGGESTIONS[@]}"; do
+    IFS='|' read -r priority title reason <<< "$suggestion"
+    echo "## $index. [$priority] $title"
+    echo "- Why: $reason"
+    echo "- Source: ${SOURCES[$((index - 1))]}"
+    echo
+    index=$((index + 1))
+  done
+  echo "## Agent Use"
+  echo
+  echo "Select one suggestion only after checking dependencies and user priority. Start it with:"
+  echo
+  echo 'ai-start "<selected task>"'
+}
+
+if [ "$WRITE_OUTPUT" = "true" ]; then
+  tmp_file="$OUTPUT_FILE.tmp"
+  render_output > "$tmp_file"
+  mv "$tmp_file" "$OUTPUT_FILE"
+fi
+
+if [ "$WRITE_OUTPUT" = "true" ]; then
+  echo "Generated $OUTPUT_FILE"
+else
+  render_output
+fi

@@ -3,7 +3,9 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.0.0] - 2026-10-09
+
+First release of `aitk`, a rewrite of the toolkit as a single Go binary. See the [README](README.md) and [specification](docs/spec/README.md).
 
 ### Added
 - `aitk` v2 core in Go (single binary): `init`, `migrate`, `brief`, `task new|start|list|show|update|block`, `check`, `close`, `review pass`, `knowledge add|search|compact|pin`, `adr new|list`, `doctor`, `version`; `--json` on every command (`aitk.result/v1`), exit codes 0–4, error codes with fix hints.
@@ -23,7 +25,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 - Project lock is now a kernel lock (flock / LockFileEx); no stale locks.
+- Definition of Done: criteria written on a task must be satisfied under every profile; the profile comes from the diff unless pinned.
 - Spec: config is validated from TOML; knowledge entries may carry `file`; checks record a `tree` fingerprint; session keeps `last_check`; hand-written and v1-frontmatter task files migrate (ID collisions get a fresh ID with `legacy.v1_id`).
+
+### Notes
+- English only; Indonesian output is planned for 2.1 (ADR-0010).
+- `ai-*` commands are now shims: they forward to `aitk` in v2 projects and run the frozen v1 scripts (`scripts/v1/`) in v1 projects.
+- `install.sh` installs the v2 binary; the v1 installer is `scripts/v1/install-v1.sh`.
 
 ### Removed
 - Python migration prototype (replaced by `aitk migrate`).

@@ -1,0 +1,98 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/ai-lib"
+
+TARGET_DIR="$PWD"
+ACTION="status"
+APPLY="false"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    status|json|opencode)
+      ACTION="$1"
+      shift
+      ;;
+    --apply)
+      APPLY="true"
+      shift
+      ;;
+    *)
+      TARGET_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+ROOT="$(ai_find_project_root "$TARGET_DIR")"
+if [ -f "$(ai_local_config_file "$ROOT")" ]; then
+  ai_load_local_config "$ROOT"
+fi
+URL="$(ai_browser_mcp_url "$ROOT")"
+NAME="$(ai_browser_mcp_name "$ROOT")"
+ENABLED="$(ai_browser_mcp_enabled "$ROOT")"
+
+show_json() {
+  if ai_has_cmd python3; then
+    MCP_NAME="$NAME" MCP_URL="$URL" MCP_ENABLED="$ENABLED" python3 - <<'PY'
+import json, os
+print(json.dumps({
+    "name": os.environ["MCP_NAME"],
+    "type": "remote",
+    "url": os.environ["MCP_URL"],
+    "enabled": os.environ["MCP_ENABLED"].lower() == "true",
+}, indent=2))
+PY
+  else
+    printf '{"name":"%s","type":"remote","url":"%s","enabled":%s}\n' \
+      "$NAME" "$URL" "$ENABLED"
+  fi
+}
+
+case "$ACTION" in
+  json)
+    show_json
+    ;;
+  status)
+    echo "Browser MCP"
+    echo "  Name: $NAME"
+    echo "  URL: ${URL:-not configured}"
+    echo "  Enabled: $ENABLED"
+    if [ "$ENABLED" = "true" ] && [ -n "$URL" ] && ai_has_cmd curl; then
+      HTTP_STATUS="$(curl -L --max-time 3 -sS -o /dev/null -w '%{http_code}' "$URL" 2>/dev/null || true)"
+      echo "  Reachability: HTTP ${HTTP_STATUS:-unreachable}"
+    else
+      echo "  Reachability: skipped (disabled, no URL, or curl unavailable)"
+    fi
+    ;;
+  opencode)
+    [ -n "$URL" ] || { echo "Browser MCP URL is empty. Set BROWSER_MCP_URL first." >&2; exit 1; }
+    CONFIG_PATH="${OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"
+    if [ "$APPLY" != "true" ]; then
+      echo "OpenCode MCP snippet (no changes made):"
+      show_json
+      echo
+      echo "Apply to $CONFIG_PATH with: ai-mcp opencode --apply"
+      exit 0
+    fi
+    ai_has_cmd node || { echo "Node.js is required for --apply to OpenCode config." >&2; exit 1; }
+    [ -f "$CONFIG_PATH" ] || { echo "OpenCode config not found: $CONFIG_PATH" >&2; exit 1; }
+    cp "$CONFIG_PATH" "$CONFIG_PATH.bak"
+    MCP_CONFIG_PATH="$CONFIG_PATH" MCP_NAME="$NAME" MCP_URL="$URL" MCP_ENABLED="$ENABLED" \
+      node -e '
+const fs = require("fs");
+const p = process.env.MCP_CONFIG_PATH;
+const j = JSON.parse(fs.readFileSync(p, "utf8"));
+j.mcp = j.mcp || {};
+j.mcp[process.env.MCP_NAME] = {
+  type: "remote",
+  url: process.env.MCP_URL,
+  enabled: process.env.MCP_ENABLED.toLowerCase() === "true"
+};
+fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
+'
+    echo "Updated $CONFIG_PATH (backup: $CONFIG_PATH.bak)"
+    ;;
+esac

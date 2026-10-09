@@ -1,82 +1,12 @@
-#!/bin/bash
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-show_help() {
-  cat <<'EOF'
-AI Toolkit — shared context and delivery workflow for multi-AI projects
-
-Usage:
-  ai-toolkit <command> [args...]
-  ai-toolkit --help
-
-Project context:
-  init [path]                 Bootstrap/repair AGENTS.md, docs/ai, ai-state.json
-  resume [path]               Show project context, active task, and latest handoff
-  start <task> [options]       Start task; use --goal and --sub-goal to link it
-  preflight [path]             Run mandatory risk and context gate
-  exec <provider> [path]       Run preflight, then start the given AI tool
-  close [options]             Close task, handoff, and durable knowledge
-  next [options]              Generate evidence-based next-task suggestions
-  session [options]           Build one AI Session Brief for the next tool
-
-Health and memory:
-  doctor [path]               Audit toolkit, project, hooks, providers, memory
-  fix [options]               Repair safe missing project/toolkit pieces
-  sync [summary]              Save project summary to Uteke
-  recall [query]              Recall project memory from Uteke
-  map <subcommand>            Query codebase-memory knowledge graph
-  mcp <status|json|opencode>  Inspect/configure optional Browser MCP
-
-Git and deployment:
-  commit <message> [options]  Sync context and create a commit
-  push [path]                  Push current branch
-  deploy <target>             Run configured deployment command
-
-Other:
-  aliases <install|uninstall> Manage zsh shortcuts
-  help                        Show this menu
-
-Examples:
-  ai-toolkit init .
-  ai-toolkit doctor
-  ai-toolkit session --index
-  ai-toolkit close --summary "implemented auth flow" --knowledge "OAuth callback now requires state validation"
-EOF
-}
-
-COMMAND="${1:-help}"
-if [ "$COMMAND" = "--help" ] || [ "$COMMAND" = "-h" ] || [ "$COMMAND" = "help" ]; then
-  show_help
-  exit 0
-fi
-shift
-
-case "$COMMAND" in
-  init) SCRIPT="ai-init" ;;
-  resume) SCRIPT="ai-resume" ;;
-  start) SCRIPT="ai-start" ;;
-  preflight) SCRIPT="ai-preflight" ;;
-  exec) SCRIPT="ai-exec" ;;
-  close) SCRIPT="ai-close" ;;
-  next) SCRIPT="ai-next" ;;
-  session) SCRIPT="ai-session" ;;
-  doctor) SCRIPT="ai-doctor" ;;
-  fix) SCRIPT="ai-fix" ;;
-  sync) SCRIPT="ai-sync" ;;
-  recall) SCRIPT="ai-recall" ;;
-  map) SCRIPT="ai-map" ;;
-  mcp) SCRIPT="ai-mcp" ;;
-  commit) SCRIPT="ai-commit" ;;
-  push) SCRIPT="ai-push" ;;
-  deploy) SCRIPT="ai-deploy" ;;
-  aliases) SCRIPT="ai-aliases" ;;
-  *)
-    echo "Unknown command: $COMMAND" >&2
-    echo "Run 'ai-toolkit --help' to see available commands." >&2
-    exit 2
-    ;;
+#!/bin/sh
+# ai-toolkit: v1 command kept for compatibility; see scripts/_shim.sh.
+. "$(dirname "$0")/_shim.sh"
+if shim_is_v1; then shim_v1 ai-toolkit "$@"; fi
+# ai-toolkit <command> [args]: run the matching ai-<command> shim (v2 project or new repository)
+cmd=${1:-help}
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  help|-h|--help) shim_aitk --help ;;
+  *) if [ -x "$SHIM_DIR/ai-$cmd" ]; then exec "$SHIM_DIR/ai-$cmd" "$@"; fi
+     shim_v1 ai-toolkit "$cmd" "$@" ;;
 esac
-
-exec "$SCRIPT_DIR/$SCRIPT" "$@"
