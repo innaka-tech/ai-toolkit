@@ -166,6 +166,15 @@ func Run(dir string, dryRun bool) (*Report, error) {
 		if st == nil || tid == nil {
 			return false
 		}
+		// v1 wrote a placeholder when nothing was active ("Task ID: none", "Status: IDLE").
+		switch strings.ToLower(strings.TrimSpace(tid[1])) {
+		case "none", "n/a", "-", "":
+			return false
+		}
+		switch strings.ToLower(strings.TrimSpace(st[1])) {
+		case "idle", "none":
+			return false
+		}
 		obj, _ := doc.Section(text, "Objective")
 		title := textx.Truncate(textx.FirstLine(obj), 120)
 		if len([]rune(title)) < 3 {
@@ -197,7 +206,11 @@ func Run(dir string, dryRun bool) (*Report, error) {
 		rel := project.DocsAI + "/current-task.md"
 		r.keep(p, rel)
 		if !addTemplate(string(b), rel) {
-			r.Warnings = append(r.Warnings, "current-task.md is free-form: kept in docs/ai/_legacy/, shown by `aitk brief` until tasks exist")
+			msg := "current-task.md is free-form: kept in docs/ai/_legacy/, shown by `aitk brief` until tasks exist"
+			if regexp.MustCompile(`(?mi)^(Task ID: *(none|n/a|-)\s*$|Status: *idle\s*$)`).MatchString(string(b)) {
+				msg = "current-task.md had no active v1 task: kept in docs/ai/_legacy/ (no task created)"
+			}
+			r.Warnings = append(r.Warnings, msg)
 		}
 	}
 	entries, _ := os.ReadDir(p.Path(project.TasksDir))

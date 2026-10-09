@@ -3,6 +3,15 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [2.0.2] - 2026-10-09
+
+Findings from the first real-project pilot.
+
+### Fixed
+- `aitk migrate` no longer turns the v1 "no active task" placeholder (`Task ID: none`, `Status: IDLE`) into a task.
+- aitk's own metadata (`aitk.toml`, `AGENTS.md`, `CLAUDE.md`, `.gitattributes`, `docs/adr/`, `.aitk/`) no longer counts toward the risk profile or makes a passing check stale; right after a migration the brief listed them as "changed files" and raised the profile.
+- `aitk version` shows the module version when installed with `go install`.
+
 ## [2.0.1] - 2026-10-09
 
 ### Fixed
