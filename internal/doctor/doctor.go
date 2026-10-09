@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/innaka-tech/ai-toolkit/v2/internal/adapters"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/agentsmd"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/compat"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/heal"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/knowledge"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/plugins"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
@@ -49,7 +53,22 @@ func (r *Report) add(name, status, detail string) *Check {
 func Run(p *project.Project, fix bool) *Report {
 	r := &Report{}
 	r.add("config", "ok", project.ConfigFile+" is valid")
-	if p.Config.Check.Cmd == "" {
+	// Self-healing: damaged aitk files (merge conflicts, hand-edited task frontmatter).
+	if fix {
+		for _, a := range heal.Run(p) {
+			r.Checks = append(r.Checks, Check{Name: "heal " + a.File, Status: "ok", Detail: a.Action + ": " + a.Detail, Fixed: a.Action != "quarantined"})
+			if a.Action == "quarantined" {
+				r.Checks[len(r.Checks)-1].Status = "warn"
+				r.Warns++
+			}
+		}
+	} else {
+		for _, a := range heal.Problems(p) {
+			r.add("heal "+a.File, "warn", "repairable with aitk doctor --fix: "+a.Detail)
+		}
+	}
+
+	if p.Config.Check.Cmd == "" && project.DetectCheck(p.Root) == "" {
 		r.add("check command", "warn", "no [check] cmd: the Definition of Done cannot verify work")
 	}
 
@@ -112,7 +131,7 @@ func Run(p *project.Project, fix bool) *Report {
 		r.add("stale tasks", "warn", "in_progress for over 7 days: "+strings.Join(stale, ", "))
 	}
 	if id := session.Load(p).Active(); id != "" {
-		if _, err := task.Find(p, id); err != nil {
+		if _, err := task.Find(p, id); err != nil && !taskFileExists(p, id) {
 			c := r.add("session", "warn", "active task "+id+" no longer exists")
 			if fix {
 				s := session.Load(p)
@@ -190,6 +209,31 @@ func Run(p *project.Project, fix bool) *Report {
 			}
 		}
 	}
+	// Adapters that drifted from what aitk installs.
+	env := adapters.DefaultEnv(p.Root)
+	if tools := adapters.Configured(env); len(tools) > 0 {
+		if cs, err := adapters.Plan(env, tools, false); err == nil && len(cs) > 0 {
+			var files []string
+			for _, c := range cs {
+				files = append(files, c.Rel)
+			}
+			c := r.add("adapters", "warn", "drifted: "+strings.Join(files, ", "))
+			if fix && adapters.Apply(cs, "") == nil {
+				c.Fixed, c.Status = true, "ok"
+				r.Warns--
+			}
+		}
+	}
+	// A missing check command when one can be detected.
+	if p.Config.Check.Cmd == "" {
+		if cmd := project.DetectCheck(p.Root); cmd != "" {
+			c := r.add("check command", "warn", "not configured; detected: "+cmd)
+			if fix && addCheck(p, cmd) == nil {
+				c.Fixed, c.Status, c.Detail = true, "ok", "set to "+cmd
+				r.Warns--
+			}
+		}
+	}
 	if hw := compat.HandWritten(p); len(hw) > 0 {
 		r.add("generated indexes", "warn", "left untouched because they are hand-written: "+strings.Join(hw, ", ")+" (move them to docs/ai/_legacy/ to let aitk maintain them)")
 	}
@@ -206,4 +250,27 @@ func lines(path string) int {
 		return 0
 	}
 	return strings.Count(string(b), "\n")
+}
+
+// addCheck appends a [check] table to aitk.toml when none exists.
+func addCheck(p *project.Project, cmd string) error {
+	path := p.Path(project.ConfigFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(l) == "[check]" {
+			return fmt.Errorf("[check] already present")
+		}
+	}
+	s := strings.TrimRight(string(b), "\n") + fmt.Sprintf("\n\n[check]\ncmd = %q\ntimeout = \"10m\"\n", cmd)
+	return fsx.WriteFileKeep(path, []byte(s), 0o644)
+}
+
+// taskFileExists reports whether a file for task id exists, even if it cannot be parsed
+// (a damaged file must not make aitk forget the active task).
+func taskFileExists(p *project.Project, id string) bool {
+	m, _ := filepath.Glob(p.Path(project.TasksDir, id+"-*.md"))
+	return len(m) > 0
 }

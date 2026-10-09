@@ -76,6 +76,8 @@ No server, no account, works offline. The active task lives in the git directory
 - **Reports**: `aitk report --since 7d` shows what was done, by which tool, with evidence.
 - **Imports**: GitHub Issues, Spec Kit, and OpenSpec task lists become aitk tasks.
 - **Plugins**: any `aitk-<name>` executable on PATH can add to briefs, doctor checks, and knowledge search (JSON over stdin/stdout).
+- **Self-control**: aitk tells agents to stop after repeated failing checks, refuses credentials in anything it records, and keeps `done` behind the Definition of Done.
+- **Self-healing**: hand-edited or conflicted aitk files are repaired before the next command (`self-healed:` warnings), and `aitk doctor --fix` restores drifted adapters and settings. Nothing is thrown away.
 - **Migration from v1**: `aitk migrate` is lossless and idempotent. Every original file is kept byte for byte in `docs/ai/_legacy/`.
 
 ## Install
