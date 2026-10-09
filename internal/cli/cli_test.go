@@ -138,7 +138,7 @@ func snapshot(t *testing.T, dir string) map[string]string {
 		if !info.IsDir() {
 			b, _ := os.ReadFile(p)
 			rel, _ := filepath.Rel(dir, p)
-			m[rel] = string(b)
+			m[filepath.ToSlash(rel)] = string(b)
 		}
 		return nil
 	})
@@ -351,13 +351,18 @@ func TestMigrateFixtureLosslessAndIdempotent(t *testing.T) {
 		}
 	}
 	// Every rewritten v1 file is preserved byte for byte.
+	checked := 0
 	for rel, content := range before {
 		if strings.HasPrefix(rel, "docs/ai/") && rel != "docs/ai/uat-checklist.md" || rel == "ai-state.json" {
 			legacy := "docs/ai/_legacy/" + strings.TrimPrefix(rel, "docs/ai/")
 			if got := read(t, dir, legacy); got != content {
 				t.Fatalf("%s not preserved verbatim", rel)
 			}
+			checked++
 		}
+	}
+	if checked < 8 {
+		t.Fatalf("lossless check covered only %d files", checked)
 	}
 	if read(t, dir, "docs/ai/uat-checklist.md") != before["docs/ai/uat-checklist.md"] {
 		t.Fatal("user content was modified")

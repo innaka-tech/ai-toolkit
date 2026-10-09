@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable  # latest patch release: stdlib security fixes
       - name: gofmt
         if: runner.os != 'Windows'
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
@@ -31,7 +31,10 @@ jobs:
         run: go build -o aitk-bin ./cmd/aitk
       - name: smoke
         shell: bash
-        run: ./aitk-bin version --json && ./aitk-bin --json nope | grep -q E_USAGE
+        run: |
+          ./aitk-bin version --json
+          set +e; out=$(./aitk-bin --json nope); code=$?; set -e
+          test "$code" -eq 2 && echo "$out" | grep -q E_USAGE
 
   vulncheck:
     runs-on: ubuntu-latest
@@ -39,5 +42,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable  # latest patch release: stdlib security fixes
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
