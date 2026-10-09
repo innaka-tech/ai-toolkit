@@ -1,16 +1,57 @@
 ---
 id: T-9ycc
 title: Autonomous runs with the Definition of Done
-status: in_review
-profile: standard
+status: done
+profile: strict
 tags:
   - autopilot
 created: "2026-10-09T16:54:39Z"
-updated: "2026-10-09T17:46:49Z"
+updated: "2026-10-09T18:46:06Z"
+closed: "2026-10-09T18:46:06Z"
 created_by: claude-code
 workers:
   - claude-code
+  - codex
 branch: feat/autopilot
+paths:
+  - .claude/settings.json
+  - .claude/skills/aitk/SKILL.md
+  - .mcp.json
+  - .omo/run-continuation/ses_ede0d2247ffeX12uzbXxtf4K7p.json
+  - .omo/run-continuation/ses_ede25061affeg8q1WO06ECPbDy.json
+  - CHANGELOG.md
+  - README.md
+  - docs/how-to/autopilot.md
+  - docs/how-to/planning-tools.md
+  - docs/reference/cli.md
+  - docs/spec/cli.md
+  - docs/spec/workflow.md
+  - internal/agentsmd/agentsmd.go
+  - internal/agentsmd/agentsmd_test.go
+  - internal/audit/osv.go
+  - internal/audit/osv_test.go
+  - internal/cli/autopilot_test.go
+  - internal/cli/cli.go
+  - internal/doctor/doctor.go
+  - internal/gates/gates.go
+  - internal/gates/run_e2e_test.go
+  - internal/mcpserver/server.go
+  - internal/ops/audit_tasks.go
+  - internal/ops/impact.go
+  - internal/ops/importer.go
+  - internal/ops/next.go
+  - internal/ops/ops.go
+  - internal/ops/proc_unix.go
+  - internal/ops/proc_windows.go
+  - internal/ops/quality.go
+  - internal/ops/review_b_test.go
+  - internal/ops/run.go
+  - internal/project/project.go
+  - internal/secrets/secrets_test.go
+  - internal/task/task.go
+  - schemas/config.schema.json
+  - schemas/task.schema.json
+  - skills/aitk/SKILL.md
 review:
   passes:
     - "n": 1
@@ -29,31 +70,39 @@ review:
       by: codex
       at: "2026-10-09T17:46:49Z"
       findings: 1
+    - "n": 5
+      by: codex
+      at: "2026-10-09T18:07:54Z"
+      findings: 0
+    - "n": 6
+      by: opencode
+      at: "2026-10-09T18:45:40Z"
+      findings: 0
 evidence:
   check:
     cmd: go vet ./... && go test -short ./...
     exit_code: 0
-    duration_ms: 38632
+    duration_ms: 1089
     summary: |-
-      … test files]
+      …les]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/checkrun	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/claims	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/cli	37.336s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/cli	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/compat	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/conv	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doc	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doctor	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/fsx	(cached)
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	27.908s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/gitx	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/handoff	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/heal	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/jsonedit	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/knowledge	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	3.505s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/migrate	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	2.416s
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	4.819s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	(cached)
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/profile	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/project	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/release	[no test files]
@@ -64,12 +113,27 @@ evidence:
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/textx	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/schemas	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/skills	[no test files]
-    at: "2026-10-09T17:43:35Z"
-    tree: 57ce56853d13aedd416856ef0c8b68029f57997194726062f0e05c46c38e602c
+    at: "2026-10-09T18:46:03Z"
+    tree: 0753d73004e790d273a13740a075fb90d56f3c16747f16c2fa1475334ba8b03f
+  commits:
+    - 287f1b1
+    - 41a502d
+    - 80ef0b3
+    - 8af16af
+    - 8f56e68
+    - a4c7ae2
+    - a7048ea
+    - af7bdf6
+    - b5580aa
+    - db4dfcf
+    - f7247d0
+  acceptance:
+    total: 6
+    done: 6
   audit:
-    at: "2026-10-09T17:44:18Z"
+    at: "2026-10-09T18:46:03Z"
     passed: true
-    tree: ecd778de925a4ac4d5569d3c967f0028f3c8e6356a3efa66e3a3767960272d4b
+    tree: 0753d73004e790d273a13740a075fb90d56f3c16747f16c2fa1475334ba8b03f
     results:
       - name: osv-scanner (dependencies)
         exit_code: 0
@@ -77,7 +141,7 @@ evidence:
           Scanning dir .
           Starting filesystem walk for root: /
           Scanned /Users/anasfikri/.ai-toolkit/go.mod file and found 18 packages
-          End status: 350 dirs visited, 1687 inodes visited, 1 Extract calls, 11.466625ms elapsed, 11.466ms wall time
+          End status: 355 dirs visited, 1718 inodes visited, 1 Extract calls, 22.238208ms elapsed, 22.238ms wall time
 
           No issues found
       - name: aitk secret scan (tracked files)
@@ -119,3 +183,15 @@ Validation: unit and e2e tests for every review finding (forged done/UAT/profile
 - [x] V12 Files and resources: uploads are type/size limited and stored safely; no path traversal or SSRF — no uploads; download size capped (512 MB) and written via a temp file then renamed; path traversal checks in syncSource
 - [x] V13 API and web service: API inputs/outputs are schema-validated; CORS and rate limits are deliberate — MCP inputs typed; config and task files schema-validated (new run/quality/regression_tests fields in schemas)
 - [x] V14 Configuration: secure defaults, security headers, no debug in production, dependencies up to date — narrow default agent permissions; regression gate on by default; extra permissions only via explicit [run].args
+
+## Evidence
+<!-- Generated by aitk close. -->
+- Check: `go vet ./... && go test -short ./...` → exit 0 at 2026-10-09T18:46:03Z (1089 ms)
+- Acceptance criteria: 6/6 satisfied
+- Commits: 287f1b1, 41a502d, 80ef0b3, 8af16af, 8f56e68, a4c7ae2, a7048ea, af7bdf6, b5580aa, db4dfcf, f7247d0
+- Review pass 1 by claude-code: 25 findings
+- Review pass 2 by claude-code: 11 findings
+- Review pass 3 by claude-code: 2 findings
+- Review pass 4 by codex: 1 findings
+- Review pass 5 by codex: 0 findings
+- Review pass 6 by opencode: 0 findings
