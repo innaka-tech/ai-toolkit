@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/handoff.schema.json",
+  "title": "aitk handoff (YAML frontmatter of docs/ai/handoff/<UTC>-<task>.md)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "at",
+    "by",
+    "outcome"
+  ],
+  "properties": {
+    "task": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9-]{0,31}$",
+      "description": "Generated IDs look like T-k3m9 (ADR-0009); imported IDs are kept"
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "UTC timestamp, RFC 3339"
+    },
+    "by": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$",
+      "description": "AI tool identifier, e.g. claude-code, codex, opencode, gemini-cli, human"
+    },
+    "outcome": {
+      "enum": [
+        "done",
+        "progress",
+        "blocked",
+        "escalated",
+        "switched",
+        "legacy"
+      ],
+      "description": "What the session achieved"
+    },
+    "task_status": {
+      "enum": [
+        "todo",
+        "in_progress",
+        "implemented",
+        "in_review",
+        "done",
+        "blocked",
+        "cancelled"
+      ]
+    },
+    "check": {
+      "$ref": "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/task.schema.json#/$defs/check"
+    },
+    "commits": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{7,40}$"
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "not": {
+          "pattern": "^(/|[A-Za-z]:\\\\|~)"
+        },
+        "description": "Repository-relative path; absolute paths are never stored (ADR-0006)"
+      }
+    },
+    "next": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "maxItems": 10
+    },
+    "to": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$",
+      "description": "AI tool identifier, e.g. claude-code, codex, opencode, gemini-cli, human"
+    }
+  }
+}

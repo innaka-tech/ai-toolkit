@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/result.schema.json",
+  "title": "aitk --json result envelope (every command)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "ok",
+    "command"
+  ],
+  "properties": {
+    "schema": {
+      "const": "aitk.result/v1"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "command": {
+      "type": "string"
+    },
+    "data": {},
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^E_[A-Z0-9_]+$"
+        },
+        "message": {
+          "type": "string"
+        },
+        "fix": {
+          "type": "string",
+          "description": "Exact command or action that resolves the error"
+        }
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "ok": {
+        "const": false
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "error"
+    ]
+  }
+}

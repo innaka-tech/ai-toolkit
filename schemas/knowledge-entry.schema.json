@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/knowledge-entry.schema.json",
+  "title": "aitk knowledge entry (parsed form of one bullet in docs/ai/knowledge/*.md)",
+  "description": "On disk: '- <text> <!-- aitk:k date=YYYY-MM-DD task=<id> tags=a,b pin -->'",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "text",
+    "date",
+    "topic"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 4000,
+      "description": "aitk doctor warns above 500 characters; entries should be one or two sentences"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "topic": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+    },
+    "task": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9-]{0,31}$",
+      "description": "Generated IDs look like T-k3m9 (ADR-0009); imported IDs are kept"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+      },
+      "uniqueItems": true
+    },
+    "pinned": {
+      "type": "boolean",
+      "default": false
+    },
+    "source": {
+      "enum": [
+        "close",
+        "manual",
+        "migrated",
+        "plugin"
+      ]
+    }
+  }
+}
