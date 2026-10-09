@@ -4,7 +4,11 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/install.sh | sh
 #
-# Environment: AITK_VERSION (e.g. v2.0.0; default: latest), AITK_INSTALL_DIR (default: ~/.local/bin).
+# It also installs osv-scanner, the dependency vulnerability scanner `aitk audit` uses, via
+# `aitk audit install` (Homebrew on macOS, else the checksum-verified release binary).
+#
+# Environment: AITK_VERSION (e.g. v2.0.0; default: latest), AITK_INSTALL_DIR (default: ~/.local/bin),
+# AITK_NO_SCANNER=1 to skip osv-scanner.
 # The v1 bash toolkit is still available: git clone --branch v1.0.0 https://github.com/innaka-tech/ai-toolkit.git
 set -eu
 
@@ -76,6 +80,12 @@ mkdir -p "$DEST"
 mv "$tmp/aitk" "$DEST/aitk"
 chmod 755 "$DEST/aitk"
 say "installed $("$DEST/aitk" version 2>/dev/null || echo aitk) to $DEST/aitk"
+
+if [ "${AITK_NO_SCANNER:-}" = "1" ]; then
+  say "skipping osv-scanner (AITK_NO_SCANNER=1); install it later with: aitk audit install"
+elif ! "$DEST/aitk" audit install --dir "$DEST" >&2; then
+  say "warning: osv-scanner was not installed; aitk works without it, but run 'aitk audit install' later for dependency vulnerability checks"
+fi
 
 case ":$PATH:" in
   *":$DEST:"*) ;;

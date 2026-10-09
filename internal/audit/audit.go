@@ -62,14 +62,22 @@ func Detect(p *project.Project) (scanners []project.Scanner, missing []string) {
 	return scanners, missing
 }
 
+// osvNoPackages is osv-scanner's exit code for "no package sources found".
+const osvNoPackages = 128
+
 // Run executes the scanners and the built-in secret scan.
 func Run(p *project.Project, stream bool) (*task.Audit, []string) {
 	scanners, missing := Detect(p)
 	a := &task.Audit{At: task.Now(), Passed: true}
 	for _, s := range scanners {
 		r := checkrun.Run(p.Root, s.Cmd, 15*time.Minute, stream)
-		a.Results = append(a.Results, task.AuditResult{Name: s.Name, ExitCode: r.ExitCode, Summary: checkrun.Summary(strings.TrimSpace(r.Output), 1500)})
-		if r.ExitCode != 0 {
+		res := task.AuditResult{Name: s.Name, ExitCode: r.ExitCode, Summary: checkrun.Summary(strings.TrimSpace(r.Output), 1500)}
+		// osv-scanner exits 128 when the repository has no dependency manifests: nothing to scan is not a failure.
+		if r.ExitCode == osvNoPackages && strings.HasPrefix(strings.TrimSpace(s.Cmd), "osv-scanner") {
+			res.ExitCode, res.Summary = 0, "no dependency manifests found"
+		}
+		a.Results = append(a.Results, res)
+		if res.ExitCode != 0 {
 			a.Passed = false
 		}
 	}
@@ -91,7 +99,7 @@ func Run(p *project.Project, stream bool) (*task.Audit, []string) {
 	a.Results = append(a.Results, res)
 	var warns []string
 	for _, m := range missing {
-		warns = append(warns, "no scanner installed for "+m+"; dependency vulnerabilities were not checked")
+		warns = append(warns, "no scanner installed for "+m+"; dependency vulnerabilities were not checked (fix: aitk audit install)")
 	}
 	return a, warns
 }
