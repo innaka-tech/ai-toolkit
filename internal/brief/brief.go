@@ -156,7 +156,7 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 		parts := strings.Split(c.Path, "/")
 		query += " " + strings.Join(parts, " ")
 	}
-	b.Knowledge = knowledge.Search(knowledge.LoadAll(p), query, tags, 15)
+	b.Knowledge = knowledge.Rank(knowledge.LoadAll(p), query, tags, 15)
 	if len(p.Config.Plugins.Enabled) > 0 {
 		var taskRef any
 		if b.Task != nil {

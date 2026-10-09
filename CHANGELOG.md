@@ -3,6 +3,11 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [2.1.1] - 2026-10-09
+
+### Fixed
+- The brief hid most project knowledge whenever files were changed (only entries matching the changed paths were kept). It now orders all knowledge by relevance and fills the remaining slots with pinned and recent entries; `knowledge search` still returns matches only.
+
 ## [2.1.0] - 2026-10-09
 
 ### Added
