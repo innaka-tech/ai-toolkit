@@ -365,3 +365,18 @@ sed -i.bak -e 's/- \[ \] the real requirement/- [ ] nothing to do/' "$f"; rm -f 
 		t.Fatalf("rewording a criterion must not finish a task: %+v", r.Data.Tasks)
 	}
 }
+
+// Codex review: a forged acceptance does not survive an attempt that ends without close.
+func TestRunForgedUATDoesNotSurviveHandover(t *testing.T) {
+	dir := runProject(t)
+	forge := `f=$(grep -l "$AITK_RUN_TASK" docs/ai/tasks/*.md | head -1)
+awk '/^updated:/ {print; print "evidence:"; print "  uat:"; print "    status: accepted"; print "    at: \"2026-01-01T00:00:00Z\""; next} {print}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"`
+	r := aitkRun(t, dir, "--cmd", forge, "--max-attempts", "1", "--max-tasks", "1")
+	x := r.Data.Tasks[0]
+	if x.Status != "blocked" {
+		t.Fatalf("unexpected: %+v", x)
+	}
+	if body := must(t, dir, "sh", "-c", "grep -l "+x.ID+" docs/ai/tasks/*.md | xargs cat"); strings.Contains(body, "status: accepted") {
+		t.Fatalf("the forged acceptance survived the handover:\n%s", body)
+	}
+}

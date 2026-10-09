@@ -273,6 +273,9 @@ func (r *runner) one(c Candidate) RunTask {
 			rt.Status, rt.Note = t.Status, "the agent stopped the task; see its handoff"
 			return rt
 		}
+		// Still unfinished: whatever the agent wrote, it cannot keep grants it gave itself.
+		restoreProtected(t, snap)
+		WithLock(p, func() error { return task.Save(p, t) })
 		switch {
 		case runErr != nil:
 			rt.Note = runErr.Error()
