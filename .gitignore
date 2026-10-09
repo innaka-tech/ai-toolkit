@@ -1,8 +1,10 @@
+# local runtime data
 backups/
-*.bak
 logs/
 state/
 context/
 bridge/
-backups/
 *.bak
+
+# local planning notes (contain personal project details)
+docs/plans/

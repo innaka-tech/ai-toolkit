@@ -1,0 +1,2 @@
+# v1 bash scripts are frozen; unused-variable noise is tolerated until the v2 rewrite.
+disable=SC2034

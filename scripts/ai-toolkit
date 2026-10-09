@@ -16,7 +16,7 @@ Project context:
   resume [path]               Show project context, active task, and latest handoff
   start <task> [options]       Start task; use --goal and --sub-goal to link it
   preflight [path]             Run mandatory risk and context gate
-  exec [provider] [path]       Run provider through toolkit preflight
+  exec <provider> [path]       Run preflight, then start the given AI tool
   close [options]             Close task, handoff, and durable knowledge
   next [options]              Generate evidence-based next-task suggestions
   session [options]           Build one AI Session Brief for the next tool
@@ -27,7 +27,6 @@ Health and memory:
   sync [summary]              Save project summary to Uteke
   recall [query]              Recall project memory from Uteke
   map <subcommand>            Query codebase-memory knowledge graph
-  mcp <status|json|opencode>  Inspect/configure optional Browser MCP
   mcp <status|json|opencode>  Inspect/configure optional Browser MCP
 
 Git and deployment:
@@ -68,7 +67,6 @@ case "$COMMAND" in
   sync) SCRIPT="ai-sync" ;;
   recall) SCRIPT="ai-recall" ;;
   map) SCRIPT="ai-map" ;;
-  mcp) SCRIPT="ai-mcp" ;;
   mcp) SCRIPT="ai-mcp" ;;
   commit) SCRIPT="ai-commit" ;;
   push) SCRIPT="ai-push" ;;
