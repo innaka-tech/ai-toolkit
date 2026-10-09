@@ -16,9 +16,19 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
 )
 
-// Managed reports whether rel is maintained by aitk itself (excluded from diffs and fingerprints).
+// Managed reports whether rel is aitk's own metadata rather than project code. Such files
+// do not count toward the risk profile and do not make a passing check stale.
 func Managed(rel string) bool {
-	return rel == project.StateFile || strings.HasPrefix(rel, project.DocsAI+"/")
+	switch rel {
+	case project.StateFile, project.ConfigFile, project.AgentsFile, "CLAUDE.md", ".gitattributes":
+		return true
+	}
+	for _, dir := range []string{project.DocsAI + "/", project.ADRDir + "/", project.LocalStateDir + "/"} {
+		if strings.HasPrefix(rel, dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // Change is a changed file with its line count.
@@ -128,7 +138,11 @@ func Compute(p *project.Project, changes []Change) string {
 func Fingerprint(p *project.Project) string {
 	h := sha256.New()
 	h.Write([]byte(gitx.Head(p.Root)))
-	diff, _ := gitx.RunRaw(p.Root, "diff", "HEAD", "--binary", "--", ".", ":(exclude)"+project.DocsAI, ":(exclude)"+project.StateFile)
+	excl := []string{"--", "."}
+	for _, x := range []string{project.DocsAI, project.ADRDir, project.LocalStateDir, project.StateFile, project.ConfigFile, project.AgentsFile, "CLAUDE.md", ".gitattributes"} {
+		excl = append(excl, ":(exclude)"+x)
+	}
+	diff, _ := gitx.RunRaw(p.Root, append([]string{"diff", "HEAD", "--binary"}, excl...)...)
 	if gitx.Head(p.Root) == "" {
 		diff, _ = gitx.RunRaw(p.Root, "diff", "--cached", "--binary")
 	}

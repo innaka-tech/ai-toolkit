@@ -368,6 +368,11 @@ func TestMigrateFixtureLosslessAndIdempotent(t *testing.T) {
 		t.Fatal("user content was modified")
 	}
 	tasks := aitk(t, dir, "task", "list", "--all")
+	for _, x := range tasks.env["data"].([]any) {
+		if strings.HasPrefix(x.(map[string]any)["title"].(string), "No active task") {
+			t.Fatal("v1 placeholder (Task ID: none) became a task")
+		}
+	}
 	byTitle := map[string]map[string]any{}
 	for _, x := range tasks.env["data"].([]any) {
 		m := x.(map[string]any)
@@ -473,5 +478,20 @@ func TestLiteStillRequiresWrittenCriteria(t *testing.T) {
 	mustOK(t, r)
 	if data(r)["profile"] != "lite" {
 		t.Fatalf("expected lite profile, got %v", data(r)["profile"])
+	}
+}
+
+func TestAitkMetadataDoesNotRaiseTheProfile(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "aitk init")
+	for i := 0; i < 5; i++ {
+		mustOK(t, aitk(t, dir, "adr", "new", "Decision number "+string(rune('A'+i))))
+	}
+	write(t, dir, "AGENTS.md", read(t, dir, "AGENTS.md")+"\nTeam note.\n")
+	b := aitk(t, dir, "brief")
+	if data(b)["profile"] != "lite" || data(b)["changed_files"] != nil {
+		t.Fatalf("aitk metadata changed the profile: %v %v", data(b)["profile"], data(b)["changed_files"])
 	}
 }

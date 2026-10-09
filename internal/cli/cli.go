@@ -10,6 +10,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -753,8 +754,24 @@ func (a *app) adrCmd() *cobra.Command {
 func (a *app) versionCmd() *cobra.Command {
 	c := &cobra.Command{Use: "version", Short: "Print version information", Args: cobra.NoArgs}
 	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
-		d := map[string]any{"version": Version, "commit": Commit, "date": Date, "schemas": map[string]int{"state": 2, "session": 1, "result": 1}}
-		return &result{data: d, human: fmt.Sprintf("aitk %s (%s, %s)", Version, Commit, Date)}, nil
+		v, c, dt := Version, Commit, Date
+		if v == "dev" { // installed with go install: use the module build info
+			if bi, ok := debug.ReadBuildInfo(); ok {
+				if bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+					v = strings.TrimPrefix(bi.Main.Version, "v")
+				}
+				for _, s := range bi.Settings {
+					switch s.Key {
+					case "vcs.revision":
+						c = s.Value[:min(7, len(s.Value))]
+					case "vcs.time":
+						dt = s.Value
+					}
+				}
+			}
+		}
+		d := map[string]any{"version": v, "commit": c, "date": dt, "schemas": map[string]int{"state": 2, "session": 1, "result": 1}}
+		return &result{data: d, human: fmt.Sprintf("aitk %s (%s, %s)", v, c, dt)}, nil
 	})
 	return c
 }
