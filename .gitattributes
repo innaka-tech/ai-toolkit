@@ -1,0 +1,8 @@
+# aitk:begin
+docs/ai/knowledge/*.md merge=union
+docs/ai/knowledge/_archive/*.md merge=union
+docs/ai/handoff.md merge=union linguist-generated
+docs/ai/current-task.md merge=union linguist-generated
+docs/ai/knowledge.md merge=union linguist-generated
+docs/ai/decisions.md merge=union linguist-generated
+# aitk:end
