@@ -73,6 +73,10 @@
           }
         }
       }
+    },
+    "last_check": {
+      "$ref": "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/task.schema.json#/$defs/check",
+      "description": "Latest check in this worktree; used when close creates an implicit lite task"
     }
   }
 }

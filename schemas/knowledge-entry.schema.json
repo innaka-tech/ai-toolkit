@@ -49,6 +49,10 @@
         "migrated",
         "plugin"
       ]
+    },
+    "file": {
+      "type": "string",
+      "description": "Repository-relative file the entry was read from (parsed form only)"
     }
   }
 }

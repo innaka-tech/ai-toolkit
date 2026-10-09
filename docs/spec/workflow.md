@@ -14,6 +14,8 @@ docs/ai/
   tasks/<id>-<slug>.md            one file per task (§4)
   handoff/<YYYYMMDDTHHMMSSZ>-<id>.md   one file per session handoff (§6)
   handoff.md                      generated index of the 10 latest handoffs; MUST NOT be hand-edited
+  current-task.md, knowledge.md   generated v1-compatible indexes (open tasks, knowledge topics) for agents
+  decisions.md                    that still follow v1 instructions; MUST NOT be hand-edited
   knowledge/<topic>.md            curated knowledge (§8)
   knowledge/_inbox.md             new entries awaiting compaction
   knowledge/_archive/<YYYY>-Q<n>.md
@@ -61,7 +63,7 @@ If `aitk` is not installed, read docs/ai/project-context.md and the newest file 
 | Finish | `aitk close --summary … --knowledge …` | task, handoff file, knowledge inbox, handoff index |
 | Hand over | `aitk switch <tool>` | handoff file (`outcome: switched`), brief for the next tool |
 
-Agents MAY skip `task start` under the `lite` profile; `close` then creates an implicit task titled from `--summary`.
+Agents MAY skip `task start` under the `lite` profile; `close` then creates an implicit task titled from `--summary`, using the worktree's latest check (`session.last_check`) as evidence.
 
 ## 4. Tasks
 

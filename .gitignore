@@ -11,3 +11,7 @@ docs/plans/
 
 # test fixtures are committed even if a global/info exclude hides project.env
 !tests/fixtures/**/project.env
+
+# build output
+/bin/
+/dist/
