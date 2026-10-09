@@ -12,6 +12,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/internal/compat"
 	"github.com/innaka-tech/ai-toolkit/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/internal/knowledge"
+	"github.com/innaka-tech/ai-toolkit/internal/plugins"
 	"github.com/innaka-tech/ai-toolkit/internal/project"
 	"github.com/innaka-tech/ai-toolkit/internal/schema"
 	"github.com/innaka-tech/ai-toolkit/internal/session"
@@ -152,6 +153,40 @@ func Run(p *project.Project, fix bool) *Report {
 			if _, err := knowledge.Compact(p, p.Config.ArchiveAfterDays(), false); err == nil {
 				c.Fixed, c.Status = true, "ok"
 				r.Warns--
+			}
+		}
+	}
+	if changed, _ := compat.EnsureGitattributes(p, true); changed {
+		c := r.add(".gitattributes", "warn", "aitk merge rules missing (parallel branches may conflict)")
+		if fix {
+			if _, err := compat.EnsureGitattributes(p, false); err == nil {
+				c.Fixed, c.Status = true, "ok"
+				r.Warns--
+			}
+		}
+	}
+	if len(p.Config.Plugins.Enabled) > 0 {
+		for _, res := range plugins.Call(p, "doctor.checks", nil, nil) {
+			if res.Err != "" {
+				r.add("plugin "+res.Plugin, "warn", res.Err)
+				continue
+			}
+			var cs []Check
+			json.Unmarshal(res.Data, &cs)
+			for _, c := range cs {
+				if c.Status != "ok" && c.Status != "warn" && c.Status != "error" {
+					c.Status = "warn"
+				}
+				r.add("plugin "+res.Plugin+": "+c.Name, c.Status, c.Detail)
+			}
+		}
+		for _, n := range p.Config.Plugins.Enabled {
+			found := false
+			for _, d := range plugins.Discover(p.Config) {
+				found = found || d.Name == n
+			}
+			if !found {
+				r.add("plugin "+n, "warn", "enabled in aitk.toml but aitk-"+n+" is not on PATH")
 			}
 		}
 	}

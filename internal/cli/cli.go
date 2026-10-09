@@ -10,8 +10,10 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -19,13 +21,16 @@ import (
 	"github.com/innaka-tech/ai-toolkit/internal/adr"
 	"github.com/innaka-tech/ai-toolkit/internal/apperr"
 	"github.com/innaka-tech/ai-toolkit/internal/brief"
+	"github.com/innaka-tech/ai-toolkit/internal/checkrun"
 	"github.com/innaka-tech/ai-toolkit/internal/compat"
 	"github.com/innaka-tech/ai-toolkit/internal/doctor"
 	"github.com/innaka-tech/ai-toolkit/internal/gates"
+	"github.com/innaka-tech/ai-toolkit/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/internal/knowledge"
 	"github.com/innaka-tech/ai-toolkit/internal/mcpserver"
 	"github.com/innaka-tech/ai-toolkit/internal/migrate"
 	"github.com/innaka-tech/ai-toolkit/internal/ops"
+	"github.com/innaka-tech/ai-toolkit/internal/plugins"
 	"github.com/innaka-tech/ai-toolkit/internal/project"
 	"github.com/innaka-tech/ai-toolkit/internal/schema"
 	"github.com/innaka-tech/ai-toolkit/internal/session"
@@ -180,7 +185,7 @@ func (a *app) root() *cobra.Command {
 	root.PersistentFlags().StringVarP(&a.dir, "path", "C", "", "run as if started in this directory")
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
-		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd())
+		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd())
 	return root
 }
 
@@ -311,6 +316,7 @@ func (a *app) briefCmd() *cobra.Command {
 		}
 		b := brief.Build(p, budget, id)
 		var warns []string
+		warns = append(warns, b.PluginErr...)
 		if b.Tokens > b.Budget {
 			warns = append(warns, fmt.Sprintf("brief is %d tokens, over the %d budget (required sections alone exceed it)", b.Tokens, b.Budget))
 		}
@@ -323,7 +329,7 @@ func (a *app) briefCmd() *cobra.Command {
 
 func (a *app) taskCmd() *cobra.Command {
 	c := &cobra.Command{Use: "task", Short: "Create, start, list, show, and update tasks"}
-	c.AddCommand(a.taskNew(), a.taskStart(), a.taskList(), a.taskShow(), a.taskUpdate(), a.taskBlock())
+	c.AddCommand(a.taskNew(), a.taskStart(), a.taskList(), a.taskShow(), a.taskUpdate(), a.taskBlock(), a.taskClaim(), a.taskRelease())
 	return c
 }
 
@@ -619,6 +625,30 @@ func (a *app) knowledgeCmd() *cobra.Command {
 			return nil, err
 		}
 		hits := knowledge.Search(knowledge.LoadAll(p), args[0], nil, limit)
+		var warns []string
+		if len(p.Config.Plugins.Enabled) > 0 {
+			for _, r := range plugins.Call(p, "knowledge.search", map[string]any{"query": args[0], "limit": limit}, nil) {
+				if r.Err != "" {
+					warns = append(warns, "plugin "+r.Plugin+": "+r.Err)
+					continue
+				}
+				var ext []struct {
+					Text   string  `json:"text"`
+					Score  float64 `json:"score"`
+					Source string  `json:"source"`
+				}
+				json.Unmarshal(r.Data, &ext)
+				for _, x := range ext {
+					if strings.TrimSpace(x.Text) != "" {
+						hits = append(hits, knowledge.Scored{Entry: knowledge.Entry{Text: x.Text, Topic: "plugin", Source: "plugin", File: "plugin:" + r.Plugin}, Score: x.Score})
+					}
+				}
+			}
+			sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+			if len(hits) > limit {
+				hits = hits[:limit]
+			}
+		}
 		var b strings.Builder
 		for _, h := range hits {
 			fmt.Fprintf(&b, "- %s (%s, %s)\n", textx.Truncate(strings.ReplaceAll(h.Text, "\n", " "), 300), h.Date, h.File)
@@ -629,7 +659,7 @@ func (a *app) knowledgeCmd() *cobra.Command {
 		if hits == nil {
 			hits = []knowledge.Scored{}
 		}
-		return &result{data: hits, human: b.String()}, nil
+		return &result{data: hits, human: b.String(), warnings: warns}, nil
 	})
 	var dry bool
 	compact := &cobra.Command{Use: "compact", Short: "File inbox entries by topic, merge duplicates, archive old entries", Args: cobra.NoArgs}
@@ -976,6 +1006,337 @@ func (a *app) ciCmd() *cobra.Command {
 			h += " (base " + base + ")"
 		}
 		return &result{data: data, human: h}, nil
+	})
+	return c
+}
+
+func (a *app) taskClaim() *cobra.Command {
+	var ttl time.Duration
+	c := &cobra.Command{Use: "claim <id>", Short: "Claim a task for this worktree so other agents skip it", Args: cobra.ExactArgs(1)}
+	c.Flags().DurationVar(&ttl, "ttl", ops.DefaultClaimTTL, "how long the claim lasts")
+	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		cl, err := ops.Claim(p, args[0], ttl)
+		if err != nil {
+			return nil, err
+		}
+		return &result{data: cl, human: fmt.Sprintf("claimed %s until %s", cl.Task, cl.Expires)}, nil
+	})
+	return c
+}
+
+func (a *app) taskRelease() *cobra.Command {
+	var force bool
+	c := &cobra.Command{Use: "release <id>", Short: "Drop this worktree's claim on a task", Args: cobra.ExactArgs(1)}
+	c.Flags().BoolVar(&force, "force", false, "drop any worktree's claim (use when that worktree is gone)")
+	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		ok, err := ops.Release(p, args[0], force)
+		if err != nil {
+			return nil, err
+		}
+		h := "no claim to release"
+		if ok {
+			h = "released " + args[0]
+		}
+		return &result{data: map[string]bool{"released": ok}, human: h}, nil
+	})
+	return c
+}
+
+func (a *app) workCmd() *cobra.Command {
+	c := &cobra.Command{Use: "work <id>", Short: "Create a dedicated worktree and branch for a task, claim it, and start it there", Args: cobra.ExactArgs(1)}
+	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		r, err := ops.Work(p, args[0])
+		if err != nil {
+			return nil, err
+		}
+		verb := "reusing"
+		if r.Created {
+			verb = "created"
+		}
+		h := fmt.Sprintf("%s worktree %s on branch %s; %s is active there\nnext: cd %q && aitk brief", verb, r.Path, r.Branch, r.Task, r.Path)
+		return &result{data: r, human: h}, nil
+	})
+	return c
+}
+
+func (a *app) switchCmd() *cobra.Command {
+	var note string
+	var printOnly bool
+	c := &cobra.Command{Use: "switch <tool>", Short: "Hand the work to another AI tool: write a handoff and start it with the brief", Args: cobra.ExactArgs(1)}
+	c.Flags().StringVar(&note, "note", "", "why you are switching / what the next tool should know")
+	c.Flags().BoolVar(&printOnly, "print", false, "print how to start the tool instead of starting it")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		p, err := a.open()
+		if err != nil {
+			a.fail("switch", err)
+			return nil
+		}
+		r, err := ops.Switch(p, args[0], note)
+		if err != nil {
+			a.fail("switch", err)
+			return nil
+		}
+		interactive := !a.json && !printOnly && isTTY(os.Stdout) && len(r.Command) > 0
+		if interactive {
+			if _, err := osexec.LookPath(r.Command[0]); err == nil {
+				fmt.Fprintf(a.stderr, "handoff written: %s\nstarting %s…\n", r.Handoff, r.Command[0])
+				c := osexec.Command(r.Command[0], r.Command[1:]...)
+				c.Dir, c.Stdin, c.Stdout, c.Stderr = p.Root, os.Stdin, os.Stdout, os.Stderr
+				if err := c.Run(); err != nil {
+					a.code = apperr.ExitRuntime
+				}
+				return nil
+			}
+		}
+		h := "handoff written: " + r.Handoff + "\nprompt: " + r.PromptFile + "\n"
+		if len(r.Command) > 0 {
+			h += fmt.Sprintf("start: %s \"$(cat %s)\"", strings.Join(r.Command[:len(r.Command)-1], " "), r.PromptFile)
+		} else {
+			h += "start " + r.Tool + " in this repository and paste the prompt file as the first message (known start commands: " + strings.Join(ops.SwitchTools(), ", ") + ")"
+		}
+		data := *r
+		data.Prompt = "" // in prompt_file; keeps JSON output small
+		a.ok("switch", &result{data: data, human: h})
+		return nil
+	}
+	return c
+}
+
+func isTTY(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+func (a *app) reportCmd() *cobra.Command {
+	var since string
+	var format string
+	c := &cobra.Command{Use: "report", Short: "What was done, what is in progress or blocked, and which tools did it", Args: cobra.NoArgs}
+	c.Flags().StringVar(&since, "since", "7d", "period: e.g. 24h, 7d, 30d, or a date (2026-10-01)")
+	c.Flags().StringVar(&format, "format", "md", "md or json (json is also --json)")
+	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		from, err := parseSince(since)
+		if err != nil {
+			return nil, apperr.Usage("%v", err)
+		}
+		r := ops.BuildReport(p, from)
+		day := from.UTC().Format("2006-01-02")
+		for _, e := range knowledge.LoadAll(p) {
+			if e.Date >= day {
+				r.Knowledge++
+			}
+		}
+		h := r.Markdown(p.Config.Project.Name)
+		if format == "json" {
+			b, _ := json.MarshalIndent(r, "", "  ")
+			h = string(b)
+		}
+		return &result{data: r, human: h}, nil
+	})
+	return c
+}
+
+func parseSince(s string) (time.Time, error) {
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t, nil
+	}
+	if strings.HasSuffix(s, "d") {
+		n, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+		if err == nil && n >= 0 {
+			return time.Now().AddDate(0, 0, -n), nil
+		}
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid --since %q (use 24h, 7d, or 2026-10-01)", s)
+	}
+	return time.Now().Add(-d), nil
+}
+
+func (a *app) logCmd() *cobra.Command {
+	var id string
+	var limit int
+	c := &cobra.Command{Use: "log", Short: "Handoffs, newest first: who (which tool) did what", Args: cobra.NoArgs}
+	c.Flags().StringVar(&id, "task", "", "only this task")
+	c.Flags().IntVar(&limit, "limit", 20, "max entries")
+	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		var out []*handoff.Handoff
+		var b strings.Builder
+		for _, h := range handoff.List(p) {
+			if id != "" && !strings.EqualFold(h.Task, id) {
+				continue
+			}
+			if len(out) == limit {
+				break
+			}
+			out = append(out, h)
+			task := h.Task
+			if task == "" {
+				task = "-"
+			}
+			fmt.Fprintf(&b, "%s  %-8s %-12s %-9s %s\n", h.At, task, h.By, h.Outcome, textx.Truncate(textx.FirstLine(strings.TrimPrefix(strings.TrimSpace(h.Body), "## ")), 80))
+		}
+		if out == nil {
+			out = []*handoff.Handoff{}
+			b.WriteString("no handoffs")
+		}
+		return &result{data: out, human: b.String()}, nil
+	})
+	return c
+}
+
+func (a *app) pluginCmd() *cobra.Command {
+	c := &cobra.Command{Use: "plugin", Short: "Plugins: aitk-<name> executables on PATH, enabled in aitk.toml [plugins] enabled"}
+	l := &cobra.Command{Use: "list", Short: "List discovered plugins, their hooks, and whether they are enabled", Args: cobra.NoArgs}
+	l.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		var cfg project.Config
+		if p, err := a.open(); err == nil {
+			cfg = p.Config
+		}
+		ps := plugins.Discover(cfg)
+		var b strings.Builder
+		for i := range ps {
+			if err := plugins.Manifest(cfg, &ps[i]); err != nil {
+				ps[i].Error = err.Error()
+			}
+			state := "disabled"
+			if ps[i].Enabled {
+				state = "enabled"
+			}
+			detail := strings.Join(ps[i].Hooks, ", ")
+			if ps[i].Error != "" {
+				detail = "error: " + ps[i].Error
+			}
+			fmt.Fprintf(&b, "%-20s %-8s %-9s %s\n", ps[i].Name, ps[i].Version, state, detail)
+		}
+		if len(ps) == 0 {
+			b.WriteString("no plugins found (executables named aitk-<name> on PATH)")
+			ps = []plugins.Plugin{}
+		}
+		return &result{data: ps, human: b.String()}, nil
+	})
+	c.AddCommand(l)
+	return c
+}
+
+func (a *app) importCmd() *cobra.Command {
+	c := &cobra.Command{Use: "import", Short: "Import tasks from GitHub Issues, Spec Kit, or OpenSpec"}
+	var repo, label, state string
+	var limit int
+	var dry bool
+	gh := &cobra.Command{Use: "github-issues", Short: "Import issues as tasks (GH-<number>) via the gh CLI", Args: cobra.NoArgs}
+	gh.Flags().StringVar(&repo, "repo", "", "owner/name (default: this repository)")
+	gh.Flags().StringVar(&label, "label", "", "only issues with this label")
+	gh.Flags().StringVar(&state, "state", "open", "open, closed, or all")
+	gh.Flags().IntVar(&limit, "limit", 100, "max issues")
+	gh.Flags().BoolVar(&dry, "dry-run", false, "show what would be imported")
+	gh.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		r, err := ops.ImportGitHub(p, repo, label, state, limit, dry)
+		if err != nil {
+			return nil, err
+		}
+		if !dry {
+			compat.Write(p)
+		}
+		return &result{data: r, human: importSummary(r)}, nil
+	})
+	c.AddCommand(gh)
+	for _, kind := range []string{"spec-kit", "openspec"} {
+		kind := kind
+		var dry bool
+		k := &cobra.Command{Use: kind + " [tasks.md ...]", Short: "Import a " + kind + " tasks checklist (default: discovered tasks.md files)"}
+		k.Flags().BoolVar(&dry, "dry-run", false, "show what would be imported")
+		k.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+			p, err := a.open()
+			if err != nil {
+				return nil, err
+			}
+			r, err := ops.ImportChecklist(p, kind, args, dry)
+			if err != nil {
+				return nil, err
+			}
+			if !dry {
+				compat.Write(p)
+			}
+			return &result{data: r, human: importSummary(r)}, nil
+		})
+		c.AddCommand(k)
+	}
+	return c
+}
+
+func importSummary(r *ops.ImportResult) string {
+	verb := "imported"
+	if r.DryRun {
+		verb = "would import"
+	}
+	h := fmt.Sprintf("%s %d task(s) from %s", verb, len(r.Imported), r.Source)
+	if len(r.Skipped) > 0 {
+		h += fmt.Sprintf("; %d already present", len(r.Skipped))
+	}
+	return h
+}
+
+func (a *app) deployCmd() *cobra.Command {
+	c := &cobra.Command{Use: "deploy [target]", Short: "Run a deploy target from aitk.toml, then deploy.post_check", Args: cobra.MaximumNArgs(1)}
+	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		targets := p.Config.Deploy.Targets
+		if len(args) == 0 {
+			var names []string
+			for k := range targets {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			if len(names) == 0 {
+				return nil, apperr.New("E_USAGE", apperr.ExitUsage, "add [deploy.targets] production = \"<command>\" to aitk.toml", "no deploy targets configured")
+			}
+			return &result{data: names, human: "targets: " + strings.Join(names, ", ")}, nil
+		}
+		cmdline, ok := targets[args[0]]
+		if !ok {
+			return nil, apperr.Usage("unknown deploy target %q", args[0])
+		}
+		run := func(cmd string) checkrun.Result { return checkrun.Run(p.Root, cmd, 2*time.Hour, !a.json) }
+		r := run(cmdline)
+		data := map[string]any{"target": args[0], "exit_code": r.ExitCode, "duration_ms": r.DurationMs}
+		if r.ExitCode != 0 {
+			return &result{data: data}, apperr.New("E_DEPLOY_FAILED", apperr.ExitRuntime, "fix the failure and run aitk deploy "+args[0]+" again", "deploy %s failed (exit %d)", args[0], r.ExitCode)
+		}
+		if pc := p.Config.Deploy.PostCheck; pc != "" {
+			pr := run(pc)
+			data["post_check_exit_code"] = pr.ExitCode
+			if pr.ExitCode != 0 {
+				return &result{data: data}, apperr.New("E_DEPLOY_FAILED", apperr.ExitRuntime, "investigate the post-deploy check; consider rolling back", "post-deploy check failed (exit %d)", pr.ExitCode)
+			}
+		}
+		return &result{data: data, human: fmt.Sprintf("deployed %s in %d ms", args[0], r.DurationMs)}, nil
 	})
 	return c
 }

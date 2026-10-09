@@ -418,6 +418,9 @@ func Run(dir string, dryRun bool) (*Report, error) {
 	if err := handoff.WriteIndex(q); err != nil {
 		return r, err
 	}
+	if _, err := compat.EnsureGitattributes(q, false); err != nil {
+		return r, err
+	}
 	return r, compat.Write(q)
 }
 

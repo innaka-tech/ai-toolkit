@@ -115,6 +115,16 @@ func New(root, version string, exec Exec) *mcp.Server {
 			}
 			return a
 		})
+	add(s, h, "switch_prepare", "Hand the work to another AI tool: writes a handoff and returns the prompt file and command that continue the work there.",
+		func(in switchIn) []string {
+			a := []string{"switch", in.Tool, "--print"}
+			return opt(a, "--note", in.Note)
+		})
+	add(s, h, "report", "Activity report: done, in progress, in review, blocked tasks and handoffs per tool.",
+		func(in reportIn) []string {
+			a := []string{"report"}
+			return opt(a, "--since", in.Since)
+		})
 	add(s, h, "adr_new", "Create an architecture decision record (MADR).", func(in titleIn) []string { return []string{"adr", "new", in.Title} })
 	add(s, h, "doctor", "Validate the project; fix=true repairs what is safe.",
 		func(in doctorIn) []string {
@@ -307,6 +317,13 @@ type knowledgeIn struct {
 }
 type titleIn struct {
 	Title string `json:"title" jsonschema:"decision title"`
+}
+type switchIn struct {
+	Tool string `json:"tool" jsonschema:"target tool: claude-code, codex, gemini-cli, opencode, or another name"`
+	Note string `json:"note,omitempty" jsonschema:"what the next tool should know"`
+}
+type reportIn struct {
+	Since string `json:"since,omitempty" jsonschema:"period, e.g. 24h, 7d, or 2026-10-01 (default 7d)"`
 }
 type doctorIn struct {
 	Fix bool `json:"fix,omitempty" jsonschema:"repair what is safe"`

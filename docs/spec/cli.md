@@ -49,14 +49,15 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `aitk check` | Run `check.cmd` with `check.timeout`; record evidence on the active task. Exit 1 if the command fails. |
 | `aitk close --summary "<text>" --knowledge "<text>\|none" [--next "<step>"]... [--status S]` | Apply the Definition of Done, write evidence, handoff, and knowledge. |
 | `aitk review start\|pass --findings N\|done` | Record bug-hunt passes for strict tasks. |
-| `aitk switch <tool> [--print]` | Write a handoff (`outcome: switched`), then start `<tool>` with the brief as its first prompt, or print the command with `--print`. |
+| `aitk switch <tool> [--note "…"] [--print]` | Write a handoff (`outcome: switched`, `to: <tool>`) and a prompt file containing the brief; on a terminal start the tool with it (`claude`, `codex`, `gemini -i`, `opencode --prompt`), otherwise or with `--print` print how to. Unknown tools get the prompt file only, never a guessed command. |
 
 ### Parallel work
 
 | Command | Purpose |
 |---|---|
 | `aitk task claim <id> [--ttl 4h]` | Record a claim in the shared git directory. Exit 4 if claimed by another session and not expired. |
-| `aitk work <id>` | Create worktree `../<repo>.aitk/<id>` on branch `aitk/<id>-<slug>`, claim the task, start it there. |
+| `aitk work <id>` | Create (or reuse) worktree `../<repo>.aitk/<id>` on branch `aitk/<id>-<slug>`, copy uncommitted aitk files it needs, claim the task, start it there. |
+| (automatic) | `task start` claims the task for 4 h; `close` to done/blocked releases it. Knowledge and generated index files merge with git's `union` driver (`.gitattributes`), so parallel branches merge without conflicts. |
 | `aitk task release <id>` | Drop the claim. |
 
 ### Knowledge, decisions, reporting
@@ -80,9 +81,10 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `aitk hooks install [--uninstall]` | Install git hooks (integrations.md §Gates). |
 | `aitk ci` | Run every gate non-interactively; for CI pipelines. |
 | `aitk mcp [--http :PORT]` | Serve MCP over stdio (default) or streamable HTTP. |
-| `aitk plugin list` | Discovered plugins and their hooks. |
-| `aitk import spec-kit\|openspec\|github-issues [...]` / `aitk export github-issues` | Interoperate with other task sources. |
-| `aitk deploy <target>` | Run `deploy.targets.<target>` then `deploy.post_check`. |
+| `aitk import github-issues [--repo] [--label] [--state] [--dry-run]` | Issues become tasks `GH-<n>` (checkboxes → criteria, labels → tags, closed → done) via `gh`. |
+| `aitk import spec-kit\|openspec [tasks.md…] [--dry-run]` | Checklist lines become tasks (`<FEATURE>-T001` keeps Spec Kit IDs); re-imports skip existing tasks. |
+| `aitk plugin list` | Discovered `aitk-*` plugins, their hooks, and whether they are enabled. |
+| `aitk deploy [target]` | Run `deploy.targets.<target>` then `deploy.post_check`; without a target, list targets. |
 | `aitk version` | Version, commit, build date, supported schema versions. |
 
 ## Error codes
