@@ -208,7 +208,7 @@ func (a *app) root() *cobra.Command {
 	root.PersistentFlags().StringVarP(&a.dir, "path", "C", "", "run as if started in this directory")
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
-		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd(), a.runCmd(), a.impactCmd())
+		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd(), a.runCmd(), a.impactCmd(), a.setupCmd())
 	return root
 }
 
@@ -249,7 +249,7 @@ func (a *app) initCmd() *cobra.Command {
 		} else {
 			b.WriteString("check: " + r.Check + "\n")
 		}
-		b.WriteString("next: aitk brief")
+		b.WriteString("next: aitk adapters sync (project files for your AI tools), then aitk brief\n      once per machine: aitk setup (every AI tool recognises aitk projects on its own)")
 		return &result{data: r, human: b.String(), warnings: warns}, nil
 	})
 	return c
@@ -999,9 +999,13 @@ func (a *app) adaptersCmd() *cobra.Command {
 		if err != nil {
 			return nil, err
 		}
-		cs, err := adapters.Plan(adapters.DefaultEnv(p.Root), tools, global)
+		cs, skipped, err := adapters.PlanSkipping(adapters.DefaultEnv(p.Root), tools, global)
 		if err != nil {
 			return nil, apperr.Usage("%v", err)
+		}
+		var skipWarns []string
+		for _, sk := range skipped {
+			skipWarns = append(skipWarns, "skipped "+sk)
 		}
 		var b strings.Builder
 		for _, ch := range cs {
@@ -1020,7 +1024,7 @@ func (a *app) adaptersCmd() *cobra.Command {
 		if cs == nil {
 			cs = []adapters.Change{}
 		}
-		return &result{data: map[string]any{"changes": cs, "dry_run": dry}, human: b.String()}, nil
+		return &result{data: map[string]any{"changes": cs, "skipped": skipped, "dry_run": dry}, human: b.String(), warnings: skipWarns}, nil
 	})
 	doc := &cobra.Command{Use: "doctor", Short: "Report which tools are installed and whether their adapters are current", Args: cobra.NoArgs}
 	doc.Flags().BoolVar(&global, "global", false, "include user-level config")
@@ -1048,6 +1052,58 @@ func (a *app) adaptersCmd() *cobra.Command {
 		return &result{data: st, human: b.String(), warnings: warns}, nil
 	})
 	c.AddCommand(sync, doc)
+	return c
+}
+
+func (a *app) setupCmd() *cobra.Command {
+	var tools []string
+	var dry, remove bool
+	c := &cobra.Command{Use: "setup", Short: "Once per machine: make every installed AI tool recognise aitk projects without being told", Args: cobra.NoArgs,
+		Long: "Adds a short, marked aitk section to each installed AI tool's own user-level instructions\n" +
+			"(~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.config/opencode/AGENTS.md, ~/.gemini/GEMINI.md, ~/.qwen/QWEN.md,\n" +
+			"Kiro global steering, Windsurf global rules), installs the aitk Agent Skill for Claude Code at user level, and registers\n" +
+			"the aitk MCP server where a tool has a user-level MCP config (Codex, OpenCode, Gemini CLI). In any repository with\n" +
+			"aitk.toml, agents then start with aitk brief on their own, even before aitk adapters sync has run there.\n" +
+			"Every edited file is backed up first; --remove takes everything out again. Needs no project."}
+	c.Flags().StringArrayVar(&tools, "tool", nil, "only this tool (repeatable)")
+	c.Flags().BoolVar(&dry, "dry-run", false, "show what would change")
+	c.Flags().BoolVar(&remove, "remove", false, "remove aitk from the tools' user-level config")
+	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		r, err := adapters.Setup(adapters.Env{Home: home, LookPath: osexec.LookPath}, tools, remove)
+		if err != nil {
+			return nil, apperr.Usage("%v", err)
+		}
+		var b strings.Builder
+		for _, ch := range r.Changes {
+			fmt.Fprintf(&b, "%-12s %s (%s)\n", ch.Tool, adapters.Diff(ch), ch.What)
+		}
+		switch {
+		case len(r.Changes) == 0 && remove:
+			b.WriteString("nothing to remove")
+		case len(r.Changes) == 0:
+			b.WriteString("every installed AI tool already recognises aitk projects")
+		case dry:
+			b.WriteString("dry run: nothing written")
+		default:
+			if err := adapters.Apply(r.Changes, filepath.Join(stateDir(), "backups")); err != nil {
+				return nil, err
+			}
+			if remove {
+				b.WriteString("done: aitk removed from the tools' user-level config (backups in " + filepath.Join(stateDir(), "backups") + ")")
+			} else {
+				b.WriteString("done: in any repository with aitk.toml, these tools now start with aitk brief on their own (backups in " + filepath.Join(stateDir(), "backups") + ")")
+			}
+		}
+		res := &result{data: map[string]any{"changes": r.Changes, "skipped": r.Skipped, "dry_run": dry, "remove": remove}, human: b.String()}
+		for _, sk := range r.Skipped {
+			res.warnings = append(res.warnings, "skipped "+sk)
+		}
+		return res, nil
+	})
 	return c
 }
 

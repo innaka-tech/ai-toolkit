@@ -12,18 +12,47 @@
 | Gemini CLI | `.gemini/settings.json` `context.fileName` includes `AGENTS.md` | `.gemini/settings.json` `mcpServers.aitk` | `SessionStart` (`startup`) → `aitk brief` |
 | Kiro | `.kiro/steering/aitk.md` (`inclusion: always`) | `.kiro/settings/mcp.json` | — |
 | Cursor | `.cursor/rules/aitk.mdc` (`alwaysApply: true`) | `.cursor/mcp.json` | — |
-| Aider and others | `AGENTS.md` via the tool's read/include option | — | git hooks only |
+| GitHub Copilot (VS Code) | `.github/copilot-instructions.md` (marked block) | `.vscode/mcp.json` `servers.aitk` (`type: stdio`) | — |
+| Windsurf | `.windsurf/rules/aitk.md` (`trigger: always_on`) | — (user-level only) | — |
+| Cline | `.clinerules/aitk.md`, or a marked block in a single `.clinerules` file | — | — |
+| Roo Code | `.roo/rules/aitk.md` | `.roo/mcp.json` | — |
+| Aider | `.aider.conf.yml` `read: [AGENTS.md]` (left alone when `read:` is set by hand) | — | — |
+| Junie | `.junie/guidelines.md` (marked block) | — | — |
+| Qwen Code | `.qwen/settings.json` `context.fileName` includes `AGENTS.md` | `.qwen/settings.json` `mcpServers.aitk` | — |
+| Amp, Zed, Jules, Factory, others | `AGENTS.md` (native) | — | git hooks only |
+
+Rule files for tools other than Claude Code, Codex, OpenCode, and Gemini carry one short pointer to the AGENTS.md block (`adapters.Pointer`), so the workflow has one source of truth. `--tool all` writes every tool's files regardless of detection.
 
 Rules:
 
-- Tools are detected by their executable on PATH or their project directory; `--tool` selects explicitly.
+- Tools are detected by their executable on PATH, their project directory, or (Copilot, Cline, Roo Code) their editor extension; `--tool` selects explicitly.
 - Project files are written in the repository (reviewable in `git diff`, shared with teammates on commit). User-level files change only with `--global` and are copied to `$XDG_STATE_HOME/aitk/backups/<timestamp>/` first.
 - JSON configs are edited key by key: other keys, their order, and their values are preserved; aitk only owns the `aitk` server entry and its own `aitk brief` hook. Files that are not plain JSON (e.g. JSONC with comments) are refused with an explanation, never rewritten.
-- Text files: aitk writes only between its markers (`<!-- aitk:begin v=2 -->`, `# aitk:begin`) or files it owns (`.kiro/steering/aitk.md`, `.cursor/rules/aitk.mdc`).
+- Text files: aitk writes only between its markers (`<!-- aitk:begin v=2 -->`, `<!-- aitk:pointer:begin -->`, `<!-- aitk:global:begin -->`, `# aitk:begin`) or files it owns (`.kiro/steering/aitk.md`, `.cursor/rules/aitk.mdc`, `.windsurf/rules/aitk.md`, `.roo/rules/aitk.md`, `.clinerules/aitk.md`).
 - Re-running with no changes MUST be a no-op. `aitk adapters doctor` reports tools whose adapters are missing or outdated, and warns when `aitk` is not on PATH.
 - Each adapter has fixture tests: existing user config, expected result, and a no-op re-run.
 - Secrets are never written by adapters.
 - `aitk mcp` starts even outside an aitk project, so a global registration is safe: tools then return `E_NOT_A_PROJECT` with its fix.
+
+## Machine setup
+
+`aitk setup` (no project needed) makes every installed AI tool recognise aitk projects on its own, before any repository is configured:
+
+| Tool | User-level instructions | Also |
+|---|---|---|
+| Claude Code | `~/.claude/CLAUDE.md` (marked block) | Agent Skill `~/.claude/skills/aitk/SKILL.md` |
+| Codex CLI | `~/.codex/AGENTS.md` (marked block) | MCP in `~/.codex/config.toml` |
+| OpenCode | `~/.config/opencode/AGENTS.md` (marked block) | MCP in `~/.config/opencode/opencode.json` |
+| Gemini CLI | `~/.gemini/GEMINI.md` (marked block) | MCP in `~/.gemini/settings.json` |
+| Qwen Code | `~/.qwen/QWEN.md` (marked block) | — |
+| Kiro | `~/.kiro/steering/aitk.md` (owned file) | — |
+| Windsurf | `~/.codeium/windsurf/memories/global_rules.md` (marked block) | — |
+
+- The block (`adapters.GlobalText`) applies only in repositories with `aitk.toml`. It says to start with `aitk brief`, and it gives aitk's rules precedence over older ai-toolkit instructions.
+- Only installed tools are touched; `--tool` selects explicitly; `--dry-run` shows the changes.
+- Every edited file is backed up first.
+- `--remove` takes the blocks, owned files (only if they are still aitk's), and MCP entries out again, and deletes files that held nothing else.
+- Cursor and Copilot keep user-level instructions in their settings UI, not in files, so their repository files carry the workflow.
 
 ## MCP server
 
@@ -31,9 +60,12 @@ Rules:
 
 | Kind | Name | Maps to |
 |---|---|---|
-| tool | `brief` | `aitk brief` |
+| tool | `brief` | `aitk brief` (its description and the server instructions tell agents to call it first, unasked) |
 | tool | `task_new`, `task_start`, `task_update`, `task_list`, `task_show` | `aitk task …` |
 | tool | `check` | `aitk check` |
+| tool | `task_next` | `aitk task next [--start]` |
+| tool | `impact` | `aitk impact` |
+| tool | `audit`, `security_checklist`, `uat_script` | `aitk audit [--tasks]`, `aitk security checklist`, `aitk uat script` |
 | tool | `close` | `aitk close` |
 | tool | `switch_prepare` | `aitk switch --print` |
 | tool | `knowledge_search`, `knowledge_add` | `aitk knowledge …` |

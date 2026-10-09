@@ -91,4 +91,5 @@ case ":$PATH:" in
   *":$DEST:"*) ;;
   *) say "add $DEST to your PATH, e.g.: echo 'export PATH=\"$DEST:\$PATH\"' >> ~/.profile" ;;
 esac
-say "next: cd <your repo> && aitk init (or aitk migrate for a v1 project) && aitk adapters sync"
+say "next: aitk setup   (once per machine: your AI tools then recognise aitk projects on their own)"
+say "      cd <your repo> && aitk init (or aitk migrate for a v1 project) && aitk adapters sync"

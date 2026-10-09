@@ -20,17 +20,21 @@ import (
 // Exec runs aitk CLI arguments and writes the JSON envelope to stdout.
 type Exec func(args []string, stdout, stderr *bytes.Buffer) int
 
-const instructions = `aitk keeps this project's state in git and verifies work before it is done.
-Protocol: 1) call brief and read it; 2) task_start an existing task or task_new one;
-3) do the work and call check until it passes; 4) call close with summary and knowledge ("none" allowed).
-If unsure, blocked, the change is risky, or check fails twice: stop and ask the user.
+const instructions = `aitk keeps this project's tasks, handoffs, and knowledge in git and decides when work is done.
+Use these tools on your own, without waiting to be asked:
+1) At the start of every session, call brief first and follow it.
+2) Continue the active task, or call task_next with start=true (task_new if nothing fits).
+3) Do the work; call check until it passes; call impact and cover what it says is untested.
+4) Call close with a summary and one lasting finding as knowledge ("none" allowed). If close refuses, do what its fix says.
+If unsure, blocked, the change is risky, or check fails twice: close with status blocked and ask the user.
+Never accept user acceptance (UAT) for the user. If brief reports E_NOT_A_PROJECT, this repository does not use aitk: ignore these tools.
 Errors include a "fix" with the exact next step.`
 
 // New builds the server for the project at root.
 func New(root, version string, exec Exec) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "aitk", Title: "aitk", Version: version}, &mcp.ServerOptions{Instructions: instructions})
 	h := &handler{root: root, exec: exec}
-	add(s, h, "brief", "Start here. The bounded session brief: active task, open criteria, last handoff, relevant knowledge, rules, next commands.",
+	add(s, h, "brief", "Call this first in every session, without being asked. The bounded session brief: active task, open criteria, last handoff, relevant knowledge, conventions, rules, next commands.",
 		func(in briefIn) []string {
 			a := []string{"brief"}
 			if in.Budget > 0 {

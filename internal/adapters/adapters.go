@@ -25,8 +25,11 @@ type Change struct {
 	Rel    string `json:"file"` // display path (repo-relative or ~/...)
 	What   string `json:"what"`
 	Global bool   `json:"global"`
-	before []byte
-	after  []byte
+	Delete bool   `json:"delete,omitempty"` // remove the file (aitk-owned files only)
+	// problem, when set, means the change must not be applied: the reason is reported instead.
+	problem string
+	before  []byte
+	after   []byte
 }
 
 // Status of an adapter in doctor output.
@@ -53,7 +56,8 @@ func DefaultEnv(root string) Env {
 type adapter struct {
 	name    string
 	bins    []string // any of these on PATH means installed
-	dirs    []string // or any of these project dirs exists
+	dirs    []string // or any of these project paths exists
+	exts    []string // or an editor extension whose directory starts with one of these
 	project func(e Env) ([]Change, error)
 	global  func(e Env) ([]Change, error)
 }
@@ -71,6 +75,13 @@ func all() []adapter {
 		{name: "gemini-cli", bins: []string{"gemini"}, dirs: []string{".gemini"}, project: geminiProject},
 		{name: "kiro", bins: []string{"kiro", "kiro-cli"}, dirs: []string{".kiro"}, project: kiroProject},
 		{name: "cursor", bins: []string{"cursor", "cursor-agent"}, dirs: []string{".cursor"}, project: cursorProject},
+		{name: "copilot", dirs: []string{".github/copilot-instructions.md"}, exts: []string{"github.copilot"}, project: copilotProject},
+		{name: "windsurf", bins: []string{"windsurf"}, dirs: []string{".windsurf", ".windsurfrules"}, project: windsurfProject},
+		{name: "cline", dirs: []string{".clinerules"}, exts: []string{"saoudrizwan.claude-dev"}, project: clineProject},
+		{name: "roo", dirs: []string{".roo"}, exts: []string{"rooveterinaryinc.roo-cline"}, project: rooProject},
+		{name: "aider", bins: []string{"aider"}, dirs: []string{".aider.conf.yml"}, project: aiderProject},
+		{name: "junie", dirs: []string{".junie"}, project: junieProject},
+		{name: "qwen-code", bins: []string{"qwen"}, dirs: []string{".qwen"}, project: qwenProject},
 	}
 }
 
@@ -94,10 +105,20 @@ func (a adapter) installed(e Env) bool {
 			return true
 		}
 	}
+	for _, x := range a.exts {
+		for _, editor := range []string{".vscode", ".vscode-insiders", ".cursor", ".windsurf", ".vscode-oss"} {
+			if m, _ := filepath.Glob(filepath.Join(e.Home, editor, "extensions", x+"*")); len(m) > 0 {
+				return true
+			}
+		}
+	}
 	return false
 }
 
 func pick(e Env, tools []string) ([]adapter, error) {
+	if len(tools) == 1 && tools[0] == "all" { // every tool, for teams whose members use different ones
+		return all(), nil
+	}
 	if len(tools) == 0 {
 		var out []adapter
 		for _, a := range all() {
@@ -123,33 +144,168 @@ func pick(e Env, tools []string) ([]adapter, error) {
 	return out, nil
 }
 
-// Plan computes the changes needed. Unchanged files are omitted.
+// Pointer is the short instruction every tool-specific rule file carries: it sends the agent to
+// AGENTS.md, where the full aitk block lives, so there is one source of truth.
+const Pointer = "This repository uses aitk. Follow the \"Working in this repository (aitk)\" section of AGENTS.md:\n" +
+	"run `aitk brief` first, take a task with `aitk task next --start` (or continue the active one), run `aitk check`\n" +
+	"until it passes, then `aitk close --summary \"…\" --knowledge \"…|none\"`. If the aitk MCP tools are available, they do the same.\n"
+
+const blockBegin, blockEnd = "<!-- aitk:pointer:begin -->", "<!-- aitk:pointer:end -->"
+
+// findBlock locates the one aitk block in s. Missing markers are fine (no block yet); anything
+// else that is not exactly one begin marker followed by one end marker is refused, because
+// guessing could cut the user's own text.
+func findBlock(s, begin, end string) (i, j int, found bool, problem string) {
+	nb, ne := strings.Count(s, begin), strings.Count(s, end)
+	switch {
+	case nb == 0 && ne == 0:
+		return 0, 0, false, ""
+	case nb != 1 || ne != 1:
+		return 0, 0, false, fmt.Sprintf("the aitk markers appear %d and %d times; fix the file by hand", nb, ne)
+	}
+	i, j = strings.Index(s, begin), strings.Index(s, end)
+	if j < i {
+		return 0, 0, false, "the aitk end marker comes before the begin marker; fix the file by hand"
+	}
+	return i, j, true, ""
+}
+
+// withBlock puts text between aitk markers in a hand-written file: replacing an earlier block,
+// else appending. Everything else in the file stays as it is.
+func withBlock(before []byte, begin, end, text string) ([]byte, string) {
+	block := begin + "\n" + text + end + "\n"
+	s := string(before)
+	i, j, found, problem := findBlock(s, begin, end)
+	if problem != "" {
+		return before, problem
+	}
+	if found {
+		return []byte(s[:i] + block + strings.TrimPrefix(s[j+len(end):], "\n")), ""
+	}
+	switch {
+	case strings.TrimSpace(s) == "":
+		return []byte(block), ""
+	case strings.HasSuffix(s, "\n\n"):
+		return []byte(s + block), ""
+	case strings.HasSuffix(s, "\n"):
+		return []byte(s + "\n" + block), ""
+	}
+	return []byte(s + "\n\n" + block), ""
+}
+
+// withoutBlock removes an aitk block.
+func withoutBlock(before []byte, begin, end string) ([]byte, string) {
+	s := string(before)
+	i, j, found, problem := findBlock(s, begin, end)
+	if problem != "" || !found {
+		return before, problem
+	}
+	out := strings.TrimRight(s[:i], "\n")
+	if rest := strings.TrimLeft(s[j+len(end):], "\n"); rest != "" {
+		if out != "" {
+			out += "\n\n"
+		}
+		out += rest
+	}
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return []byte(out), ""
+}
+
+// blockFile adds the pointer block to a markdown file that may be hand-written.
+func blockFile(e Env, rel, what string) Change {
+	p, before := projectFile(e, rel)
+	after, problem := withBlock(before, blockBegin, blockEnd, Pointer)
+	return Change{Path: p, Rel: rel, What: what, before: before, after: after, problem: problem}
+}
+
+// ruleFile writes an aitk-owned rule file (whole content).
+func ruleFile(e Env, rel, what, content string) Change {
+	p, before := projectFile(e, rel)
+	return Change{Path: p, Rel: rel, What: what, before: before, after: []byte(content)}
+}
+
+// Plan computes the changes needed. Unchanged files are omitted. A problem with one tool's files
+// (a JSONC config, an unreadable file, unbalanced markers) is an error when that one tool was
+// asked for, and otherwise skips that change and is reported by PlanSkipping.
 func Plan(e Env, tools []string, global bool) ([]Change, error) {
+	cs, skipped, err := PlanSkipping(e, tools, global)
+	if err == nil && len(skipped) > 0 && len(tools) == 1 && tools[0] != "all" {
+		return nil, fmt.Errorf("%s", skipped[0])
+	}
+	return cs, err
+}
+
+// PlanSkipping is Plan that keeps going past problems and lists them.
+func PlanSkipping(e Env, tools []string, global bool) ([]Change, []string, error) {
 	as, err := pick(e, tools)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var out []Change
+	var skipped []string
 	for _, a := range as {
 		cs, err := a.project(e)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", a.name, err)
+			skipped = append(skipped, a.name+": "+err.Error())
+			continue
 		}
 		if global && a.global != nil {
 			g, err := a.global(e)
 			if err != nil {
-				return nil, fmt.Errorf("%s: %w", a.name, err)
+				skipped = append(skipped, a.name+": "+err.Error())
+				continue
 			}
 			cs = append(cs, g...)
 		}
 		for _, c := range cs {
-			if !bytes.Equal(c.before, c.after) {
+			if c.problem == "" {
+				c.problem = unsafeTarget(c.Path)
+			}
+			if c.problem != "" {
+				skipped = append(skipped, a.name+": "+c.Rel+": "+c.problem)
+				continue
+			}
+			if !bytes.Equal(c.before, c.after) || c.Delete && len(c.before) > 0 {
 				c.Tool = a.name
 				out = append(out, c)
 			}
 		}
 	}
-	return out, nil
+	return out, skipped, nil
+}
+
+// unsafeTarget explains why a file must not be written: it exists but cannot be read (writing
+// would lose content that could not even be backed up), it is read-only, or it is a symlink
+// whose target is missing.
+func unsafeTarget(path string) string {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		return err.Error()
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		real, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return "symlink to a missing file; fix the link first"
+		}
+		if info, err = os.Stat(real); err != nil {
+			return err.Error()
+		}
+	}
+	if info.IsDir() {
+		return "is a directory"
+	}
+	if _, err := os.ReadFile(path); err != nil {
+		return "cannot be read (" + err.Error() + "); left alone"
+	}
+	if info.Mode().Perm()&0o200 == 0 {
+		return "read-only; make it writable to let aitk edit it"
+	}
+	return ""
 }
 
 // Apply writes the changes. Global files are backed up to backupDir first.
@@ -161,6 +317,19 @@ func Apply(cs []Change, backupDir string) error {
 			if err := fsx.WriteFile(dst, c.before, 0o600); err != nil {
 				return fmt.Errorf("backup %s: %w", c.Rel, err)
 			}
+		}
+		if c.Delete {
+			if info, err := os.Lstat(c.Path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+				// A linked dotfile: empty the target instead of breaking the link.
+				if err := fsx.WriteFileKeep(c.Path, nil, 0o644); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := os.Remove(c.Path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			continue
 		}
 		if err := fsx.WriteFileKeep(c.Path, c.after, 0o644); err != nil {
 			return err
@@ -337,8 +506,21 @@ func opencodeProject(e Env) ([]Change, error) {
 }
 
 func geminiProject(e Env) ([]Change, error) {
-	p, _ := projectFile(e, ".gemini/settings.json")
-	c, err := jsonChange(p, ".gemini/settings.json", "MCP server, AGENTS.md as context, SessionStart hook", false, func(o *jsonedit.Object) error {
+	return geminiLike(e, ".gemini/settings.json", "GEMINI.md", true)
+}
+
+// qwenProject: Qwen Code shares Gemini CLI's settings format.
+func qwenProject(e Env) ([]Change, error) {
+	return geminiLike(e, ".qwen/settings.json", "QWEN.md", false)
+}
+
+func geminiLike(e Env, rel, own string, hook bool) ([]Change, error) {
+	p, _ := projectFile(e, rel)
+	what := "MCP server, AGENTS.md as context"
+	if hook {
+		what += ", SessionStart hook"
+	}
+	c, err := jsonChange(p, rel, what, false, func(o *jsonedit.Object) error {
 		if err := setServer("mcpServers", stdioEntry())(o); err != nil {
 			return err
 		}
@@ -355,8 +537,8 @@ func geminiProject(e Env) ([]Change, error) {
 		}
 		if !contains(names, "AGENTS.md") {
 			names = append([]string{"AGENTS.md"}, names...)
-			if !contains(names, "GEMINI.md") {
-				names = append(names, "GEMINI.md")
+			if !contains(names, own) {
+				names = append(names, own)
 			}
 			if err := ctx.Set("fileName", names); err != nil {
 				return err
@@ -365,9 +547,76 @@ func geminiProject(e Env) ([]Change, error) {
 				return err
 			}
 		}
+		if !hook {
+			return nil
+		}
 		return ensureSessionHook("startup")(o)
 	})
 	return []Change{c}, err
+}
+
+// copilotProject: GitHub Copilot reads .github/copilot-instructions.md (and AGENTS.md in its
+// coding agent); VS Code reads workspace MCP servers from .vscode/mcp.json.
+func copilotProject(e Env) ([]Change, error) {
+	p, _ := projectFile(e, ".vscode/mcp.json")
+	c, err := jsonChange(p, ".vscode/mcp.json", "register aitk MCP server (VS Code)", false,
+		setServer("servers", map[string]any{"type": "stdio", "command": mcpCommand[0], "args": mcpCommand[1:]}))
+	if err != nil {
+		return nil, err
+	}
+	return []Change{blockFile(e, ".github/copilot-instructions.md", "instructions: follow AGENTS.md"), c}, nil
+}
+
+func windsurfProject(e Env) ([]Change, error) {
+	return []Change{ruleFile(e, ".windsurf/rules/aitk.md", "always-on rule: follow AGENTS.md", "---\ntrigger: always_on\n---\n\n# aitk\n\n"+Pointer)}, nil
+}
+
+// clineProject: a .clinerules directory gets its own file; a single .clinerules file gets a block.
+func clineProject(e Env) ([]Change, error) {
+	if info, err := os.Stat(filepath.Join(e.Root, ".clinerules")); err == nil && !info.IsDir() {
+		return []Change{blockFile(e, ".clinerules", "rule: follow AGENTS.md")}, nil
+	}
+	return []Change{ruleFile(e, ".clinerules/aitk.md", "rule: follow AGENTS.md", "# aitk\n\n"+Pointer)}, nil
+}
+
+func rooProject(e Env) ([]Change, error) {
+	p, _ := projectFile(e, ".roo/mcp.json")
+	c, err := jsonChange(p, ".roo/mcp.json", "register aitk MCP server", false, setServer("mcpServers", stdioEntry()))
+	if err != nil {
+		return nil, err
+	}
+	return []Change{ruleFile(e, ".roo/rules/aitk.md", "rule: follow AGENTS.md", "# aitk\n\n"+Pointer), c}, nil
+}
+
+func junieProject(e Env) ([]Change, error) {
+	return []Change{blockFile(e, ".junie/guidelines.md", "guidelines: follow AGENTS.md")}, nil
+}
+
+// aiderProject makes Aider read AGENTS.md in every session (read: in .aider.conf.yml). A file
+// that already sets read: is left alone unless it lists AGENTS.md; doctor then shows it pending.
+func aiderProject(e Env) ([]Change, error) {
+	p, before := projectFile(e, ".aider.conf.yml")
+	after := before
+	s := string(before)
+	switch {
+	case strings.Contains(s, "AGENTS.md"):
+	case !hasYAMLKey(s, "read"):
+		sep := ""
+		if s != "" && !strings.HasSuffix(s, "\n") {
+			sep = "\n"
+		}
+		after = []byte(s + sep + "# aitk: every session reads the aitk workflow\nread: [AGENTS.md]\n")
+	}
+	return []Change{{Path: p, Rel: ".aider.conf.yml", What: "read AGENTS.md in every session", before: before, after: after}}, nil
+}
+
+func hasYAMLKey(s, key string) bool {
+	for _, l := range strings.Split(s, "\n") {
+		if strings.HasPrefix(l, key+":") {
+			return true
+		}
+	}
+	return false
 }
 
 const steering = `---
@@ -418,8 +667,12 @@ func codexGlobal(e Env) ([]Change, error) {
 	block := tomlBegin + "\n[mcp_servers.aitk]\ncommand = \"aitk\"\nargs = [\"mcp\"]\n" + tomlEnd + "\n"
 	s := string(before)
 	var after string
-	switch i, j := strings.Index(s, tomlBegin), strings.Index(s, tomlEnd); {
-	case i >= 0 && j > i:
+	i, j, found, problem := findBlock(s, tomlBegin, tomlEnd)
+	if problem != "" {
+		return []Change{{Path: p, Rel: "~/.codex/config.toml", What: "register aitk MCP server", Global: true, before: before, after: before, problem: problem}}, nil
+	}
+	switch {
+	case found:
 		after = s[:i] + block + strings.TrimPrefix(s[j+len(tomlEnd):], "\n")
 	case strings.Contains(s, "[mcp_servers.aitk]"):
 		after = s // configured by hand; leave it
@@ -446,6 +699,12 @@ func contains(xs []string, s string) bool {
 
 // Diff renders a short before/after summary for dry runs.
 func Diff(c Change) string {
+	if c.Delete {
+		if info, err := os.Lstat(c.Path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return "empty " + c.Rel + " (symlink kept)"
+		}
+		return "delete " + c.Rel
+	}
 	if len(c.before) == 0 {
 		return "create " + c.Rel
 	}

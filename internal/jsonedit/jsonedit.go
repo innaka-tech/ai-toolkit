@@ -70,6 +70,23 @@ func (o *Object) Set(k string, v any) error {
 	return nil
 }
 
+// Delete removes key, keeping the order of the others.
+func (o *Object) Delete(k string) {
+	if _, ok := o.vals[k]; !ok {
+		return
+	}
+	delete(o.vals, k)
+	for i, x := range o.keys {
+		if x == k {
+			o.keys = append(o.keys[:i], o.keys[i+1:]...)
+			break
+		}
+	}
+}
+
+// Len is the number of keys.
+func (o *Object) Len() int { return len(o.keys) }
+
 // Child returns the object at key (creating it when absent).
 func (o *Object) Child(k string) (*Object, error) {
 	raw, ok := o.vals[k]
