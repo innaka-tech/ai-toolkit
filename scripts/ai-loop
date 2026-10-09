@@ -120,17 +120,17 @@ get_agent_cmd() {
 # On MacOS: prefers gtimeout (coreutils) over python alarm fallback.
 AGENT_TIMEOUT="${AGENT_TIMEOUT:-120}"
 
-# Resolve timeout command: gtimeout on MacOS, timeout on Linux
-TIMEOUT_CMD=""
+# Resolve timeout command: gtimeout on MacOS, timeout on Linux, perl alarm otherwise.
+# The perl fallback mirrors coreutils' exit code 124 on timeout.
+TIMEOUT_CMD=()
 for candidate in gtimeout timeout; do
   if command -v "$candidate" >/dev/null 2>&1; then
-    TIMEOUT_CMD="$candidate"
+    TIMEOUT_CMD=("$candidate" "$AGENT_TIMEOUT")
     break
   fi
 done
-if [ -z "$TIMEOUT_CMD" ]; then
-  # Use python3 alarm as last resort (Unix only, fails on Windows)
-  TIMEOUT_CMD="python3 -c \"import signal,sys; signal.alarm(int(sys.argv[1])); sys.argv=sys.argv[2:]; exec(sys.argv[0])\" $AGENT_TIMEOUT"
+if [ "${#TIMEOUT_CMD[@]}" -eq 0 ] && command -v perl >/dev/null 2>&1; then
+  TIMEOUT_CMD=(perl -e '$SIG{ALRM}=sub{kill "TERM",$pid; exit 124}; alarm shift; $pid=fork//die; if(!$pid){exec @ARGV or exit 127} waitpid($pid,0); exit($?>>8)' "$AGENT_TIMEOUT")
 fi
 
 send_to_agent() {
@@ -138,45 +138,24 @@ send_to_agent() {
   local prompt="$2"
   local workdir="$3"
   local output
-  local cmd
   local rc
+  local -a argv
 
+  # Prompt is passed as a single argv element: no shell re-parsing, no lost variables.
   case "$agent" in
-    codex)
-      cmd="codex exec \"\$prompt\" 2>&1"
-      ;;
-    opencode)
-      cmd="opencode run \"\$prompt\" 2>&1"
-      ;;
-    gemini)
-      cmd="gemini -p \"\$prompt\" 2>&1"
-      ;;
-    claude)
-      cmd="claude --print \"\$prompt\" 2>&1"
-      ;;
-    jcode)
-      cmd="jcode run --json \"\$prompt\" 2>&1"
-      ;;
-    ag)
-      cmd="ag \"\$prompt\" 2>&1"
-      ;;
+    codex) argv=(codex exec "$prompt") ;;
+    opencode) argv=(opencode run "$prompt") ;;
+    gemini) argv=(gemini -p "$prompt") ;;
+    claude) argv=(claude --print "$prompt") ;;
+    jcode) argv=(jcode run --json "$prompt") ;;
+    ag) argv=(ag "$prompt") ;;
     *)
       echo "[ai-loop] No handler for agent: $agent" >&2
       return 1
       ;;
   esac
 
-  # Execute with timeout
-  if [ -n "$TIMEOUT_CMD" ] && [[ "$TIMEOUT_CMD" != python3* ]]; then
-    # Native timeout available (gtimeout or timeout)
-    output="$(cd "$workdir" && $TIMEOUT_CMD "$AGENT_TIMEOUT" bash -c "$cmd" 2>&1)" || rc=$?
-  elif [ -n "$TIMEOUT_CMD" ]; then
-    # Python alarm fallback
-    output="$(cd "$workdir" && bash -c "$TIMEOUT_CMD" 2>&1)" || rc=$?
-  else
-    # No timeout available at all
-    output="$(cd "$workdir" && bash -c "$cmd" 2>&1)" || rc=$?
-  fi
+  output="$(cd "$workdir" && ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} "${argv[@]}" 2>&1)" || rc=$?
 
   # Handle non-zero exit (non-timeout failures still produce output)
   if [ -n "${rc:-}" ]; then

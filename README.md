@@ -1,12 +1,10 @@
 # AI Toolkit Directory
 
-Central hub for multi-AI orchestration on this MacBook.
+Shared context and delivery workflow for projects worked on by multiple AI coding tools.
 
 ## Structure
 - `config.yaml` — Master configuration
 - `context/` — Registry for tracked projects
-- `bridge/` — Inter-agent handoff queue
-- `state/` — Provider state (accounts, status)
 - `logs/` — Usage logs
 - `scripts/` — `ai-*` command wrappers
 - `conventions/` — Shared conventions
@@ -52,7 +50,7 @@ ai-sync                      # Push project summary to Uteke
 ai-recall                    # Recall project memory from Uteke
 ai-session                   # Build one briefing for the next AI session
 ai-toolkit preflight         # Run mandatory risk/context gate
-ai-toolkit exec auto          # Invoke provider only after toolkit preflight
+ai-toolkit exec claude        # Run preflight, then start an AI tool
 ai-next                     # Generate suggested next tasks
 ai-map                       # Query codebase-memory for this project
 ai-toolkit mcp status         # Check optional Browser MCP
@@ -99,7 +97,7 @@ to another location, set `AI_TOOLKIT_DIR` before running the installer:
 AI_TOOLKIT_DIR="$HOME/tools/ai-toolkit" ./install.sh
 ```
 
-Full usage guide: [USAGE.md](/Users/anasfikri/.ai-toolkit/USAGE.md:1)
+Full usage guide: [USAGE.md](USAGE.md)
 
 ## Automation
 
@@ -107,7 +105,7 @@ Full usage guide: [USAGE.md](/Users/anasfikri/.ai-toolkit/USAGE.md:1)
 - `ai-commit` stages all changes, updates handoff context, and commits.
 - `ai-push` pushes to the configured upstream or sets `origin/<branch>` on first push.
 - `ai-deploy` reads commands from `.ai-toolkit/project.env`.
-- `ai-exec` runs an AI provider through the mandatory toolkit preflight. Every
+- `ai-exec <provider>` runs the mandatory toolkit preflight, then starts that AI tool. Every
   task must record impact, security, compatibility, edge cases, mitigations,
   and validation before implementation.
 

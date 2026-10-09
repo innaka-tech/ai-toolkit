@@ -11,8 +11,12 @@ echo "============================"
 echo "Time: $NOW"
 echo ""
 
-# Check Hermes (always available if this runs)
-echo "✅ Hermes (NovaRa)    → ONLINE (orchestrator)"
+# Check Hermes
+if command -v hermes &>/dev/null; then
+  echo "✅ Hermes             → AVAILABLE ($(which hermes))"
+else
+  echo "⚠️  Hermes             → NOT INSTALLED"
+fi
 
 # Check Claude Code
 if command -v claude &>/dev/null; then
@@ -41,16 +45,6 @@ else
   echo "⚠️  Freebuff           → NOT INSTALLED"
 fi
 
-# Check anti-gravity
-AG_FILE="$HOME/.ai-toolkit/state/ag-accounts.json"
-if [ -f "$AG_FILE" ]; then
-  AG_COUNT=$(jq '.accounts | length' "$AG_FILE" 2>/dev/null || echo 0)
-  AG_ACTIVE=$(jq '[.accounts[] | select(.status == "active")] | length' "$AG_FILE" 2>/dev/null || echo 0)
-  AG_COOLDOWN=$(jq '[.accounts[] | select(.cooldown_until > now)] | length' "$AG_FILE" 2>/dev/null || echo 0)
-  echo "🔄 anti-gravity       → $AG_ACTIVE/$AG_COUNT accounts active, $AG_COOLDOWN cooling down"
-else
-  echo "⚠️  anti-gravity       → NO ACCOUNTS CONFIGURED"
-fi
 
 # Check Kiro (VS Code extension)
 VSCODE_EXT="$HOME/.vscode/extensions"
@@ -69,5 +63,4 @@ fi
 
 echo ""
 echo "📁 Context: $HOME/.ai-toolkit/context/"
-echo "📁 Bridge:  $HOME/.ai-toolkit/bridge/"
 echo "📁 Logs:    $HOME/.ai-toolkit/logs/"
