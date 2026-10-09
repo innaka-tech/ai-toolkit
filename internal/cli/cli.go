@@ -2,22 +2,27 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	osexec "os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/innaka-tech/ai-toolkit/internal/adapters"
 	"github.com/innaka-tech/ai-toolkit/internal/adr"
 	"github.com/innaka-tech/ai-toolkit/internal/apperr"
 	"github.com/innaka-tech/ai-toolkit/internal/brief"
 	"github.com/innaka-tech/ai-toolkit/internal/compat"
 	"github.com/innaka-tech/ai-toolkit/internal/doctor"
 	"github.com/innaka-tech/ai-toolkit/internal/knowledge"
+	"github.com/innaka-tech/ai-toolkit/internal/mcpserver"
 	"github.com/innaka-tech/ai-toolkit/internal/migrate"
 	"github.com/innaka-tech/ai-toolkit/internal/ops"
 	"github.com/innaka-tech/ai-toolkit/internal/project"
@@ -174,7 +179,7 @@ func (a *app) root() *cobra.Command {
 	root.PersistentFlags().StringVarP(&a.dir, "path", "C", "", "run as if started in this directory")
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
-		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd())
+		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd())
 	return root
 }
 
@@ -721,4 +726,108 @@ func (a *app) versionCmd() *cobra.Command {
 		return &result{data: d, human: fmt.Sprintf("aitk %s (%s, %s)", Version, Commit, Date)}, nil
 	})
 	return c
+}
+
+func (a *app) mcpCmd() *cobra.Command {
+	var addr string
+	c := &cobra.Command{Use: "mcp", Short: "Serve aitk over the Model Context Protocol (stdio by default)", Args: cobra.NoArgs}
+	c.Flags().StringVar(&addr, "http", "", "serve streamable HTTP on this address (e.g. 127.0.0.1:8770) instead of stdio")
+	c.RunE = func(cmd *cobra.Command, _ []string) error {
+		// Serve even outside an aitk project (e.g. registered globally): each tool then
+		// returns E_NOT_A_PROJECT with its fix instead of the server failing to start.
+		root := a.dir
+		if root == "" {
+			root, _ = os.Getwd()
+		}
+		if p, err := project.Repo(root); err == nil {
+			root = p.Root
+		}
+		exec := func(args []string, stdout, stderr *bytes.Buffer) int { return Execute(args, stdout, stderr) }
+		s := mcpserver.New(root, Version, exec)
+		var err error
+		if addr != "" {
+			err = mcpserver.ServeHTTP(addr, s)
+		} else {
+			err = mcpserver.ServeStdio(cmd.Context(), s)
+		}
+		if err != nil && cmd.Context().Err() == nil {
+			a.fail("mcp", err)
+		}
+		return nil
+	}
+	return c
+}
+
+func (a *app) adaptersCmd() *cobra.Command {
+	c := &cobra.Command{Use: "adapters", Short: "Install aitk into AI tools: instructions, MCP server, session hooks"}
+	var tools []string
+	var global, dry bool
+	sync := &cobra.Command{Use: "sync", Short: "Install or update adapters for detected tools (idempotent)", Args: cobra.NoArgs}
+	sync.Flags().StringArrayVar(&tools, "tool", nil, "only this tool (repeatable): "+strings.Join(adapters.Names(), ", "))
+	sync.Flags().BoolVar(&global, "global", false, "also edit user-level config (e.g. ~/.codex/config.toml); backed up first")
+	sync.Flags().BoolVar(&dry, "dry-run", false, "show what would change")
+	sync.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		cs, err := adapters.Plan(adapters.DefaultEnv(p.Root), tools, global)
+		if err != nil {
+			return nil, apperr.Usage("%v", err)
+		}
+		var b strings.Builder
+		for _, ch := range cs {
+			fmt.Fprintf(&b, "%-12s %s (%s)\n", ch.Tool, adapters.Diff(ch), ch.What)
+		}
+		if len(cs) == 0 {
+			b.WriteString("all detected tools are up to date")
+		} else if dry {
+			b.WriteString("dry run: nothing written")
+		} else {
+			if err := adapters.Apply(cs, filepath.Join(stateDir(), "backups")); err != nil {
+				return nil, err
+			}
+			b.WriteString("done. Make sure `aitk` is on PATH for every tool; commit the project files so teammates get them.")
+		}
+		if cs == nil {
+			cs = []adapters.Change{}
+		}
+		return &result{data: map[string]any{"changes": cs, "dry_run": dry}, human: b.String()}, nil
+	})
+	doc := &cobra.Command{Use: "doctor", Short: "Report which tools are installed and whether their adapters are current", Args: cobra.NoArgs}
+	doc.Flags().BoolVar(&global, "global", false, "include user-level config")
+	doc.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		st := adapters.Doctor(adapters.DefaultEnv(p.Root), global)
+		var b strings.Builder
+		var warns []string
+		for _, s := range st {
+			state := "not installed"
+			switch {
+			case s.Installed && s.Current:
+				state = "ok"
+			case s.Installed:
+				state = "needs sync: " + strings.Join(s.Pending, "; ")
+			}
+			fmt.Fprintf(&b, "%-12s %s\n", s.Tool, state)
+		}
+		if _, err := osexec.LookPath("aitk"); err != nil {
+			warns = append(warns, "aitk is not on PATH; tools cannot start the MCP server or hooks")
+		}
+		return &result{data: st, human: b.String(), warnings: warns}, nil
+	})
+	c.AddCommand(sync, doc)
+	return c
+}
+
+// stateDir follows the XDG Base Directory spec.
+func stateDir() string {
+	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
+		return filepath.Join(d, "aitk")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "state", "aitk")
 }

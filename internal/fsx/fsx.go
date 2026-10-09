@@ -3,10 +3,8 @@ package fsx
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 )
 
@@ -45,67 +43,42 @@ func Exists(path string) bool {
 	return err == nil
 }
 
-// Lock is an exclusive lock implemented with O_EXCL lock files. Stale locks
-// (holder process gone, or older than staleAfter) are broken automatically.
-type Lock struct{ path string }
+// Lock is an exclusive, kernel-managed file lock (flock on Unix, LockFileEx on Windows).
+// The kernel releases it when the process exits, so there are no stale locks to break.
+type Lock struct{ f *os.File }
 
-// ErrLocked is returned when the lock is held by another live process.
+// ErrLocked is returned when another process holds the lock past the timeout.
 var ErrLocked = errors.New("locked by another aitk process")
-
-const staleAfter = 2 * time.Minute
 
 // Acquire takes the lock at path, waiting up to timeout.
 func Acquire(path string, timeout time.Duration) (*Lock, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
 	deadline := time.Now().Add(timeout)
 	for {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-		if err == nil {
-			fmt.Fprintf(f, "%d\n", os.Getpid())
+		ok, err := tryLock(f)
+		if err != nil {
 			f.Close()
-			return &Lock{path: path}, nil
-		}
-		if !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
-		if stale(path) {
-			remove(path)
-			continue
+		if ok {
+			return &Lock{f: f}, nil
 		}
 		if time.Now().After(deadline) {
+			f.Close()
 			return nil, ErrLocked
 		}
-		time.Sleep(25 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
-}
-
-func stale(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return true
-	}
-	if time.Since(info.ModTime()) > staleAfter {
-		return true
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	pid, err := strconv.Atoi(string(trimNL(b)))
-	if err != nil || pid <= 0 {
-		return false
-	}
-	return !processAlive(pid)
-}
-
-func trimNL(b []byte) []byte {
-	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r') {
-		b = b[:len(b)-1]
-	}
-	return b
 }
 
 // Release drops the lock.
-func (l *Lock) Release() { remove(l.path) }
+func (l *Lock) Release() {
+	unlock(l.f)
+	l.f.Close()
+}

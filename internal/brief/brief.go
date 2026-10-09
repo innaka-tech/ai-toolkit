@@ -30,7 +30,7 @@ type Brief struct {
 	Budget    int                `json:"budget"`
 	Dropped   int                `json:"knowledge_dropped,omitempty"`
 	Changed   []profile.Change   `json:"changed_files,omitempty"`
-	Markdown  string             `json:"-"`
+	Markdown  string             `json:"markdown"`
 }
 
 type ProjectInfo struct {
