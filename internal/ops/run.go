@@ -630,6 +630,7 @@ func (r *runner) runAgent(prompt, id string) agentRun {
 		pointer := "Read the file " + pf + " and follow its instructions exactly. It describes the one aitk task to finish in this repository."
 		argv := headless[r.agent](r.args, pointer)
 		c = exec.CommandContext(ctx, argv[0], argv[1:]...)
+		c.Stdin = strings.NewReader("") // tools like codex exec read stdin to EOF when it is not a terminal
 	}
 	killTree(c) // a timeout ends the agent and everything it started
 	c.Dir = p.Root

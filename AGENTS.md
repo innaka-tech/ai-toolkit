@@ -1,6 +1,7 @@
 # AGENTS.md
 
 <!-- aitk:begin v=2 -->
+<!-- aitk:block-revision 2 -->
 ## Working in this repository (aitk)
 
 1. Run `aitk brief` and read its output. Do not read other files under docs/ai/ unless the brief points to them.
