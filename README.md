@@ -54,7 +54,7 @@ Nobody has to tell an agent to use aitk. Four layers make sure it finds out:
 | Amp, Zed, Jules, Factory, others | `AGENTS.md` (native) | |
 | anything else | `AGENTS.md`; git hooks enforce the rules for everyone | |
 
-`adapters sync` configures the tools it detects; `--tool all` writes every tool's files, for teams whose members use different tools. Your own text in any of these files is kept: aitk only edits its own marked section or entry.
+`adapters sync` configures the tools it detects; `--tool all` writes every tool's files, for teams whose members use different tools. Your own settings and text are kept: aitk changes only its own marked section or `aitk` entry (JSON files may be re-indented). A file it cannot edit safely (unreadable, read-only, JSON with comments, markers edited by hand) is skipped and reported, never overwritten.
 
 ## How it works
 

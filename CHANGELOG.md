@@ -8,11 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 Every AI tool picks up aitk without being told.
 
 ### Added
-- **`aitk setup`** (once per machine, no project needed): a short marked section in each installed AI tool's user-level instructions (Claude Code, Codex, OpenCode, Gemini CLI, Qwen Code, Kiro, Windsurf) says that a repository with `aitk.toml` is managed by aitk and the agent starts with `aitk brief`, so agents follow aitk in every aitk repository, including fresh clones that were never synced. Also installs the Agent Skill for Claude Code at user level and registers the MCP server for Codex, OpenCode, and Gemini CLI. Backups first; `--dry-run`; `--remove` restores the files.
-- **Adapters for more tools**: GitHub Copilot (`.github/copilot-instructions.md`, `.vscode/mcp.json`), Windsurf, Cline, Roo Code (with MCP), Aider (`read: [AGENTS.md]`), Junie, Qwen Code (with MCP). `aitk adapters sync --tool all` writes every tool's files for mixed teams.
+- **`aitk setup`** (once per machine, no project needed): a short marked section in each installed AI tool's user-level instructions (Claude Code, Codex, OpenCode, Gemini CLI, Qwen Code, Kiro, Windsurf) says that a repository with `aitk.toml` is managed by aitk and the agent starts with `aitk brief`, so agents follow aitk in every aitk repository, including fresh clones that were never synced. Also installs the Agent Skill for Claude Code at user level and registers the MCP server for Codex, OpenCode, and Gemini CLI. Backups first; `--dry-run`; `--remove` takes aitk's sections and entries out again (through symlinked dotfiles, keeping the link). Files that cannot be edited safely (unreadable, read-only, dangling symlinks, unbalanced markers, a hand-written file with aitk's name) are skipped and reported, never overwritten.
+- **Adapters for more tools**: GitHub Copilot (`.github/copilot-instructions.md`, `.vscode/mcp.json`), Windsurf, Cline, Roo Code (with MCP), Aider (`read: [AGENTS.md]`), Junie, Qwen Code (with MCP). `aitk adapters sync --tool all` writes every tool's files for mixed teams; a problem with one tool's files (e.g. JSONC) skips that file instead of stopping the sync. Copilot is detected by its editor extension.
 
 ### Changed
 - The MCP server's instructions and the `brief` tool tell agents to call `brief` first in every session without being asked, include `task_next` and `impact`, and say to ignore the tools in repositories without aitk.
+- The user-level instructions say plainly that the agent finishes the task itself (`--ac-done`, then `aitk close`): a live test showed Claude Code stopping to ask for permission under the earlier wording.
 - `aitk init` and the install script point to `aitk setup`; the README explains the four layers that make agents follow aitk.
 
 ## [2.4.0] - 2026-10-10

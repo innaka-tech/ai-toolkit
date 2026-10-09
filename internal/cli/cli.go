@@ -999,9 +999,13 @@ func (a *app) adaptersCmd() *cobra.Command {
 		if err != nil {
 			return nil, err
 		}
-		cs, err := adapters.Plan(adapters.DefaultEnv(p.Root), tools, global)
+		cs, skipped, err := adapters.PlanSkipping(adapters.DefaultEnv(p.Root), tools, global)
 		if err != nil {
 			return nil, apperr.Usage("%v", err)
+		}
+		var skipWarns []string
+		for _, sk := range skipped {
+			skipWarns = append(skipWarns, "skipped "+sk)
 		}
 		var b strings.Builder
 		for _, ch := range cs {
@@ -1020,7 +1024,7 @@ func (a *app) adaptersCmd() *cobra.Command {
 		if cs == nil {
 			cs = []adapters.Change{}
 		}
-		return &result{data: map[string]any{"changes": cs, "dry_run": dry}, human: b.String()}, nil
+		return &result{data: map[string]any{"changes": cs, "skipped": skipped, "dry_run": dry}, human: b.String(), warnings: skipWarns}, nil
 	})
 	doc := &cobra.Command{Use: "doctor", Short: "Report which tools are installed and whether their adapters are current", Args: cobra.NoArgs}
 	doc.Flags().BoolVar(&global, "global", false, "include user-level config")

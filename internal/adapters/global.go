@@ -21,9 +21,13 @@ const GlobalText = `## aitk (applies in any repository that has aitk.toml at its
 A repository with ` + "`aitk.toml`" + ` is managed by aitk. In such a repository, without being asked:
 1. Start every session with ` + "`aitk brief`" + ` (or the aitk MCP tool ` + "`brief`" + `) and follow what it says.
 2. Take work with ` + "`aitk task next --start`" + ` or continue the active task; run ` + "`aitk check`" + ` until it passes;
-   run ` + "`aitk impact`" + ` before finishing; finish with ` + "`aitk close --summary \"…\" --knowledge \"…|none\"`" + `.
-3. aitk's rules take precedence over older ai-toolkit instructions (ai-start, ai-close, editing docs/ai/*.md by hand).
-4. Never mark work done or accept user acceptance yourself; when stuck, ` + "`aitk close --status blocked`" + ` and stop.
+   run ` + "`aitk impact`" + ` before finishing.
+3. Finish the task yourself: mark each satisfied criterion with ` + "`aitk task update <id> --ac-done N`" + `, then run
+   ` + "`aitk close --summary \"…\" --knowledge \"…|none\"`" + `. That is how work becomes done; you do not need to ask first.
+   If close refuses, do what its fix line says.
+4. aitk's rules take precedence over older ai-toolkit instructions (ai-start, ai-close, editing docs/ai/*.md by hand).
+5. Never edit task status or evidence by hand and never accept user acceptance (UAT) for the user; when stuck,
+   ` + "`aitk close --status blocked`" + ` and stop.
 In a repository without aitk.toml, ignore this section.
 `
 
@@ -56,6 +60,9 @@ func globalTargets() []globalTarget {
 		}},
 		{"opencode", []string{"opencode"}, []string{".config/opencode"}, func(e Env, rm bool) ([]Change, error) {
 			cs := []Change{blockChange(e, ".config/opencode/AGENTS.md", "user instructions: recognise aitk projects", rm)}
+			if fsx.Exists(filepath.Join(e.Home, ".config/opencode/opencode.jsonc")) {
+				return cs, fmt.Errorf("MCP not registered: ~/.config/opencode/opencode.jsonc has comments; add the aitk server by hand")
+			}
 			c, err := globalJSON(e, ".config/opencode/opencode.json", "register aitk MCP server", "mcp",
 				map[string]any{"type": "local", "command": mcpCommand, "enabled": true}, rm)
 			if err != nil {
@@ -116,6 +123,13 @@ func Setup(e Env, tools []string, remove bool) (*SetupResult, error) {
 			res.Skipped = append(res.Skipped, g.tool+": "+err.Error())
 		}
 		for _, c := range cs {
+			if c.problem == "" {
+				c.problem = unsafeTarget(c.Path)
+			}
+			if c.problem != "" {
+				res.Skipped = append(res.Skipped, g.tool+": "+c.Rel+": "+c.problem)
+				continue
+			}
 			if !bytes.Equal(c.before, c.after) || c.Delete && len(c.before) > 0 {
 				c.Tool, c.Global = g.tool, true
 				res.Changes = append(res.Changes, c)
@@ -146,14 +160,15 @@ func homeFile(e Env, rel string) (string, []byte) {
 
 func blockChange(e Env, rel, what string, remove bool) Change {
 	p, before := homeFile(e, rel)
-	after := withBlock(before, GlobalBegin, GlobalEnd, GlobalText)
+	after, problem := withBlock(before, GlobalBegin, GlobalEnd, GlobalText)
 	if remove {
-		after, what = withoutBlock(before, GlobalBegin, GlobalEnd), "remove: "+what
-		if len(bytes.TrimSpace(after)) == 0 && len(before) > 0 { // the file held only aitk's block
+		after, problem = withoutBlock(before, GlobalBegin, GlobalEnd)
+		what = "remove: " + what
+		if problem == "" && len(bytes.TrimSpace(after)) == 0 && len(before) > 0 { // the file held only aitk's block
 			return Change{Path: p, Rel: "~/" + rel, What: what, before: before, Delete: true}
 		}
 	}
-	return Change{Path: p, Rel: "~/" + rel, What: what, before: before, after: after}
+	return Change{Path: p, Rel: "~/" + rel, What: what, before: before, after: after, problem: problem}
 }
 
 // ownedFile is a file aitk writes whole; remove deletes it (only when it is still aitk's).
@@ -164,6 +179,9 @@ func ownedFile(e Env, rel, what string, content []byte, remove bool) Change {
 			return Change{Path: p, Rel: "~/" + rel, before: before, after: before}
 		}
 		return Change{Path: p, Rel: "~/" + rel, What: "remove: " + what, before: before, Delete: true}
+	}
+	if len(before) > 0 && !bytes.Contains(before, []byte("aitk")) {
+		return Change{Path: p, Rel: "~/" + rel, What: what, before: before, after: content, problem: "a file of yours with this name exists; left alone"}
 	}
 	return Change{Path: p, Rel: "~/" + rel, What: what, before: before, after: content}
 }

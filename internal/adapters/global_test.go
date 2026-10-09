@@ -3,6 +3,7 @@ package adapters
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -105,5 +106,102 @@ func TestMoreToolsAndAll(t *testing.T) {
 	}
 	if cs, _ := Plan(e, []string{"all"}, false); len(cs) != 0 {
 		t.Fatalf("second sync must change nothing: %+v", cs)
+	}
+}
+
+// Review: setup never loses a user's text, whatever state the file is in.
+func TestSetupRefusesUnsafeFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions and symlinks")
+	}
+	e := env(t, "claude", "codex", "opencode")
+	claude := filepath.Join(e.Home, ".claude/CLAUDE.md")
+	put(t, claude, "MY PRECIOUS RULES\n")
+	os.Chmod(claude, 0o000)
+	defer os.Chmod(claude, 0o644)
+	codex := filepath.Join(e.Home, ".codex/AGENTS.md")
+	put(t, codex, "top\n"+GlobalBegin+"\nUSER CONTENT\n") // a stray begin marker
+	oc := filepath.Join(e.Home, ".config/opencode/AGENTS.md")
+	put(t, oc, "mentions "+GlobalEnd+" in prose\n"+GlobalBegin+"\n")
+	r, err := Setup(e, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(r.Changes, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(claude, 0o644)
+	if got := get(t, claude); got != "MY PRECIOUS RULES\n" {
+		t.Fatalf("an unreadable file must be left alone:\n%s", got)
+	}
+	if got := get(t, codex); got != "top\n"+GlobalBegin+"\nUSER CONTENT\n" {
+		t.Fatalf("unbalanced markers must be left alone:\n%s", got)
+	}
+	if strings.Count(get(t, oc), GlobalBegin) != 1 {
+		t.Fatal("a file with markers out of order must not grow")
+	}
+	if len(r.Skipped) < 3 {
+		t.Fatalf("each refusal must be reported: %v", r.Skipped)
+	}
+}
+
+func TestSetupReadOnlyAndHandWrittenFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions")
+	}
+	e := env(t, "claude", "kiro")
+	ro := filepath.Join(e.Home, ".claude/CLAUDE.md")
+	put(t, ro, "read only\n")
+	os.Chmod(ro, 0o444)
+	defer os.Chmod(ro, 0o644)
+	put(t, filepath.Join(e.Home, ".kiro/steering/aitk.md"), "my own steering\n")
+	r, _ := Setup(e, nil, false)
+	Apply(r.Changes, t.TempDir())
+	if get(t, ro) != "read only\n" || get(t, filepath.Join(e.Home, ".kiro/steering/aitk.md")) != "my own steering\n" {
+		t.Fatal("read-only and hand-written files must be left alone")
+	}
+}
+
+// Review: --remove through a symlinked dotfile keeps the link.
+func TestSetupRemoveKeepsSymlinkedDotfiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks")
+	}
+	e := env(t, "codex")
+	target := filepath.Join(e.Home, "dotfiles/codex-agents.md")
+	put(t, target, "")
+	os.MkdirAll(filepath.Join(e.Home, ".codex"), 0o755)
+	link := filepath.Join(e.Home, ".codex/AGENTS.md")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip(err)
+	}
+	r, _ := Setup(e, []string{"codex"}, false)
+	Apply(r.Changes, t.TempDir())
+	if !strings.Contains(get(t, target), "aitk") {
+		t.Fatal("setup must write through the link")
+	}
+	r, _ = Setup(e, []string{"codex"}, true)
+	Apply(r.Changes, t.TempDir())
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("remove must keep the symlink")
+	}
+	if strings.Contains(get(t, target), "aitk") {
+		t.Fatal("remove must take the block out of the link's target")
+	}
+}
+
+// Review: one tool's JSONC config does not stop the others; Copilot needs the extension.
+func TestSyncKeepsGoingAndCopilotDetection(t *testing.T) {
+	e := env(t, "code")
+	put(t, filepath.Join(e.Root, ".vscode/settings.json"), "{}\n")
+	for _, a := range all() {
+		if a.name == "copilot" && a.installed(e) {
+			t.Fatal("VS Code alone is not Copilot")
+		}
+	}
+	put(t, filepath.Join(e.Root, ".vscode/mcp.json"), "{\n  // comment\n  \"servers\": {}\n}\n")
+	cs, skipped, err := PlanSkipping(e, []string{"all"}, false)
+	if err != nil || len(cs) == 0 || len(skipped) == 0 {
+		t.Fatalf("other tools must still be planned and the JSONC file reported: %d changes, %v, %v", len(cs), skipped, err)
 	}
 }
