@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/innaka-tech/ai-toolkit/internal/cli"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/cli"
 )
 
 func main() {

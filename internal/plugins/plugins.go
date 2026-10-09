@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/innaka-tech/ai-toolkit/internal/project"
-	"github.com/innaka-tech/ai-toolkit/internal/schema"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/schema"
 )
 
 const maxOutput = 1 << 20 // 1 MiB

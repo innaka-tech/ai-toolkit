@@ -1,8 +1,8 @@
 package ops
 
 import (
-	"github.com/innaka-tech/ai-toolkit/internal/doc"
-	"github.com/innaka-tech/ai-toolkit/internal/task"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/doc"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/task"
 )
 
 func sectionOf(t *task.Task, name string) (string, bool) { return doc.Section(t.Body, name) }

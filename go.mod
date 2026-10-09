@@ -1,4 +1,4 @@
-module github.com/innaka-tech/ai-toolkit
+module github.com/innaka-tech/ai-toolkit/v2
 
 go 1.26.0
 

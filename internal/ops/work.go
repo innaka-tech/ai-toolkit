@@ -8,15 +8,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/innaka-tech/ai-toolkit/internal/apperr"
-	"github.com/innaka-tech/ai-toolkit/internal/brief"
-	"github.com/innaka-tech/ai-toolkit/internal/claims"
-	"github.com/innaka-tech/ai-toolkit/internal/fsx"
-	"github.com/innaka-tech/ai-toolkit/internal/gitx"
-	"github.com/innaka-tech/ai-toolkit/internal/handoff"
-	"github.com/innaka-tech/ai-toolkit/internal/project"
-	"github.com/innaka-tech/ai-toolkit/internal/session"
-	"github.com/innaka-tech/ai-toolkit/internal/task"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/apperr"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/brief"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/claims"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/session"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/task"
 )
 
 // WorkResult describes the worktree prepared for a task.

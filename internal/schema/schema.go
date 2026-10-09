@@ -11,7 +11,7 @@ import (
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 
-	"github.com/innaka-tech/ai-toolkit/schemas"
+	"github.com/innaka-tech/ai-toolkit/v2/schemas"
 )
 
 const base = "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/"

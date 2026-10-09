@@ -11,7 +11,7 @@ inputs:
   version:
     description: aitk version (git ref) to install.
     required: false
-    default: main
+    default: latest
 runs:
   using: composite
   steps:
@@ -21,7 +21,7 @@ runs:
         cache: false
     - name: Install aitk
       shell: bash
-      run: go install github.com/innaka-tech/ai-toolkit/cmd/aitk@${{ inputs.version }}
+      run: go install github.com/innaka-tech/ai-toolkit/v2/cmd/aitk@${{ inputs.version }}
     - name: aitk ci
       shell: bash
       run: |

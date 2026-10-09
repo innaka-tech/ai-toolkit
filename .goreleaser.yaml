@@ -18,9 +18,9 @@ builds:
     flags: [-trimpath]
     ldflags:
       - -s -w
-      - -X github.com/innaka-tech/ai-toolkit/internal/cli.Version={{ .Version }}
-      - -X github.com/innaka-tech/ai-toolkit/internal/cli.Commit={{ .ShortCommit }}
-      - -X github.com/innaka-tech/ai-toolkit/internal/cli.Date={{ .Date }}
+      - -X github.com/innaka-tech/ai-toolkit/v2/internal/cli.Version={{ .Version }}
+      - -X github.com/innaka-tech/ai-toolkit/v2/internal/cli.Commit={{ .ShortCommit }}
+      - -X github.com/innaka-tech/ai-toolkit/v2/internal/cli.Date={{ .Date }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:

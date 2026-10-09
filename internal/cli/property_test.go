@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/innaka-tech/ai-toolkit/internal/knowledge"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/knowledge"
 )
 
 // TestRandomOperationsNeverCorruptState runs 1000 random commands against one project and

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/innaka-tech/ai-toolkit/internal/fsx"
-	"github.com/innaka-tech/ai-toolkit/internal/jsonedit"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/jsonedit"
 )
 
 // Change is one file write an adapter wants.

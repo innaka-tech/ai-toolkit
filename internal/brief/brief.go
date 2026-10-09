@@ -8,14 +8,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/innaka-tech/ai-toolkit/internal/handoff"
-	"github.com/innaka-tech/ai-toolkit/internal/knowledge"
-	"github.com/innaka-tech/ai-toolkit/internal/plugins"
-	"github.com/innaka-tech/ai-toolkit/internal/profile"
-	"github.com/innaka-tech/ai-toolkit/internal/project"
-	"github.com/innaka-tech/ai-toolkit/internal/session"
-	"github.com/innaka-tech/ai-toolkit/internal/task"
-	"github.com/innaka-tech/ai-toolkit/internal/textx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/knowledge"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/plugins"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/profile"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/session"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/task"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/textx"
 )
 
 // Brief is the structured form (--json).

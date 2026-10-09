@@ -9,10 +9,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/innaka-tech/ai-toolkit/internal/apperr"
-	"github.com/innaka-tech/ai-toolkit/internal/project"
-	"github.com/innaka-tech/ai-toolkit/internal/task"
-	"github.com/innaka-tech/ai-toolkit/internal/textx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/apperr"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/task"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/textx"
 )
 
 // ImportResult reports imported and skipped items.

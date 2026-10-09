@@ -11,9 +11,9 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/innaka-tech/ai-toolkit/internal/apperr"
-	"github.com/innaka-tech/ai-toolkit/internal/gitx"
-	"github.com/innaka-tech/ai-toolkit/internal/schema"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/apperr"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/schema"
 )
 
 // Config mirrors schemas/config.schema.json.
