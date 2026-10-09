@@ -8,3 +8,6 @@ bridge/
 
 # local planning notes (contain personal project details)
 docs/plans/
+
+# test fixtures are committed even if a global/info exclude hides project.env
+!tests/fixtures/**/project.env

@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/task.schema.json",
+  "title": "aitk task (YAML frontmatter of docs/ai/tasks/<id>-<slug>.md)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "title",
+    "status",
+    "profile",
+    "created",
+    "updated"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9-]{0,31}$",
+      "description": "Generated IDs look like T-k3m9 (ADR-0009); imported IDs are kept"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 120
+    },
+    "status": {
+      "enum": [
+        "todo",
+        "in_progress",
+        "implemented",
+        "in_review",
+        "done",
+        "blocked",
+        "cancelled"
+      ]
+    },
+    "profile": {
+      "enum": [
+        "lite",
+        "standard",
+        "strict"
+      ],
+      "description": "Risk profile; computed by aitk unless pinned"
+    },
+    "profile_pinned": {
+      "type": "boolean",
+      "default": false
+    },
+    "goal": {
+      "type": "string",
+      "pattern": "^G-[A-Za-z0-9.-]{1,16}$"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+      },
+      "uniqueItems": true
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9-]{0,31}$",
+        "description": "Generated IDs look like T-k3m9 (ADR-0009); imported IDs are kept"
+      },
+      "uniqueItems": true
+    },
+    "created": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "UTC timestamp, RFC 3339"
+    },
+    "updated": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "UTC timestamp, RFC 3339"
+    },
+    "closed": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "UTC timestamp, RFC 3339"
+    },
+    "created_by": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$",
+      "description": "AI tool identifier, e.g. claude-code, codex, opencode, gemini-cli, human"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "not": {
+          "pattern": "^(/|[A-Za-z]:\\\\|~)"
+        },
+        "description": "Repository-relative path; absolute paths are never stored (ADR-0006)"
+      },
+      "uniqueItems": true,
+      "description": "Files touched, recorded by close"
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "passes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "n",
+              "by",
+              "at",
+              "findings"
+            ],
+            "properties": {
+              "n": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "by": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$",
+                "description": "AI tool identifier, e.g. claude-code, codex, opencode, gemini-cli, human"
+              },
+              "session": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "Z$",
+                "description": "UTC timestamp, RFC 3339"
+              },
+              "findings": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "check": {
+          "$ref": "#/$defs/check"
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{7,40}$"
+          }
+        },
+        "acceptance": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "done": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "legacy": {
+      "type": "object",
+      "description": "Fields preserved verbatim from v1 by migration"
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cmd",
+        "exit_code",
+        "at"
+      ],
+      "properties": {
+        "cmd": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$",
+          "description": "UTC timestamp, RFC 3339"
+        }
+      }
+    }
+  }
+}

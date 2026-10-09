@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/plugin.schema.json",
+  "title": "aitk plugin protocol (stdin request / stdout response / manifest)",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/manifest"
+    },
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/response"
+    }
+  ],
+  "$defs": {
+    "hook": {
+      "enum": [
+        "brief.sections",
+        "close.after",
+        "doctor.checks",
+        "knowledge.search"
+      ]
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "name",
+        "version",
+        "hooks"
+      ],
+      "properties": {
+        "schema": {
+          "const": "aitk.plugin.manifest/v1"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+        },
+        "version": {
+          "type": "string"
+        },
+        "hooks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hook"
+          },
+          "uniqueItems": true
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "hook",
+        "project"
+      ],
+      "properties": {
+        "schema": {
+          "const": "aitk.plugin.request/v1"
+        },
+        "hook": {
+          "$ref": "#/$defs/hook"
+        },
+        "project": {
+          "type": "object",
+          "required": [
+            "root",
+            "name"
+          ],
+          "properties": {
+            "root": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+            }
+          }
+        },
+        "task": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "payload": {}
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "ok"
+      ],
+      "properties": {
+        "schema": {
+          "const": "aitk.plugin.response/v1"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "data": {},
+        "error": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

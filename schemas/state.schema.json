@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/state.schema.json",
+  "title": "aitk project state (ai-state.json, schema version 2)",
+  "description": "Committed, project-level facts only. Per-worktree session data lives in the git directory (session.schema.json).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 2
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 280
+        }
+      }
+    },
+    "aitk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "migrated_from": {
+          "enum": [
+            1
+          ]
+        },
+        "migrated_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$",
+          "description": "UTC timestamp, RFC 3339"
+        }
+      }
+    },
+    "goals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^G-[A-Za-z0-9.-]{1,16}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "planned",
+              "active",
+              "achieved",
+              "dropped"
+            ]
+          },
+          "parent": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

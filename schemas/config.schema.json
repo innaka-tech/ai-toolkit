@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/config.schema.json",
+  "title": "aitk project configuration (aitk.toml, parsed)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+        },
+        "default_branch": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cmd"
+      ],
+      "properties": {
+        "cmd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeout": {
+          "type": "string",
+          "pattern": "^\\d+(s|m|h)$",
+          "default": "10m"
+        }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sensitive_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Glob patterns (doublestar)"
+        },
+        "lite_max_files": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 3
+        },
+        "lite_max_lines": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 100
+        }
+      }
+    },
+    "brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "type": "integer",
+          "minimum": 500,
+          "maximum": 64000,
+          "default": 4000
+        }
+      }
+    },
+    "knowledge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inbox_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 20
+        },
+        "archive_after_days": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 90
+        }
+      }
+    },
+    "deploy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "targets": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "post_check": {
+          "type": "string"
+        }
+      }
+    },
+    "plugins": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+          },
+          "uniqueItems": true
+        },
+        "timeout": {
+          "type": "string",
+          "pattern": "^\\d+(ms|s)$",
+          "default": "5s"
+        },
+        "settings": {
+          "type": "object",
+          "description": "Per-plugin settings, passed to the plugin in request.payload.settings",
+          "additionalProperties": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+}

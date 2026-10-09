@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/session.schema.json",
+  "title": "aitk session (local, never committed): $(git rev-parse --git-dir)/aitk/session.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "active_task": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9-]{0,31}$",
+          "description": "Generated IDs look like T-k3m9 (ADR-0009); imported IDs are kept"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "description": "UTC timestamp, RFC 3339"
+    },
+    "tool": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$",
+      "description": "AI tool identifier, e.g. claude-code, codex, opencode, gemini-cli, human"
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task",
+          "by",
+          "at",
+          "expires"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9-]{0,31}$",
+            "description": "Generated IDs look like T-k3m9 (ADR-0009); imported IDs are kept"
+          },
+          "by": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$",
+            "description": "AI tool identifier, e.g. claude-code, codex, opencode, gemini-cli, human"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$",
+            "description": "UTC timestamp, RFC 3339"
+          },
+          "expires": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$",
+            "description": "UTC timestamp, RFC 3339"
+          },
+          "worktree": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

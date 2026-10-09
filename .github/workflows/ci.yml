@@ -33,6 +33,16 @@ jobs:
       - name: Smoke test
         run: bash tests/smoke.sh
 
+  spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Schema tests (meta-schema, positive and negative cases)
+        run: cd tools/spec-check && uv run --with jsonschema --with referencing python -I test_schemas.py
+      - name: Migration spec test (synthetic v1 fixture)
+        run: cd tools/spec-check && uv run --with jsonschema --with pyyaml --with referencing python -I test_migration.py
+
   secrets:
     runs-on: ubuntu-latest
     steps:
