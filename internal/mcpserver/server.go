@@ -125,6 +125,12 @@ func New(root, version string, exec Exec) *mcp.Server {
 			a := []string{"report"}
 			return opt(a, "--since", in.Since)
 		})
+	add(s, h, "audit", "Security audit (dependency vulnerabilities, static analysis, secrets). Required before close for strict tasks by default.",
+		func(struct{}) []string { return []string{"audit"} })
+	add(s, h, "security_checklist", "Add the OWASP ASVS checklist to a task (strict tasks need every item verified or marked N/A with a reason).",
+		func(in optIDIn) []string { return withID([]string{"security", "checklist"}, in.ID) })
+	add(s, h, "uat_script", "Write a user acceptance test script for a person. Only the user can accept or reject (aitk uat accept|reject in their terminal).",
+		func(in optIDIn) []string { return withID([]string{"uat", "script"}, in.ID) })
 	add(s, h, "adr_new", "Create an architecture decision record (MADR).", func(in titleIn) []string { return []string{"adr", "new", "--", in.Title} })
 	add(s, h, "doctor", "Validate the project; fix=true repairs what is safe.",
 		func(in doctorIn) []string {
@@ -325,6 +331,17 @@ type switchIn struct {
 type reportIn struct {
 	Since string `json:"since,omitempty" jsonschema:"period, e.g. 24h, 7d, or 2026-10-01 (default 7d)"`
 }
+type optIDIn struct {
+	ID string `json:"id,omitempty" jsonschema:"task id (default: the active task)"`
+}
+
+func withID(a []string, id string) []string {
+	if id != "" {
+		return append(a, "--", id)
+	}
+	return a
+}
+
 type doctorIn struct {
 	Fix bool `json:"fix,omitempty" jsonschema:"repair what is safe"`
 }

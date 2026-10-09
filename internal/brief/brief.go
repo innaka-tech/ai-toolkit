@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/innaka-tech/ai-toolkit/v2/internal/conv"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/knowledge"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/plugins"
@@ -20,22 +21,25 @@ import (
 
 // Brief is the structured form (--json).
 type Brief struct {
-	Project   ProjectInfo        `json:"project"`
-	Task      *TaskInfo          `json:"task,omitempty"`
-	Open      []TaskRef          `json:"open_tasks,omitempty"`
-	Legacy    string             `json:"legacy_current_task,omitempty"`
-	Handoff   *HandoffInfo       `json:"last_handoff,omitempty"`
-	Knowledge []knowledge.Scored `json:"knowledge,omitempty"`
-	Rules     []string           `json:"rules"`
-	Next      []string           `json:"next_commands"`
-	Profile   string             `json:"profile"`
-	Tokens    int                `json:"tokens"`
-	Budget    int                `json:"budget"`
-	Dropped   int                `json:"knowledge_dropped,omitempty"`
-	Changed   []profile.Change   `json:"changed_files,omitempty"`
-	Plugins   []PluginSection    `json:"plugin_sections,omitempty"`
-	PluginErr []string           `json:"plugin_errors,omitempty"`
-	Markdown  string             `json:"markdown"`
+	Project             ProjectInfo        `json:"project"`
+	Task                *TaskInfo          `json:"task,omitempty"`
+	Open                []TaskRef          `json:"open_tasks,omitempty"`
+	Legacy              string             `json:"legacy_current_task,omitempty"`
+	Handoff             *HandoffInfo       `json:"last_handoff,omitempty"`
+	Knowledge           []knowledge.Scored `json:"knowledge,omitempty"`
+	Rules               []string           `json:"rules"`
+	Next                []string           `json:"next_commands"`
+	Profile             string             `json:"profile"`
+	Tokens              int                `json:"tokens"`
+	Budget              int                `json:"budget"`
+	Dropped             int                `json:"knowledge_dropped,omitempty"`
+	Changed             []profile.Change   `json:"changed_files,omitempty"`
+	Conventions         []string           `json:"conventions,omitempty"`
+	ConventionsUnfilled bool               `json:"conventions_unfilled,omitempty"`
+	Goal                *GoalInfo          `json:"goal,omitempty"`
+	Plugins             []PluginSection    `json:"plugin_sections,omitempty"`
+	PluginErr           []string           `json:"plugin_errors,omitempty"`
+	Markdown            string             `json:"markdown"`
 }
 
 // PluginSection is contributed by a plugin's brief.sections hook.
@@ -44,6 +48,15 @@ type PluginSection struct {
 	Title  string  `json:"title"`
 	Body   string  `json:"body"`
 	Rank   float64 `json:"rank"`
+}
+
+// GoalInfo is the active task's goal.
+type GoalInfo struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+	Tasks  int    `json:"tasks"`
+	Done   int    `json:"done"`
 }
 
 type ProjectInfo struct {
@@ -186,6 +199,12 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 		}
 		sort.SliceStable(b.Plugins, func(i, j int) bool { return b.Plugins[i].Rank > b.Plugins[j].Rank })
 	}
+	if lines, unfilled, exists := conv.Lines(p, 12); exists {
+		b.Conventions, b.ConventionsUnfilled = lines, unfilled
+	}
+	if t != nil && t.Goal != "" {
+		b.Goal = goalInfo(p, t.Goal, tasks)
+	}
 	b.Rules = rules(b.Profile, p.Config.Check.Cmd != "")
 	b.Next = next(b, p)
 	// Fit the budget: drop knowledge from the lowest rank, then shorten handoff, then legacy.
@@ -203,6 +222,8 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 			b.Dropped++
 		case b.Handoff != nil && len([]rune(b.Handoff.Summary)) > 300:
 			b.Handoff.Summary = textx.Truncate(b.Handoff.Summary, len([]rune(b.Handoff.Summary))/2)
+		case len(b.Conventions) > 4:
+			b.Conventions = b.Conventions[:len(b.Conventions)-1]
 		case len([]rune(b.Legacy)) > 300:
 			b.Legacy = textx.Truncate(b.Legacy, len([]rune(b.Legacy))/2)
 		case len(b.Changed) > 10:
@@ -320,6 +341,9 @@ func render(b *Brief) string {
 		} else if b.Task.Profile != "lite" {
 			s.WriteString("No acceptance criteria yet (required before close).\n")
 		}
+		if g := b.Goal; g != nil {
+			fmt.Fprintf(&s, "Goal: %s %s [%s] (%d/%d tasks done)\n", g.ID, g.Title, g.Status, g.Done, g.Tasks)
+		}
 		if c := b.Task.Check; c != nil {
 			fmt.Fprintf(&s, "Last check: exit %d at %s\n", c.ExitCode, c.At)
 		}
@@ -348,6 +372,15 @@ func render(b *Brief) string {
 			fmt.Fprintf(&s, "- %s (%d lines)\n", c.Path, c.Lines)
 		}
 	}
+	if len(b.Conventions) > 0 || b.ConventionsUnfilled {
+		s.WriteString("\n## Conventions (docs/ai/conventions.md)\n")
+		for _, l := range b.Conventions {
+			s.WriteString(l + "\n")
+		}
+		if b.ConventionsUnfilled {
+			s.WriteString("Not written yet: ask the user, then fill docs/ai/conventions.md (stack, style, errors, data, tests, security).\n")
+		}
+	}
 	if len(b.Knowledge) > 0 {
 		s.WriteString("\n## Relevant knowledge\n")
 		for _, k := range b.Knowledge {
@@ -373,4 +406,32 @@ func render(b *Brief) string {
 		s.WriteString("- `" + n + "`\n")
 	}
 	return s.String()
+}
+
+func goalInfo(p *project.Project, id string, tasks []*task.Task) *GoalInfo {
+	raw, err := os.ReadFile(p.Path(project.StateFile))
+	if err != nil {
+		return nil
+	}
+	var st struct {
+		Goals []struct{ ID, Title, Status string } `json:"goals"`
+	}
+	if json.Unmarshal(raw, &st) != nil {
+		return nil
+	}
+	for _, g := range st.Goals {
+		if strings.EqualFold(g.ID, id) {
+			gi := &GoalInfo{ID: g.ID, Title: g.Title, Status: g.Status}
+			for _, t := range tasks {
+				if strings.EqualFold(t.Goal, g.ID) && t.Status != task.Cancelled {
+					gi.Tasks++
+					if t.Status == task.Done {
+						gi.Done++
+					}
+				}
+			}
+			return gi
+		}
+	}
+	return nil
 }

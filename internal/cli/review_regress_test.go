@@ -95,6 +95,7 @@ func TestReview6ReviewMustBeIndependentOfImplementer(t *testing.T) {
 	dir := repo(t)
 	initRepo(t, dir)
 	sensitive(t, dir, "db/**")
+	reviewOnly(t, dir)
 	t.Setenv("AITK_TOOL", "human")
 	id := newStarted(t, dir, "Migration", "--ac", "applies")
 	t.Setenv("AITK_TOOL", "claude-code") // implementer differs from creator

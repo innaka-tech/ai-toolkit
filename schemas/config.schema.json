@@ -129,6 +129,85 @@
           }
         }
       }
+    },
+    "uat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "enum": [
+            "none",
+            "strict",
+            "standard",
+            "all"
+          ],
+          "default": "none",
+          "description": "Profiles whose tasks need a person's acceptance (aitk uat accept) before done"
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag_prefix": {
+          "type": "string",
+          "default": "v"
+        },
+        "changelog": {
+          "type": "string",
+          "default": "CHANGELOG.md"
+        },
+        "initial_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "default": "0.1.0"
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "asvs_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "default": 1,
+          "description": "OWASP ASVS 4.0.3 checklist required for strict tasks (0 disables)"
+        },
+        "audit": {
+          "enum": [
+            "off",
+            "strict",
+            "all"
+          ],
+          "default": "strict",
+          "description": "Profiles whose Definition of Done requires a passing aitk audit"
+        },
+        "scanners": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "cmd"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cmd": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "description": "Replaces auto-detected scanners"
+        }
+      }
     }
   }
 }

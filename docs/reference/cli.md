@@ -47,6 +47,14 @@ Create the next ADR
 aitk adr new "<title>"
 ```
 
+## `aitk audit`
+
+Security audit: dependency vulnerabilities, static analysis, and secrets; records evidence on the active task
+
+```
+aitk audit
+```
+
 ## `aitk brief`
 
 Print the bounded session brief: start every session here
@@ -116,6 +124,35 @@ aitk doctor [flags]
       --fix   repair generated files, the AGENTS.md block, and an overfull inbox
 ```
 
+## `aitk goal add`
+
+Add a goal (status planned)
+
+```
+aitk goal add "<outcome>" [flags]
+```
+
+```
+      --id string       goal id (default: next G-<n>)
+      --parent string   parent goal id
+```
+
+## `aitk goal list`
+
+Goals with task progress
+
+```
+aitk goal list
+```
+
+## `aitk goal status`
+
+Change a goal's status
+
+```
+aitk goal status <id> <planned|active|achieved|dropped>
+```
+
 ## `aitk hooks install`
 
 Add aitk to the git hooks (existing hooks are kept)
@@ -130,6 +167,18 @@ Remove aitk from the git hooks
 
 ```
 aitk hooks uninstall
+```
+
+## `aitk import bmad`
+
+Import BMAD tickets (story/bug/spike files; default: search the repository): criteria, status from the plan, risk high → strict
+
+```
+aitk import bmad [path ...] [flags]
+```
+
+```
+      --dry-run   show what would be imported
 ```
 
 ## `aitk import github-issues`
@@ -148,12 +197,24 @@ aitk import github-issues [flags]
       --state string   open, closed, or all (default "open")
 ```
 
-## `aitk import openspec`
+## `aitk import markdown`
 
-Import a openspec tasks checklist (default: discovered tasks.md files)
+Import any markdown checklist: each checkbox line becomes a task
 
 ```
-aitk import openspec [tasks.md ...] [flags]
+aitk import markdown [path ...] [flags]
+```
+
+```
+      --dry-run   show what would be imported
+```
+
+## `aitk import openspec`
+
+Import OpenSpec tasks (default: openspec/changes/*/tasks.md)
+
+```
+aitk import openspec [path ...] [flags]
 ```
 
 ```
@@ -162,10 +223,22 @@ aitk import openspec [tasks.md ...] [flags]
 
 ## `aitk import spec-kit`
 
-Import a spec-kit tasks checklist (default: discovered tasks.md files)
+Import Spec Kit tasks (default: specs/*/tasks.md)
 
 ```
-aitk import spec-kit [tasks.md ...] [flags]
+aitk import spec-kit [path ...] [flags]
+```
+
+```
+      --dry-run   show what would be imported
+```
+
+## `aitk import superpowers`
+
+Import Superpowers plans (default: docs/superpowers/plans/*.md): each Task N becomes a task, its steps the criteria
+
+```
+aitk import superpowers [path ...] [flags]
 ```
 
 ```
@@ -276,6 +349,22 @@ List discovered plugins, their hooks, and whether they are enabled
 aitk plugin list
 ```
 
+## `aitk release`
+
+Version the project: next SemVer from Conventional Commits, CHANGELOG, manifests; --tag commits and tags (never pushes)
+
+```
+aitk release [flags]
+```
+
+```
+      --bump string   auto, major, minor, or patch (default "auto")
+      --dry-run       show the version and notes without writing
+      --pre string    pre-release label, e.g. rc → 1.4.0-rc.1
+      --skip-check    do not run the check command first
+      --tag           commit the release files and create an annotated tag
+```
+
 ## `aitk report`
 
 What was done, what is in progress or blocked, and which tools did it
@@ -299,6 +388,14 @@ aitk review pass [flags]
 
 ```
       --findings int   number of problems found in this pass (required) (default -1)
+```
+
+## `aitk security checklist`
+
+Add the OWASP ASVS checklist to a task (required for strict tasks)
+
+```
+aitk security checklist [id]
 ```
 
 ## `aitk switch`
@@ -412,6 +509,44 @@ aitk task update [id] [flags]
       --profile string       pin the risk profile
       --status string        new status: todo, in_progress, blocked, or cancelled (done is set by close)
       --tag stringArray      add a tag (repeatable)
+```
+
+## `aitk uat accept`
+
+Record a person's acceptance (refused for AI agents); completes the task when nothing else blocks it
+
+```
+aitk uat accept [id] [flags]
+```
+
+```
+      --by string     who accepts (default: git user.name)
+      --note string   what was tested
+```
+
+## `aitk uat reject`
+
+Record a person's rejection; the task goes back to in_progress
+
+```
+aitk uat reject [id] [flags]
+```
+
+```
+      --by string       who rejects (default: git user.name)
+      --reason string   what failed (required)
+```
+
+## `aitk uat script`
+
+Write docs/ai/uat/<id>.md: scenarios from the acceptance criteria
+
+```
+aitk uat script [id] [flags]
+```
+
+```
+      --force   overwrite an existing script
 ```
 
 ## `aitk version`

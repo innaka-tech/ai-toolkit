@@ -25,6 +25,78 @@ type Config struct {
 	Knowledge KnowledgeCfg `toml:"knowledge,omitempty" json:"knowledge,omitempty"`
 	Deploy    DeployCfg    `toml:"deploy,omitempty" json:"deploy,omitempty"`
 	Plugins   PluginsCfg   `toml:"plugins,omitempty" json:"plugins,omitempty"`
+	UAT       UATCfg       `toml:"uat,omitempty" json:"uat,omitempty"`
+	Release   ReleaseCfg   `toml:"release,omitempty" json:"release,omitempty"`
+	Security  SecurityCfg  `toml:"security,omitempty" json:"security,omitempty"`
+}
+
+type UATCfg struct {
+	Required string `toml:"required,omitempty" json:"required,omitempty"`
+}
+type ReleaseCfg struct {
+	TagPrefix      string `toml:"tag_prefix,omitempty" json:"tag_prefix,omitempty"`
+	Changelog      string `toml:"changelog,omitempty" json:"changelog,omitempty"`
+	InitialVersion string `toml:"initial_version,omitempty" json:"initial_version,omitempty"`
+}
+type Scanner struct {
+	Name string `toml:"name" json:"name"`
+	Cmd  string `toml:"cmd" json:"cmd"`
+}
+type SecurityCfg struct {
+	ASVSLevel *int      `toml:"asvs_level,omitempty" json:"asvs_level,omitempty"`
+	Audit     string    `toml:"audit,omitempty" json:"audit,omitempty"`
+	Scanners  []Scanner `toml:"scanners,omitempty" json:"scanners,omitempty"`
+}
+
+// UATRequired reports whether tasks with this profile need a person's acceptance.
+func (c Config) UATRequired(profile string) bool {
+	switch c.UAT.Required {
+	case "all":
+		return true
+	case "standard":
+		return profile == "standard" || profile == "strict"
+	case "strict":
+		return profile == "strict"
+	}
+	return false
+}
+
+// ASVSLevel is the OWASP ASVS level required for strict tasks (0 = off).
+func (c Config) ASVSLevel() int {
+	if c.Security.ASVSLevel != nil {
+		return *c.Security.ASVSLevel
+	}
+	return 1
+}
+
+// AuditRequired reports whether the Definition of Done for this profile needs a passing audit.
+func (c Config) AuditRequired(profile string) bool {
+	switch c.Security.Audit {
+	case "off":
+		return false
+	case "all":
+		return true
+	}
+	return profile == "strict"
+}
+
+func (c Config) TagPrefix() string {
+	if c.Release.TagPrefix != "" {
+		return c.Release.TagPrefix
+	}
+	return "v"
+}
+func (c Config) ChangelogFile() string {
+	if c.Release.Changelog != "" {
+		return c.Release.Changelog
+	}
+	return "CHANGELOG.md"
+}
+func (c Config) InitialVersion() string {
+	if c.Release.InitialVersion != "" {
+		return c.Release.InitialVersion
+	}
+	return "0.1.0"
 }
 
 type ProjectCfg struct {

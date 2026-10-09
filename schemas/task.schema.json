@@ -181,6 +181,79 @@
           "type": "integer",
           "minimum": 0,
           "description": "Consecutive failing checks; reset by a passing check. At 2 or more, agents must stop and ask the user or hand over."
+        },
+        "uat": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "at"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "accepted",
+                "rejected"
+              ]
+            },
+            "by": {
+              "type": "string"
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            "note": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          }
+        },
+        "audit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "at",
+            "passed"
+          ],
+          "properties": {
+            "at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$"
+            },
+            "passed": {
+              "type": "boolean"
+            },
+            "tree": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "exit_code"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "exit_code": {
+                    "type": "integer"
+                  },
+                  "summary": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },

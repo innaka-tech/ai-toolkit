@@ -12,6 +12,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/adapters"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/agentsmd"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/compat"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/conv"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/heal"
@@ -233,6 +234,14 @@ func Run(p *project.Project, fix bool) *Report {
 				r.Warns--
 			}
 		}
+	}
+	if _, unfilled, exists := conv.Lines(p, 1); !exists {
+		c := r.add("conventions", "warn", conv.File+" is missing: agents have no coding conventions to follow")
+		if fix && fsx.WriteFile(p.Path(conv.File), []byte(conv.Template), 0o644) == nil {
+			c.Fixed, c.Status, c.Detail = true, "warn", "created "+conv.File+" from the template; fill it in"
+		}
+	} else if unfilled {
+		r.add("conventions", "warn", conv.File+" is still the template: fill in the stack, style, errors, data, tests, and security rules")
 	}
 	if hw := compat.HandWritten(p); len(hw) > 0 {
 		r.add("generated indexes", "warn", "left untouched because they are hand-written: "+strings.Join(hw, ", ")+" (move them to docs/ai/_legacy/ to let aitk maintain them)")

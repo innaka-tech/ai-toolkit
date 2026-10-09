@@ -28,6 +28,7 @@ var checkbox = regexp.MustCompile(`^\s*[-*] \[( |x|X)\] (.+)$`)
 type importItem struct {
 	id, title, objective string
 	done                 bool
+	status, profile      string // optional: explicit status; pinned profile
 	criteria, tags       []string
 	legacy               map[string]any
 }
@@ -53,8 +54,18 @@ func importItems(p *project.Project, source string, items []importItem, dry bool
 			if it.done {
 				st = task.Done
 			}
-			t := &task.Task{Meta: task.Meta{ID: it.id, Title: title, Status: st, Profile: "standard", Tags: slugs(it.tags),
+			if it.status != "" {
+				st = it.status
+			}
+			prof, pinned := "standard", false
+			if it.profile != "" {
+				prof, pinned = it.profile, true
+			}
+			t := &task.Task{Meta: task.Meta{ID: it.id, Title: title, Status: st, Profile: prof, ProfilePinned: pinned, Tags: slugs(it.tags),
 				Created: now, Updated: now, CreatedBy: Tool(), Legacy: it.legacy}, Body: task.NewBody(it.objective, it.criteria)}
+			if st == task.Done {
+				t.Closed = now
+			}
 			if err := task.Save(p, t); err != nil {
 				return fmt.Errorf("%s: %w", it.id, err)
 			}
@@ -126,6 +137,9 @@ var taskIDToken = regexp.MustCompile(`^(T\d{3,})\b\s*(?:\[[^\]]*\]\s*)*(.*)$`)
 // ImportChecklist imports Spec Kit (specs/*/tasks.md) or OpenSpec (openspec/changes/*/tasks.md)
 // checklists: each checkbox line becomes a task; "T001 …" keeps its ID (prefixed by the spec name).
 func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) (*ImportResult, error) {
+	if len(paths) == 0 && kind == "markdown" {
+		return nil, apperr.Usage("give the markdown file(s) to import")
+	}
 	if len(paths) == 0 {
 		pattern := map[string]string{"spec-kit": "specs/*/tasks.md", "openspec": "openspec/changes/*/tasks.md"}[kind]
 		paths, _ = filepath.Glob(p.Path(filepath.FromSlash(pattern)))
@@ -140,7 +154,11 @@ func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) 
 			return nil, apperr.New("E_IMPORT", apperr.ExitUsage, "check the path", "%v", err)
 		}
 		// Spec Kit feature dirs look like "001-checkout": drop the numeric prefix for readable IDs.
-		feature := strings.TrimLeft(project.Slug(filepath.Base(filepath.Dir(path)), 30), "0123456789-")
+		base := filepath.Base(filepath.Dir(path))
+		if kind == "markdown" {
+			base = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		}
+		feature := strings.TrimLeft(project.Slug(base, 30), "0123456789-")
 		if feature == "" {
 			feature = "spec"
 		}

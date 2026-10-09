@@ -207,7 +207,7 @@ func (a *app) root() *cobra.Command {
 	root.PersistentFlags().StringVarP(&a.dir, "path", "C", "", "run as if started in this directory")
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
-		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd())
+		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd())
 	return root
 }
 
@@ -1282,7 +1282,7 @@ func (a *app) pluginCmd() *cobra.Command {
 }
 
 func (a *app) importCmd() *cobra.Command {
-	c := &cobra.Command{Use: "import", Short: "Import tasks from GitHub Issues, Spec Kit, or OpenSpec"}
+	c := &cobra.Command{Use: "import", Short: "Import tasks from GitHub Issues, BMAD, Superpowers, Spec Kit, OpenSpec, or a markdown checklist"}
 	var repo, label, state string
 	var limit int
 	var dry bool
@@ -1307,17 +1307,37 @@ func (a *app) importCmd() *cobra.Command {
 		return &result{data: r, human: importSummary(r)}, nil
 	})
 	c.AddCommand(gh)
-	for _, kind := range []string{"spec-kit", "openspec"} {
+	for _, kind := range []string{"spec-kit", "openspec", "markdown", "superpowers", "bmad"} {
 		kind := kind
 		var dry bool
-		k := &cobra.Command{Use: kind + " [tasks.md ...]", Short: "Import a " + kind + " tasks checklist (default: discovered tasks.md files)"}
+		short := map[string]string{
+			"spec-kit":    "Import Spec Kit tasks (default: specs/*/tasks.md)",
+			"openspec":    "Import OpenSpec tasks (default: openspec/changes/*/tasks.md)",
+			"markdown":    "Import any markdown checklist: each checkbox line becomes a task",
+			"superpowers": "Import Superpowers plans (default: docs/superpowers/plans/*.md): each Task N becomes a task, its steps the criteria",
+			"bmad":        "Import BMAD tickets (story/bug/spike files; default: search the repository): criteria, status from the plan, risk high → strict",
+		}[kind]
+		k := &cobra.Command{Use: kind + " [path ...]", Short: short}
 		k.Flags().BoolVar(&dry, "dry-run", false, "show what would be imported")
 		k.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
 			p, err := a.openWrite()
 			if err != nil {
 				return nil, err
 			}
-			r, err := ops.ImportChecklist(p, kind, args, dry)
+			for i, a2 := range args { // relative paths are relative to where aitk runs (-C)
+				if !filepath.IsAbs(a2) {
+					args[i] = filepath.Join(a.cwd(), a2)
+				}
+			}
+			var r *ops.ImportResult
+			switch kind {
+			case "superpowers":
+				r, err = ops.ImportSuperpowers(p, args, dry)
+			case "bmad":
+				r, err = ops.ImportBMAD(p, args, dry)
+			default:
+				r, err = ops.ImportChecklist(p, kind, args, dry)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -1381,5 +1401,221 @@ func (a *app) deployCmd() *cobra.Command {
 		}
 		return &result{data: data, human: fmt.Sprintf("deployed %s in %d ms", args[0], r.DurationMs)}, nil
 	})
+	return c
+}
+
+func (a *app) uatCmd() *cobra.Command {
+	c := &cobra.Command{Use: "uat", Short: "User acceptance: a script for the tester, and the person's accept/reject decision"}
+	var force bool
+	script := &cobra.Command{Use: "script [id]", Short: "Write docs/ai/uat/<id>.md: scenarios from the acceptance criteria", Args: cobra.MaximumNArgs(1)}
+	script.Flags().BoolVar(&force, "force", false, "overwrite an existing script")
+	script.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		rel, err := ops.UATScript(p, first(args), force)
+		if err != nil {
+			return nil, err
+		}
+		return &result{data: map[string]string{"script": rel}, human: "UAT script: " + rel}, nil
+	})
+	var by, note, reason string
+	accept := &cobra.Command{Use: "accept [id]", Short: "Record a person's acceptance (refused for AI agents); completes the task when nothing else blocks it", Args: cobra.MaximumNArgs(1)}
+	accept.Flags().StringVar(&by, "by", "", "who accepts (default: git user.name)")
+	accept.Flags().StringVar(&note, "note", "", "what was tested")
+	accept.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		d, err := ops.UATAccept(p, first(args), by, note)
+		if err != nil {
+			return nil, err
+		}
+		compat.Write(p)
+		h := fmt.Sprintf("%s accepted → %s", d.Task, d.Status)
+		var warns []string
+		if d.Missing != "" {
+			warns = append(warns, "not done yet: "+d.Missing)
+		}
+		return &result{data: d, human: h, warnings: warns}, nil
+	})
+	reject := &cobra.Command{Use: "reject [id]", Short: "Record a person's rejection; the task goes back to in_progress", Args: cobra.MaximumNArgs(1)}
+	reject.Flags().StringVar(&by, "by", "", "who rejects (default: git user.name)")
+	reject.Flags().StringVar(&reason, "reason", "", "what failed (required)")
+	reject.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		d, err := ops.UATReject(p, first(args), by, reason)
+		if err != nil {
+			return nil, err
+		}
+		compat.Write(p)
+		return &result{data: d, human: fmt.Sprintf("%s rejected → %s", d.Task, d.Status)}, nil
+	})
+	c.AddCommand(script, accept, reject)
+	return c
+}
+
+func first(args []string) string {
+	if len(args) > 0 {
+		return args[0]
+	}
+	return ""
+}
+
+func (a *app) securityCmd() *cobra.Command {
+	c := &cobra.Command{Use: "security", Short: "Security standards for tasks (OWASP ASVS 4.0.3)"}
+	cl := &cobra.Command{Use: "checklist [id]", Short: "Add the OWASP ASVS checklist to a task (required for strict tasks)", Args: cobra.MaximumNArgs(1)}
+	cl.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		t, added, err := ops.AddSecurityChecklist(p, first(args))
+		if err != nil {
+			return nil, err
+		}
+		h := "checklist already present in " + t.File
+		if added {
+			h = "added the OWASP ASVS checklist to " + t.File + ": verify each item (or mark N/A with a reason) before close"
+		}
+		return &result{data: map[string]any{"task": t.ID, "file": t.File, "added": added}, human: h}, nil
+	})
+	c.AddCommand(cl)
+	return c
+}
+
+func (a *app) auditCmd() *cobra.Command {
+	c := &cobra.Command{Use: "audit", Short: "Security audit: dependency vulnerabilities, static analysis, and secrets; records evidence on the active task", Args: cobra.NoArgs}
+	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		r, err := ops.Audit(p, !a.json)
+		res := &result{}
+		if r != nil {
+			res.data, res.warnings = r, r.Warnings
+			var b strings.Builder
+			for _, x := range r.Results {
+				mark := "ok  "
+				if x.ExitCode != 0 {
+					mark = "FAIL"
+				}
+				fmt.Fprintf(&b, "%s %s\n", mark, x.Name)
+				if x.ExitCode != 0 && x.Summary != "" {
+					b.WriteString(indent(x.Summary) + "\n")
+				}
+			}
+			res.human = strings.TrimRight(b.String(), "\n")
+			if r.Task == "" {
+				res.warnings = append(res.warnings, "no active task: evidence not recorded")
+			}
+		}
+		return res, err
+	})
+	return c
+}
+
+func indent(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = "    " + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (a *app) releaseCmd() *cobra.Command {
+	var in ops.ReleaseInput
+	c := &cobra.Command{Use: "release", Short: "Version the project: next SemVer from Conventional Commits, CHANGELOG, manifests; --tag commits and tags (never pushes)", Args: cobra.NoArgs}
+	c.Flags().StringVar(&in.Bump, "bump", "auto", "auto, major, minor, or patch")
+	c.Flags().StringVar(&in.Pre, "pre", "", "pre-release label, e.g. rc → 1.4.0-rc.1")
+	c.Flags().BoolVar(&in.DryRun, "dry-run", false, "show the version and notes without writing")
+	c.Flags().BoolVar(&in.Tag, "tag", false, "commit the release files and create an annotated tag")
+	c.Flags().BoolVar(&in.SkipCheck, "skip-check", false, "do not run the check command first")
+	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		r, err := ops.ReleaseProject(p, in)
+		res := &result{data: r}
+		if r != nil {
+			res.warnings = r.Warnings
+			if r.Plan != nil && r.Version != "" {
+				prev := r.Previous
+				if prev == "" {
+					prev = "(first release)"
+				}
+				h := fmt.Sprintf("%s → %s (%s, %d commits)\n\n%s", prev, r.Version, r.Bump, len(r.Commits), r.Notes)
+				switch {
+				case in.DryRun:
+					h += "\ndry run: nothing written"
+				case r.Tagged:
+					h += fmt.Sprintf("\ncommitted and tagged %s. Publish with: git push --follow-tags", r.Tag)
+				default:
+					h += "\nwrote " + strings.Join(r.Written, ", ") + ". Review, then: aitk release --tag (or commit and tag yourself)"
+				}
+				res.human = h
+			}
+		}
+		return res, err
+	})
+	return c
+}
+
+func (a *app) goalCmd() *cobra.Command {
+	c := &cobra.Command{Use: "goal", Short: "Goals: the outcomes tasks deliver toward (aitk task new --goal G-1)"}
+	var id, parent string
+	add := &cobra.Command{Use: `add "<outcome>"`, Short: "Add a goal (status planned)", Args: cobra.ExactArgs(1)}
+	add.Flags().StringVar(&id, "id", "", "goal id (default: next G-<n>)")
+	add.Flags().StringVar(&parent, "parent", "", "parent goal id")
+	add.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		g, err := ops.GoalAdd(p, args[0], id, parent)
+		if err != nil {
+			return nil, err
+		}
+		compat.Write(p)
+		return &result{data: g, human: fmt.Sprintf("added %s %s", g.ID, g.Title)}, nil
+	})
+	list := &cobra.Command{Use: "list", Short: "Goals with task progress", Args: cobra.NoArgs}
+	list.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		gs := ops.Goals(p)
+		var b strings.Builder
+		for _, g := range gs {
+			fmt.Fprintf(&b, "%-6s %-9s %3d/%-3d %s\n", g.ID, g.Status, g.Done, g.Tasks, g.Title)
+		}
+		if gs == nil {
+			gs = []ops.Goal{}
+			b.WriteString("no goals")
+		}
+		return &result{data: gs, human: b.String()}, nil
+	})
+	status := &cobra.Command{Use: "status <id> <planned|active|achieved|dropped>", Short: "Change a goal's status", Args: cobra.ExactArgs(2)}
+	status.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		g, err := ops.GoalStatus(p, args[0], args[1])
+		if err != nil {
+			return nil, err
+		}
+		compat.Write(p)
+		return &result{data: g, human: fmt.Sprintf("%s → %s", g.ID, g.Status)}, nil
+	})
+	c.AddCommand(add, list, status)
 	return c
 }

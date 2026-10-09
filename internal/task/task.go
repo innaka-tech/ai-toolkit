@@ -46,6 +46,29 @@ type Check struct {
 	Tree       string `yaml:"tree,omitempty" json:"tree,omitempty"`
 }
 
+// UAT records a person's acceptance or rejection.
+type UAT struct {
+	Status string `yaml:"status" json:"status"` // accepted | rejected
+	By     string `yaml:"by,omitempty" json:"by,omitempty"`
+	At     string `yaml:"at" json:"at"`
+	Note   string `yaml:"note,omitempty" json:"note,omitempty"`
+}
+
+// Audit records the last security scan of the code.
+type Audit struct {
+	At      string        `yaml:"at" json:"at"`
+	Passed  bool          `yaml:"passed" json:"passed"`
+	Tree    string        `yaml:"tree,omitempty" json:"tree,omitempty"`
+	Results []AuditResult `yaml:"results,omitempty" json:"results,omitempty"`
+}
+
+// AuditResult is one scanner's outcome.
+type AuditResult struct {
+	Name     string `yaml:"name" json:"name"`
+	ExitCode int    `yaml:"exit_code" json:"exit_code"`
+	Summary  string `yaml:"summary,omitempty" json:"summary,omitempty"`
+}
+
 // Pass is one review pass.
 type Pass struct {
 	N        int    `yaml:"n" json:"n"`
@@ -72,6 +95,8 @@ type Evidence struct {
 	Commits       []string    `yaml:"commits,omitempty" json:"commits,omitempty"`
 	Acceptance    *Acceptance `yaml:"acceptance,omitempty" json:"acceptance,omitempty"`
 	CheckFailures int         `yaml:"check_failures,omitempty" json:"check_failures,omitempty"`
+	UAT           *UAT        `yaml:"uat,omitempty" json:"uat,omitempty"`
+	Audit         *Audit      `yaml:"audit,omitempty" json:"audit,omitempty"`
 }
 
 // Meta is the frontmatter (schemas/task.schema.json).

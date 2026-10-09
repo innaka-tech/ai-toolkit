@@ -92,6 +92,9 @@ func TestClaudePreservesUserSettingsAndIsIdempotent(t *testing.T) {
 	if mcp.MCPServers["db"] == nil || mcp.MCPServers["aitk"]["command"] != "aitk" {
 		t.Fatalf("mcp servers wrong: %v", mcp.MCPServers)
 	}
+	if !strings.Contains(get(t, filepath.Join(e.Root, ".claude/skills/aitk/SKILL.md")), "name: aitk") {
+		t.Fatal("Agent Skill not installed")
+	}
 	if got := get(t, filepath.Join(e.Root, "CLAUDE.md")); got != "@AGENTS.md\n\n# Team notes\n" {
 		t.Fatalf("CLAUDE.md: %q", got)
 	}

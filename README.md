@@ -66,7 +66,7 @@ No server, no account, works offline. The active task lives in the git directory
 | Cursor | always-on rule | `.cursor/mcp.json` | |
 | anything else | `AGENTS.md` | | git hooks |
 
-`aitk mcp` exposes the workflow as 15 MCP tools; every tool runs the same code as the CLI. Verified end-to-end with Claude Code and OpenCode.
+`aitk mcp` exposes the workflow as 18 MCP tools; every tool runs the same code as the CLI. Verified end-to-end with Claude Code and OpenCode.
 
 ## More than a task list
 
@@ -76,6 +76,8 @@ No server, no account, works offline. The active task lives in the git directory
 - **Reports**: `aitk report --since 7d` shows what was done, by which tool, with evidence.
 - **Imports**: GitHub Issues, Spec Kit, and OpenSpec task lists become aitk tasks.
 - **Plugins**: any `aitk-<name>` executable on PATH can add to briefs, doctor checks, and knowledge search (JSON over stdin/stdout).
+- **Delivery standards for your project**: OWASP ASVS checklist and `aitk audit` (dependency vulnerabilities, static analysis, secrets) for risky work; user acceptance by a person (`aitk uat accept`); `aitk release` for SemVer, changelog, and tags from Conventional Commits; project conventions shown to every agent; goals with progress.
+- **Plans from other tools**: import BMAD tickets, Superpowers plans, Spec Kit / OpenSpec task lists, GitHub Issues, or any markdown checklist, then execute them with aitk's verification. An Agent Skill teaches agents the workflow.
 - **Self-control**: aitk tells agents to stop after repeated failing checks, refuses credentials in anything it records, and keeps `done` behind the Definition of Done.
 - **Self-healing**: hand-edited or conflicted aitk files are repaired before the next command (`self-healed:` warnings), and `aitk doctor --fix` restores drifted adapters and settings. Nothing is thrown away.
 - **Migration from v1**: `aitk migrate` is lossless and idempotent. Every original file is kept byte for byte in `docs/ai/_legacy/`.
@@ -93,7 +95,7 @@ One static binary, no runtime dependencies besides git.
 ## Documentation
 
 - [Tutorial: your first project in 10 minutes](docs/tutorial.md)
-- How-to: [set up AI tools](docs/how-to/ai-tools.md) · [work in parallel](docs/how-to/parallel.md) · [gates and CI](docs/how-to/ci.md) · [migrate from v1](docs/how-to/migrate-v1.md) · [write a plugin](docs/how-to/plugins.md)
+- How-to: [set up AI tools](docs/how-to/ai-tools.md) · [security, UAT, conventions](docs/how-to/quality.md) · [release your project](docs/how-to/release.md) · [BMAD, Superpowers, Spec Kit](docs/how-to/planning-tools.md) · [work in parallel](docs/how-to/parallel.md) · [gates and CI](docs/how-to/ci.md) · [migrate from v1](docs/how-to/migrate-v1.md) · [write a plugin](docs/how-to/plugins.md)
 - Reference: [CLI](docs/reference/cli.md) · [specification](docs/spec/README.md) · [JSON Schemas](schemas/)
 - Explanation: [architecture decisions](docs/adr/README.md)
 
