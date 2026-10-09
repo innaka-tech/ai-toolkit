@@ -18,6 +18,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/checkrun"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/profile"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/session"
@@ -227,6 +228,7 @@ func (r *runner) one(c Candidate) RunTask {
 			t = cur
 		}
 		snap := protectedOf(t)
+		started := task.Now()
 		prompt := runPrompt(p, t, rt.Attempts, r.attempts)
 		before := profile.Fingerprint(p)
 		ar := r.runAgent(prompt, t.ID)
@@ -253,7 +255,7 @@ func (r *runner) one(c Candidate) RunTask {
 		switch t.Status {
 		case task.Done, task.InReview:
 			claimed := t.Status
-			target, why := r.decide(t, snap)
+			target, why := r.decide(t, snap, started)
 			if why != "" {
 				t.Status, t.Closed, t.Updated = task.InProgress, "", task.Now()
 				WithLock(p, func() error { return task.Save(p, t) })
@@ -294,10 +296,21 @@ type protected struct {
 	review     *task.Review
 	audit      *task.Audit
 	regression []string
+	// What decides which gates apply: an agent must not lower its own bar.
+	profile   string
+	pinned    bool
+	tags      []string
+	goal      string
+	dependsOn []string
+	criteria  []string // texts; marking them done is the agent's job, rewording them is not
 }
 
 func protectedOf(t *task.Task) protected {
-	var s protected
+	s := protected{profile: t.Profile, pinned: t.ProfilePinned, tags: append([]string(nil), t.Tags...),
+		goal: t.Goal, dependsOn: append([]string(nil), t.DependsOn...)}
+	for _, c := range t.Criteria() {
+		s.criteria = append(s.criteria, c.Text)
+	}
 	if t.Review != nil {
 		r := *t.Review
 		r.Passes = append([]task.Pass(nil), t.Review.Passes...)
@@ -318,6 +331,7 @@ func protectedOf(t *task.Task) protected {
 }
 
 func restoreProtected(t *task.Task, s protected) {
+	t.Profile, t.ProfilePinned, t.Tags, t.Goal, t.DependsOn = s.profile, s.pinned, s.tags, s.goal, s.dependsOn
 	t.Review = s.review
 	if t.Evidence == nil {
 		t.Evidence = &task.Evidence{}
@@ -330,9 +344,18 @@ func restoreProtected(t *task.Task, s protected) {
 // their values before the attempt, the check (and the audit, when required) are run by aitk, the
 // regression evidence is recomputed, and the Definition of Done decides. It returns the status to
 // record, or why the task cannot leave in_progress.
-func (r *runner) decide(t *task.Task, snap protected) (string, string) {
+func (r *runner) decide(t *task.Task, snap protected, since string) (string, string) {
 	p := r.p
 	restoreProtected(t, snap)
+	cur := t.Criteria()
+	if len(cur) < len(snap.criteria) {
+		return "", "acceptance criteria were removed"
+	}
+	for i, text := range snap.criteria {
+		if cur[i].Text != text {
+			return "", fmt.Sprintf("acceptance criterion %d was reworded", i+1)
+		}
+	}
 	t.Evidence.RegressionTests = nil
 	tree := profile.Fingerprint(p)
 	if cmd := p.Config.Check.Cmd; cmd != "" {
@@ -374,6 +397,19 @@ func (r *runner) decide(t *task.Task, snap protected) (string, string) {
 	}
 	if err := WithLock(p, func() error { return task.Save(p, t) }); err != nil {
 		return "", err.Error()
+	}
+	// Close writes the record of what was done; if the agent never ran it, aitk run writes one.
+	recorded := false
+	for _, h := range handoff.List(p) {
+		if strings.EqualFold(h.Task, t.ID) && h.At >= since {
+			recorded = true
+			break
+		}
+	}
+	if !recorded {
+		outcome := map[string]string{task.Done: "done", task.InReview: "progress"}[target]
+		handoff.Write(p, handoff.Meta{Task: t.ID, At: task.Now(), By: r.agentName, Outcome: outcome, TaskStatus: target, Check: t.Evidence.Check},
+			"## "+t.Title+"\n\nVerified by aitk run (check, Definition of Done). The agent did not record a summary with aitk close.\n")
 	}
 	return target, ""
 }

@@ -887,7 +887,7 @@ func taskCommits(p *project.Project, t *task.Task) []string {
 			continue
 		}
 		ct, _ := strconv.ParseInt(f[1], 10, 64)
-		if ct < created.Unix() {
+		if ct <= created.Unix() { // the second the task was created belongs to the past (second resolution)
 			continue
 		}
 		if ids := strings.TrimSpace(f[2]); ids != "" && !containsFold(strings.Split(ids, ","), t.ID) {

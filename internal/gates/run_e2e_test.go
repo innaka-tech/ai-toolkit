@@ -338,3 +338,30 @@ func TestRunStashKeepsRenamesTogether(t *testing.T) {
 		t.Fatalf("tree must be clean:\n%s", st)
 	}
 }
+
+// Third review A: an agent cannot lower its own bar (profile, pin, tags, criteria).
+func TestRunAgentCannotLowerItsOwnBar(t *testing.T) {
+	dir := runProject(t)
+	must(t, dir, "sh", "-c", `printf '\n[uat]\nrequired = "standard"\n' >> aitk.toml && git commit -qam "chore: uat"`)
+	must(t, dir, bin, "task", "new", "Fix crash", "--tag", "bug", "--tag", "target", "--ac", "no crash")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: bug task")
+	// Does everything right except a test, then makes the task lite, pinned, untagged, and done.
+	lower := `aitk task update --ac-done 1; touch ok.txt; echo fix > code.txt; aitk check
+f=$(grep -l "$AITK_RUN_TASK" docs/ai/tasks/*.md | head -1)
+awk '/^profile:/{print "profile: lite"; print "profile_pinned: true"; next} /^  - bug$/{next} /^status:/{print "status: done"; next} {print}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"`
+	r := aitkRun(t, dir, "--cmd", lower, "--max-attempts", "1", "--tag", "target")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "done" {
+		t.Fatalf("lowering the profile or dropping the bug tag must not finish a task: %+v", r.Data.Tasks)
+	}
+	must(t, dir, bin, "task", "new", "Reword target", "--tag", "reword", "--ac", "the real requirement")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	reword := `f=$(grep -l "$AITK_RUN_TASK" docs/ai/tasks/*.md | head -1)
+sed -i.bak -e 's/- \[ \] the real requirement/- [ ] nothing to do/' "$f"; rm -f "$f.bak"
+` + goodAgent
+	r = aitkRun(t, dir, "--cmd", reword, "--max-attempts", "1", "--tag", "reword")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "done" || !strings.Contains(r.Data.Tasks[0].Note, "reworded") {
+		t.Fatalf("rewording a criterion must not finish a task: %+v", r.Data.Tasks)
+	}
+}
