@@ -64,7 +64,7 @@ aitk audit install [flags]
 ```
 
 ```
-      --dir string   directory for the downloaded binary (default "/Users/anasfikri/.local/bin")
+      --dir string   directory for the downloaded binary (default ~/.local/bin; %LOCALAPPDATA%\aitk\bin on Windows)
       --no-brew      download the release binary even when Homebrew is available
 ```
 

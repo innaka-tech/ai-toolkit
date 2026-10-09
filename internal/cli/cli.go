@@ -1522,12 +1522,15 @@ func (a *app) auditCmd() *cobra.Command {
 	var dir string
 	var noBrew bool
 	in := &cobra.Command{Use: "install", Short: "Install osv-scanner, the dependency vulnerability scanner aitk audit uses (Homebrew on macOS, else the checksum-verified release binary)", Args: cobra.NoArgs}
-	in.Flags().StringVar(&dir, "dir", audit.DefaultBinDir(), "directory for the downloaded binary")
+	in.Flags().StringVar(&dir, "dir", "", `directory for the downloaded binary (default ~/.local/bin; %LOCALAPPDATA%\aitk\bin on Windows)`)
 	in.Flags().BoolVar(&noBrew, "no-brew", false, "download the release binary even when Homebrew is available")
 	in.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
 		log := io.Writer(os.Stderr)
 		if a.json {
 			log = io.Discard
+		}
+		if dir == "" {
+			dir = audit.DefaultBinDir()
 		}
 		r, err := audit.InstallOSV(dir, !noBrew, log)
 		if err != nil {
