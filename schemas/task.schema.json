@@ -254,6 +254,14 @@
               }
             }
           }
+        },
+        "regression_tests": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Test files changed with a bug fix (quality.regression_tests)"
         }
       }
     },

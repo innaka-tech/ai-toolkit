@@ -484,7 +484,9 @@ func (a *app) runCmd() *cobra.Command {
 			"A task counts as finished only when the agent's own `aitk close` passes the Definition of Done. Tasks that need a person\n" +
 			"(review or UAT) stay in_review; tasks the agent cannot finish after --max-attempts are handed over as blocked.\n" +
 			"The run stops when no task is ready, after --max-tasks, or after two unfinished tasks in a row.\n\n" +
-			"Built-in agents run headless: claude-code (edits + aitk + read-only git), codex (exec --full-auto), opencode (run), gemini-cli (-p).\n" +
+			"Done is verified: a handoff from aitk close, the Definition of Done on the current files, and the check run by aitk itself.\n" +
+			"Built-in agents run headless: claude-code (edit files, run aitk, read git), codex (exec --sandbox workspace-write),\n" +
+			"opencode (run; your OpenCode permission rules apply), gemini-cli (--approval-mode auto_edit). The prompt is passed as a file.\n" +
 			"Extra permissions are your choice: [run] args in aitk.toml. Any other tool: --cmd \"<command>\" (prompt on stdin and in $AITK_RUN_PROMPT_FILE)."}
 	c.Flags().StringVar(&in.Agent, "agent", "", "claude-code, codex, opencode, or gemini-cli (default: [run] agent)")
 	c.Flags().StringVar(&in.Cmd, "cmd", "", "custom agent command, run through the shell")
@@ -493,7 +495,8 @@ func (a *app) runCmd() *cobra.Command {
 	c.Flags().IntVar(&timeout, "timeout", 0, "minutes per agent run (default 60)")
 	c.Flags().StringVar(&in.Goal, "goal", "", "only tasks of this goal")
 	c.Flags().StringVar(&in.Tag, "tag", "", "only tasks with this tag")
-	c.Flags().BoolVar(&in.Commit, "commit", false, "commit each finished task (one Conventional Commit per task)")
+	var commit bool
+	c.Flags().BoolVar(&commit, "commit", false, "one commit per task: finished work as a Conventional Commit, unfinished work stashed (needs a clean tree; default: [run] commit)")
 	c.Flags().BoolVar(&in.DryRun, "dry-run", false, "show the order without running anything")
 	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
 		p, err := a.openWrite()
@@ -501,6 +504,9 @@ func (a *app) runCmd() *cobra.Command {
 			return nil, err
 		}
 		in.Timeout = time.Duration(timeout) * time.Minute
+		if c.Flags().Changed("commit") {
+			in.Commit = &commit
+		}
 		r, err := ops.Run(p, in, a.stderr)
 		if err != nil {
 			return nil, err

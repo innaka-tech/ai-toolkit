@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/ops"
 )
@@ -133,6 +134,8 @@ func TestIsTestPath(t *testing.T) {
 		"internal/ops/run_test.go": true, "src/cart.test.ts": true, "web/a.spec.tsx": true, "tests/test_x.py": true,
 		"test_x.py": true, "spec/models/user_spec.rb": true, "src/test/java/CartTest.java": true, "CartTests.cs": true,
 		"src/latest.java": false, "src/contest.py": false, "specs/001-x/tasks.md": false, "src/cart.ts": false, "README.md": false,
+		"api/openapi.spec.yaml": false, "docs/feature.spec.md": false, "app/tests.py": true, "src/HTTPTest.java": true, "IOTests.cs": true,
+		"pkg/testdata/golden.json": true, "conftest.py": true,
 	} {
 		if got := ops.IsTestPath(p); got != want {
 			t.Errorf("IsTestPath(%q) = %v, want %v", p, got, want)
@@ -211,4 +214,61 @@ func TestAuditCreatesFixTasks(t *testing.T) {
 	if ft := data(r)["fix_tasks"].(map[string]any); len(ft["created"].([]any)) != 0 || len(ft["already_open"].([]any)) != 1 {
 		t.Fatalf("a second audit must not duplicate open tasks: %v", ft)
 	}
+}
+
+// Review B #8: a phase heading closes the parallel group that ended the previous phase.
+func TestSpecKitPhaseClosesParallelGroup(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "specs/002-pay/tasks.md", "## Phase 2: Foundational\n- [ ] T008 [P] Auth\n- [ ] T009 [P] Routing\n\n## Phase 3: US1\n- [ ] T010 [P] [US1] Model\n")
+	mustOK(t, aitk(t, dir, "import", "spec-kit"))
+	t10 := data(aitk(t, dir, "task", "show", "PAY-T010"))["task"].(map[string]any)
+	if deps, _ := t10["depends_on"].([]any); len(deps) != 2 || deps[0] != "PAY-T008" || deps[1] != "PAY-T009" {
+		t.Fatalf("the next phase must wait for the whole parallel group: %v", t10["depends_on"])
+	}
+}
+
+// Review B #9: tasks imported by an older aitk (no ref/item) are still checked off.
+func TestSpecKitWriteBackForOldImports(t *testing.T) {
+	dir := specKitRepo(t)
+	f := strings.TrimSpace(run(t, dir, "sh", "-c", "ls docs/ai/tasks/CHECKOUT-T001-*.md"))
+	b := read(t, dir, f)
+	b = strings.Replace(b, "  item: T001 Create project structure\n", "", 1)
+	b = strings.Replace(b, "  ref: T001\n", "", 1)
+	write(t, dir, f, b)
+	finish(t, dir, "CHECKOUT-T001")
+	if !strings.Contains(read(t, dir, "specs/001-checkout/tasks.md"), "- [x] T001") {
+		t.Fatalf("old import not checked off:\n%s", read(t, dir, "specs/001-checkout/tasks.md"))
+	}
+}
+
+// Review B #10: two features sharing the first 12 characters get different IDs.
+func TestSpecKitFeaturePrefixCollision(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "specs/001-user-auth-login/tasks.md", "- [ ] T001 Login form\n")
+	mustOK(t, aitk(t, dir, "import", "spec-kit"))
+	write(t, dir, "specs/002-user-auth-logout/tasks.md", "- [ ] T001 Logout button\n")
+	r := aitk(t, dir, "import", "spec-kit", "specs/002-user-auth-logout/tasks.md")
+	mustOK(t, r)
+	if imp := data(r)["imported"].([]any); len(imp) != 1 || imp[0] == "USER-AUTH-LO-T001" {
+		t.Fatalf("the second feature must get its own ID: %v", data(r))
+	}
+}
+
+// Review B #6: tests committed before the bug task was created do not satisfy its gate.
+func TestRegressionGateCountsOnlyTheTasksChanges(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "tests/test_old.py", "def test_old(): pass\n")
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "test: old")
+	run(t, dir, "git", "checkout", "-qb", "fix-branch")
+	time.Sleep(1100 * time.Millisecond) // the task is created after that commit
+	newStarted(t, dir, "Fix totals", "--ac", "totals right", "--tag", "bug")
+	write(t, dir, "src/totals.py", "x = 1\n")
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	expect(t, aitk(t, dir, "close", "--summary", "fixed", "--knowledge", "none"), 3, "E_DOD_REGRESSION_TEST")
 }

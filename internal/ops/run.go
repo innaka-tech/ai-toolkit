@@ -8,15 +8,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/apperr"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/brief"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/checkrun"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/claims"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/profile"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/session"
@@ -24,16 +26,22 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/textx"
 )
 
-// headless builds argv that runs a tool non-interactively on one prompt. The defaults let the
-// agent edit files and run aitk and read-only git; anything more is the user's choice ([run].args).
-var headless = map[string]func(prompt string) []string{
-	"claude-code": func(s string) []string {
-		return []string{"claude", "-p", s, "--permission-mode", "acceptEdits",
-			"--allowedTools", "Bash(aitk:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)"}
+// headless builds argv that runs a tool non-interactively. The prompt itself is in a file;
+// the argument only points to it, so no shell or .cmd shim ever parses the brief's text.
+// The defaults let the agent edit files, run aitk, and read git; anything more is the user's
+// choice ([run].args, inserted before the prompt).
+var headless = map[string]func(args []string, prompt string) []string{
+	"claude-code": func(a []string, s string) []string {
+		return append(append([]string{"claude"}, a...), "--permission-mode", "acceptEdits",
+			"--allowedTools", "Read,Edit,Write,Glob,Grep,Bash(aitk:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*)", "-p", s)
 	},
-	"codex":      func(s string) []string { return []string{"codex", "exec", "--sandbox", "workspace-write", s} },
-	"opencode":   func(s string) []string { return []string{"opencode", "run", s} },
-	"gemini-cli": func(s string) []string { return []string{"gemini", "-p", s} },
+	"codex": func(a []string, s string) []string {
+		return append(append([]string{"codex", "exec"}, a...), "--sandbox", "workspace-write", s)
+	},
+	"opencode": func(a []string, s string) []string { return append(append([]string{"opencode", "run"}, a...), s) },
+	"gemini-cli": func(a []string, s string) []string {
+		return append(append([]string{"gemini"}, a...), "--approval-mode", "auto_edit", "-p", s)
+	},
 }
 
 // RunInput configures aitk run; zero values fall back to [run] in aitk.toml, then to defaults.
@@ -46,7 +54,7 @@ type RunInput struct {
 	Goal        string
 	Tag         string
 	DryRun      bool
-	Commit      bool
+	Commit      *bool // nil: [run].commit
 }
 
 // RunTask is the outcome of one task in a run.
@@ -57,7 +65,8 @@ type RunTask struct {
 	Status   string `json:"status"`            // the task's status afterwards
 	Note     string `json:"note,omitempty"`    // why it stopped there
 	Handoff  string `json:"handoff,omitempty"` // written by aitk run when the agent did not finish
-	Commit   string `json:"commit,omitempty"`  // with --commit: the commit of a finished task
+	Commit   string `json:"commit,omitempty"`  // with --commit: the commit of the task's work
+	Stash    string `json:"stash,omitempty"`   // with --commit: unfinished work set aside with git stash
 	// AgentError: the agent could not run at all; the task is left as it was.
 	AgentError bool `json:"agent_error,omitempty"`
 }
@@ -99,11 +108,19 @@ func Run(p *project.Project, in RunInput, log io.Writer) (*RunResult, error) {
 	if in.Agent != "" && in.Cmd == "" {
 		cmd = "" // an explicit --agent wins over a configured command
 	}
+	var args []string // [run].args belong to the configured agent only
+	if in.Agent == "" || normalizeTool(in.Agent) == normalizeTool(cfg.Agent) {
+		args = cfg.Args
+	}
 	maxTasks := firstPositive(in.MaxTasks, cfg.MaxTasks, 10)
 	maxAttempts := firstPositive(in.MaxAttempts, cfg.MaxAttempts, 2)
 	timeout := in.Timeout
 	if timeout <= 0 {
 		timeout = time.Duration(firstPositive(cfg.TimeoutMinutes, 60)) * time.Minute
+	}
+	commit := cfg.Commit
+	if in.Commit != nil {
+		commit = *in.Commit
 	}
 	res := &RunResult{Agent: agent, DryRun: in.DryRun, Tasks: []RunTask{}}
 	if cmd != "" {
@@ -111,8 +128,10 @@ func Run(p *project.Project, in RunInput, log io.Writer) (*RunResult, error) {
 	} else if _, ok := headless[agent]; !ok {
 		return nil, apperr.New("E_USAGE", apperr.ExitUsage, "aitk run --agent claude-code|codex|opencode|gemini-cli (or --cmd \"<command>\", or [run] in aitk.toml)",
 			"no agent to run (got %q)", agent)
-	} else if _, err := exec.LookPath(headless[agent]("")[0]); err != nil && !in.DryRun {
-		return nil, apperr.New("E_USAGE", apperr.ExitUsage, "install it, or pick another with --agent", "%s is not installed", headless[agent]("")[0])
+	} else if bin := headless[agent](nil, "")[0]; !in.DryRun {
+		if _, err := exec.LookPath(bin); err != nil {
+			return nil, apperr.New("E_USAGE", apperr.ExitUsage, "install it, or pick another with --agent", "%s is not installed", bin)
+		}
 	}
 	filter := NextFilter{Goal: in.Goal, Tag: in.Tag, Skip: map[string]bool{}}
 	if in.DryRun {
@@ -123,6 +142,23 @@ func Run(p *project.Project, in RunInput, log io.Writer) (*RunResult, error) {
 		}
 		res.Stopped = "dry run"
 		return res, nil
+	}
+	if commit {
+		if dirty := worktreeChanges(p); len(dirty) > 0 {
+			return nil, apperr.New("E_RUN_DIRTY", apperr.ExitGate, "commit or stash your changes first (git status), or run without --commit",
+				"--commit needs a clean working tree so each commit holds one task's work; uncommitted: %s", strings.Join(firstN(dirty, 5), ", "))
+		}
+	}
+	unlock, err := runLock(p)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	r := &runner{p: p, agent: agent, cmd: cmd, args: args, timeout: timeout, log: log, attempts: maxAttempts}
+	if cmd != "" {
+		r.agentName = "custom"
+	} else {
+		r.agentName = agent
 	}
 	unfinished := 0
 	for len(res.Tasks) < maxTasks {
@@ -136,21 +172,19 @@ func Run(p *project.Project, in RunInput, log io.Writer) (*RunResult, error) {
 		}
 		c := nx.Ready[0]
 		filter.Skip[c.ID] = true
-		rt := runOne(p, c, agent, cmd, maxAttempts, timeout, log)
+		rt := r.one(c)
 		if rt.AgentError {
 			res.Tasks = append(res.Tasks, rt)
 			res.Stopped = "the agent failed to start: fix the agent command or its login, then run again (" + rt.ID + " stays " + rt.Status + ")"
 			break
 		}
-		if rt.Status == task.Done && (in.Commit || cfg.Commit) {
-			sha, err := commitTask(p, rt.ID, res.Agent)
-			if err != nil {
-				rt.Note = "finished, but the commit failed: " + err.Error()
+		if commit {
+			if err := r.commitWork(&rt); err != nil {
+				rt.Note = strings.TrimSpace(rt.Note + "; the commit failed: " + err.Error())
 				res.Tasks = append(res.Tasks, rt)
 				res.Stopped = "commit failed: fix it (hooks, identity, conflicts), commit, then run again"
 				break
 			}
-			rt.Commit = sha
 		}
 		res.Tasks = append(res.Tasks, rt)
 		if rt.Status == task.Done || rt.Status == task.InReview {
@@ -168,23 +202,41 @@ func Run(p *project.Project, in RunInput, log io.Writer) (*RunResult, error) {
 	return res, nil
 }
 
-func runOne(p *project.Project, c Candidate, agent, cmd string, maxAttempts int, timeout time.Duration, log io.Writer) RunTask {
+type runner struct {
+	p                *project.Project
+	agent, agentName string
+	cmd              string
+	args             []string
+	timeout          time.Duration
+	attempts         int
+	log              io.Writer
+}
+
+func (r *runner) one(c Candidate) RunTask {
+	p := r.p
 	rt := RunTask{ID: c.ID, Title: c.Title}
 	t, err := TaskStart(p, c.ID)
 	if err != nil {
 		rt.Status, rt.Note = c.Status, "could not start: "+err.Error()
 		return rt
 	}
-	for rt.Attempts < maxAttempts {
+	for rt.Attempts < r.attempts {
 		rt.Attempts++
-		fmt.Fprintf(log, "aitk run: %s %q, attempt %d of %d\n", t.ID, t.Title, rt.Attempts, maxAttempts)
-		prompt := runPrompt(p, t, rt.Attempts, maxAttempts)
-		before := profile.Fingerprint(p)
-		ar := runAgent(p, agent, cmd, prompt, t.ID, timeout, log)
-		code, runErr := ar.code, ar.err
-		if cur, err := task.Find(p, t.ID); err == nil {
-			t = cur
+		fmt.Fprintf(r.log, "aitk run: %s %q, attempt %d of %d\n", t.ID, t.Title, rt.Attempts, r.attempts)
+		if rt.Attempts > 1 {
+			WithLock(p, func() error { _, err := claims.Take(p, t.ID, r.agentName, DefaultClaimTTL); return err }) // renew
 		}
+		prompt := runPrompt(p, t, rt.Attempts, r.attempts)
+		before := profile.Fingerprint(p)
+		started := task.Now()
+		ar := r.runAgent(prompt, t.ID)
+		code, runErr := ar.code, ar.err
+		cur, ferr := task.Find(p, t.ID)
+		if ferr != nil {
+			rt.Status, rt.Note = "missing", "the task file disappeared during the attempt"
+			return rt
+		}
+		t = cur
 		// An agent that fails at once without touching anything is broken (not installed, bad
 		// flags, not logged in): stop the run instead of blaming the task.
 		if (code != 0 || runErr != nil) && ar.duration < agentStartupWindow && t.Status == task.InProgress && profile.Fingerprint(p) == before {
@@ -199,11 +251,18 @@ func runOne(p *project.Project, c Candidate, agent, cmd string, maxAttempts int,
 			return rt
 		}
 		switch t.Status {
-		case task.Done:
-			rt.Status = task.Done
-			return rt
-		case task.InReview:
-			rt.Status, rt.Note = task.InReview, "waiting for review passes or a person's acceptance (aitk uat accept "+t.ID+")"
+		case task.Done, task.InReview:
+			if why := r.verify(t, started); why != "" {
+				// Not reached through aitk close: put it back and treat the attempt as unfinished.
+				t.Status, t.Closed, t.Updated = task.InProgress, "", task.Now()
+				WithLock(p, func() error { return task.Save(p, t) })
+				rt.Note = "the task was marked " + string(cur.Status) + " without passing aitk close (" + why + "); reopened"
+				continue
+			}
+			rt.Status = t.Status
+			if t.Status == task.InReview {
+				rt.Note = "waiting for review passes or a person's acceptance (aitk uat accept " + t.ID + ")"
+			}
 			return rt
 		case task.Blocked, task.Cancelled:
 			rt.Status, rt.Note = t.Status, "the agent stopped the task; see its handoff"
@@ -222,28 +281,165 @@ func runOne(p *project.Project, c Candidate, agent, cmd string, maxAttempts int,
 			break
 		}
 	}
-	// Not finished: hand it over as blocked so the next agent or person starts from a record.
+	return r.handOver(t, rt)
+}
+
+// verify confirms that a done or in_review status came from aitk close (or a person's UAT
+// acceptance): a matching handoff written during the attempt, the Definition of Done holding
+// on the current files, and the check passing when aitk runs it itself. It returns why not.
+func (r *runner) verify(t *task.Task, since string) string {
+	p := r.p
+	found := false
+	for _, h := range handoff.List(p) {
+		if strings.EqualFold(h.Task, t.ID) && h.At >= since && h.TaskStatus == t.Status {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return "no handoff from aitk close"
+	}
+	prof := t.Profile
+	if computed := profile.Compute(p, profile.Diff(p)); !t.ProfilePinned || computed == "strict" {
+		prof = computed
+	}
+	target, err := dod(p, t, prof, CloseInput{})
+	if err != nil {
+		return "the Definition of Done does not hold: " + err.Error()
+	}
+	if target != t.Status {
+		return "the Definition of Done allows " + target
+	}
+	if cmd := p.Config.Check.Cmd; cmd != "" {
+		timeout, err := time.ParseDuration(p.Config.CheckTimeout())
+		if err != nil {
+			timeout = 10 * time.Minute
+		}
+		if res := checkrun.Run(p.Root, cmd, timeout, false); res.ExitCode != 0 {
+			return fmt.Sprintf("the check fails when aitk runs it (exit %d)", res.ExitCode)
+		}
+	}
+	return ""
+}
+
+// handOver closes an unfinished task as blocked with a handoff, attributed to the agent.
+func (r *runner) handOver(t *task.Task, rt RunTask) RunTask {
+	p := r.p
+	defer setEnv("AITK_TOOL", r.agentName)()
 	if s := session.Load(p); s.Active() != t.ID {
-		TaskStart(p, t.ID)
+		if _, err := TaskStart(p, t.ID); err != nil {
+			rt.Status, rt.Note = t.Status, strings.TrimSpace(rt.Note+"; could not hand it over: "+err.Error())
+			return rt
+		}
 	}
-	summary := fmt.Sprintf("aitk run: %s did not finish this task after %d attempt(s): %s.", firstNonEmpty(agent, "the agent"), rt.Attempts, rt.Note)
-	if cr, err := Close(p, CloseInput{Summary: summary, Knowledge: "none", Status: task.Blocked,
-		Next: []string{"Read this task's handoffs and the last check output, then continue or split the task"}}); err == nil {
-		rt.Handoff = cr.Handoff
+	summary := fmt.Sprintf("aitk run: %s did not finish this task after %d attempt(s): %s.", r.agentName, rt.Attempts, rt.Note)
+	cr, err := Close(p, CloseInput{Summary: summary, Knowledge: "none", Status: task.Blocked,
+		Next: []string{"Read this task's handoffs and the last check output, then continue or split the task"}})
+	switch {
+	case err != nil:
+		rt.Status, rt.Note = t.Status, strings.TrimSpace(rt.Note+"; could not hand it over: "+err.Error())
+	case !strings.EqualFold(cr.Task, t.ID):
+		rt.Status, rt.Note = t.Status, strings.TrimSpace(rt.Note+"; the handover closed "+cr.Task+" instead")
+	default:
+		rt.Status, rt.Handoff = task.Blocked, cr.Handoff
 	}
-	rt.Status = task.Blocked
 	return rt
 }
 
-// commitTask commits everything in the worktree as one Conventional Commit for a finished task.
-func commitTask(p *project.Project, id, agent string) (string, error) {
-	t, err := task.Find(p, id)
+// setEnv sets an environment variable and returns a function that restores it.
+func setEnv(k, v string) func() {
+	old, had := os.LookupEnv(k)
+	os.Setenv(k, v)
+	return func() {
+		if had {
+			os.Setenv(k, old)
+		} else {
+			os.Unsetenv(k)
+		}
+	}
+}
+
+// worktreeChanges lists changed and untracked paths.
+func worktreeChanges(p *project.Project) []string {
+	out, _ := gitx.RunRaw(p.Root, "status", "--porcelain", "-z", "--untracked-files=all")
+	var paths []string
+	toks := strings.Split(string(out), "\x00")
+	for i := 0; i < len(toks); i++ {
+		e := toks[i]
+		if len(e) < 4 {
+			continue
+		}
+		paths = append(paths, e[3:])
+		if e[0] == 'R' || e[0] == 'C' {
+			i++ // the rename's source path follows
+		}
+	}
+	return paths
+}
+
+func firstN(xs []string, n int) []string {
+	if len(xs) > n {
+		return append(xs[:n:n], "…")
+	}
+	return xs
+}
+
+// isAitkState reports whether a path is aitk's own state (tasks, handoffs, knowledge, indexes).
+func isAitkState(path string) bool {
+	return strings.HasPrefix(path, project.DocsAI+"/") || path == "ai-state.json"
+}
+
+// commitWork commits the task's work. The tree was clean when the run started and every task
+// leaves it clean, so the changes belong to this task. Finished work (done or in_review) is one
+// Conventional Commit; unfinished work is set aside with git stash and only aitk's handover
+// record is committed, so a broken attempt never lands in the history or in the next task's commit.
+func (r *runner) commitWork(rt *RunTask) error {
+	p := r.p
+	changed := worktreeChanges(p)
+	if len(changed) == 0 {
+		return nil
+	}
+	t, err := task.Find(p, rt.ID)
 	if err != nil {
-		return "", err
+		return err
 	}
-	if out, _ := gitx.RunRaw(p.Root, "status", "--porcelain"); strings.TrimSpace(string(out)) == "" {
-		return "", nil // the agent committed already
+	var subject string
+	if rt.Status == task.Done || rt.Status == task.InReview {
+		subject = commitSubject(t)
+	} else {
+		var work []string
+		for _, c := range changed {
+			if !isAitkState(c) {
+				work = append(work, c)
+			}
+		}
+		if len(work) > 0 {
+			msg := "aitk run: unfinished work on " + t.ID
+			args := append([]string{"stash", "push", "--include-untracked", "-m", msg, "--"}, work...)
+			if _, err := gitx.RunRaw(p.Root, args...); err != nil {
+				return err
+			}
+			rt.Stash = msg
+		}
+		if len(worktreeChanges(p)) == 0 {
+			return nil
+		}
+		subject = "chore(aitk): hand over " + t.ID
 	}
+	if _, err := gitx.RunRaw(p.Root, "add", "-A"); err != nil {
+		return err
+	}
+	c := exec.Command("git", "commit", "-q", "-m", subject, "-m", "AI-Task: "+t.ID+"\nAI-Tool: "+r.agentName)
+	c.Dir = p.Root
+	if out, err := c.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(checkSummary(string(out))))
+	}
+	out, err := gitx.RunRaw(p.Root, "rev-parse", "--short", "HEAD")
+	rt.Commit = strings.TrimSpace(string(out))
+	return err
+}
+
+func commitSubject(t *task.Task) string {
 	typ := "feat"
 	for _, tag := range t.Tags {
 		switch tag {
@@ -257,21 +453,11 @@ func commitTask(p *project.Project, id, agent string) (string, error) {
 	if typ == "fix" && strings.HasPrefix(strings.ToLower(title), "fix ") {
 		title = strings.TrimSpace(title[4:]) // "Fix x" → "fix: x", not "fix: fix x"
 	}
-	r := []rune(title)
-	if len(r) > 0 {
-		r[0] = unicode.ToLower(r[0])
+	rs := []rune(title)
+	if len(rs) > 0 {
+		rs[0] = unicode.ToLower(rs[0])
 	}
-	subject := textx.Truncate(typ+": "+string(r), 72)
-	if _, err := gitx.RunRaw(p.Root, "add", "-A"); err != nil {
-		return "", err
-	}
-	c := exec.Command("git", "commit", "-q", "-m", subject, "-m", "AI-Task: "+t.ID+"\nAI-Tool: "+agent)
-	c.Dir = p.Root
-	if out, err := c.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("%s", strings.TrimSpace(checkSummary(string(out))))
-	}
-	out, err := gitx.RunRaw(p.Root, "rev-parse", "--short", "HEAD")
-	return strings.TrimSpace(string(out)), err
+	return textx.Truncate(typ+": "+string(rs), 72)
 }
 
 func checkSummary(s string) string {
@@ -310,44 +496,59 @@ type agentRun struct {
 	tail     string // last output, for diagnosing an agent that failed to start
 }
 
-func runAgent(p *project.Project, agent, cmd, prompt, id string, timeout time.Duration, log io.Writer) agentRun {
+func (r *runner) runAgent(prompt, id string) agentRun {
+	p := r.p
 	pf := filepath.Join(p.AitkDir(), "run-prompt.md")
 	if err := fsx.WriteFile(pf, []byte(prompt), 0o600); err != nil {
 		return agentRun{err: err}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
 	var c *exec.Cmd
-	switch {
-	case cmd != "" && runtime.GOOS == "windows":
-		c = exec.CommandContext(ctx, "cmd", "/C", cmd)
-	case cmd != "":
-		c = exec.CommandContext(ctx, "sh", "-c", cmd)
-	default:
-		argv := append(headless[agent](prompt), p.Config.RunSettings().Args...)
+	if r.cmd != "" {
+		c = shellCommand(ctx, r.cmd)
+		c.Stdin = strings.NewReader(prompt)
+	} else {
+		pointer := "Read the file " + pf + " and follow its instructions exactly. It describes the one aitk task to finish in this repository."
+		argv := headless[r.agent](r.args, pointer)
 		c = exec.CommandContext(ctx, argv[0], argv[1:]...)
 	}
+	killTree(c) // a timeout ends the agent and everything it started
 	c.Dir = p.Root
-	c.Env = append(os.Environ(), RunEnv+"=1", "AITK_RUN_TASK="+id, "AITK_RUN_PROMPT_FILE="+pf)
-	if cmd != "" {
-		c.Stdin = strings.NewReader(prompt)
-	}
+	c.Env = append(os.Environ(), RunEnv+"=1", "AITK_TOOL="+r.agentName, "AITK_RUN_TASK="+id, "AITK_RUN_PROMPT_FILE="+pf)
 	tail := &tailBuffer{max: 2000}
-	c.Stdout, c.Stderr = io.MultiWriter(log, tail), io.MultiWriter(log, tail)
+	c.Stdout, c.Stderr = io.MultiWriter(r.log, tail), io.MultiWriter(r.log, tail)
 	c.WaitDelay = 10 * time.Second
 	start := time.Now()
 	err := c.Run()
-	r := agentRun{duration: time.Since(start), tail: strings.TrimSpace(string(tail.b))}
+	res := agentRun{duration: time.Since(start), tail: strings.TrimSpace(string(tail.b))}
 	var ee *exec.ExitError
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		r.code, r.err = 124, fmt.Errorf("agent timed out after %s", timeout)
+		res.code, res.err = 124, fmt.Errorf("agent timed out after %s", r.timeout)
 	case errors.As(err, &ee):
-		r.code = ee.ExitCode()
+		res.code = ee.ExitCode()
 	default:
-		r.err = err
+		res.err = err
 	}
-	return r
+	return res
+}
+
+// runLock allows one aitk run per worktree.
+func runLock(p *project.Project) (func(), error) {
+	path := filepath.Join(p.AitkDir(), "run.lock")
+	if b, err := os.ReadFile(path); err == nil {
+		var pid int
+		fmt.Sscan(string(b), &pid)
+		if pid > 0 && pid != os.Getpid() && processAlive(pid) {
+			return nil, apperr.New("E_LOCKED", apperr.ExitConflict, "wait for it to finish, or use another worktree (aitk work <id>)",
+				"another aitk run is working in this worktree (pid %d)", pid)
+		}
+	}
+	if err := fsx.WriteFile(path, []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
+		return nil, err
+	}
+	return func() { os.Remove(path) }, nil
 }
 
 // tailBuffer keeps the last max bytes written to it.

@@ -123,7 +123,7 @@ The profile is computed from the diff between the merge base with `default_branc
 | `check.cmd` configured → latest check passed on the current tree | ✔ | ✔ | ✔ |
 | Every acceptance criterion written on the task is checked | ✔ | ✔ | ✔ |
 | At least one acceptance criterion exists | | ✔ | ✔ |
-| Task tagged `bug` or `fix` → a test file is among the changed paths (`quality.regression_tests`, default true) | ✔ | ✔ | ✔ |
+| Task tagged `bug` → a test file changed in the commits since the task was created or in uncommitted changes; recorded as `evidence.regression_tests` (`quality.regression_tests`, default true) | ✔ | ✔ | ✔ |
 | Risk section filled (no placeholder text) | | | ✔ |
 | OWASP ASVS 4.0.3 checklist present and every item verified or marked N/A (`security.asvs_level` ≥ 1, default 1) | | | ✔ |
 | Security audit passed on the current tree (`security.audit`: `strict` by default, `all`, or `off`) | `all` | `all` | ✔ |
@@ -187,7 +187,7 @@ aitk restrains agents where prompts alone do not:
 | Independent review | Review passes count as independent only when made by a tool outside `workers` (tools that started or closed the task), the creator, and the closing tool. |
 | Large changes | `close` warns above 40 files or 2,000 changed lines. |
 | Regression tests | A bug fix cannot be done without a changed test file (§5). |
-| Autonomous runs | `aitk run` never sets a status to done; it hands unfinished tasks over as `blocked` after `run.max_attempts`, stops after two unfinished tasks in a row, refuses to start inside an agent it started (`E_RUN_NESTED`), and leaves user acceptance to a person. |
+| Autonomous runs | `aitk run` never sets a status to done. It accepts `done`/`in_review` only with a handoff from `close` written during the attempt, the Definition of Done holding on the current files, and the check passing when aitk runs it; otherwise the task is reopened. It hands unfinished tasks over as `blocked` after `run.max_attempts`, stops after two unfinished tasks in a row, kills the agent's process tree on timeout, runs once per worktree (`E_LOCKED`), refuses nesting (`E_RUN_NESTED`), and its agents cannot accept UAT. |
 
 ## 11. Self-healing
 

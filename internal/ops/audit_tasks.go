@@ -1,6 +1,8 @@
 package ops
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -32,16 +34,16 @@ func AuditTasks(p *project.Project, r *AuditResult) (*AuditTasksResult, error) {
 			continue
 		}
 		if strings.HasPrefix(res.Name, "osv-scanner") {
+			// The audit's own output is a table; a JSON rescan gives one task per package. When that
+			// fails or finds nothing, fall back to one task for the scanner's findings.
 			if _, err := exec.LookPath("osv-scanner"); err == nil {
-				pkgs, err := audit.OSVPackages(p.Root)
-				if err != nil {
-					return nil, err
+				if pkgs, err := audit.OSVPackages(p.Root); err == nil && len(pkgs) > 0 {
+					for _, v := range pkgs {
+						ids = append(ids, auditID("VULN", v.Ecosystem+"-"+v.Name))
+						items = append(items, vulnTask(v))
+					}
+					continue
 				}
-				for _, v := range pkgs {
-					ids = append(ids, auditID("VULN", v.Ecosystem+"-"+v.Name))
-					items = append(items, vulnTask(v))
-				}
-				continue
 			}
 		}
 		ids = append(ids, auditID("AUDIT", res.Name))
@@ -49,7 +51,7 @@ func AuditTasks(p *project.Project, r *AuditResult) (*AuditTasksResult, error) {
 			Title:     textx.Truncate("Fix the findings of "+res.Name, 120),
 			Objective: "The security audit failed in " + res.Name + ". Fix every finding (or record why one is a false positive), then run aitk audit.\n\n```\n" + textx.Truncate(res.Summary, 1500) + "\n```",
 			Criteria:  []string{"Given the fix, when aitk audit runs, then " + res.Name + " passes"},
-			Tags:      []string{"security", "bug"},
+			Tags:      []string{"security"},
 		})
 	}
 	tasks, _ := task.List(p)
@@ -62,7 +64,7 @@ func AuditTasks(p *project.Project, r *AuditResult) (*AuditTasksResult, error) {
 		seen[strings.ToLower(id)] = true
 		open, n := false, 0
 		for _, t := range tasks {
-			if strings.EqualFold(t.ID, id) || strings.HasPrefix(strings.ToLower(t.ID), strings.ToLower(id)+"-") {
+			if sameFinding(t.ID, id) {
 				n++
 				if t.Status != task.Done && t.Status != task.Cancelled {
 					open = true
@@ -92,12 +94,34 @@ func AuditTasks(p *project.Project, r *AuditResult) (*AuditTasksResult, error) {
 	return out, nil
 }
 
+// auditID is a stable task ID for a finding. Names that do not fit are truncated and given a
+// short hash of the full name, so "log4j-core" and "log4j-api" never share an ID. 28 characters
+// leave room for a "-NN" suffix when a fixed finding comes back.
 func auditID(prefix, name string) string {
 	s := strings.Trim(nonID.ReplaceAllString(name, "-"), "-")
-	if max := 32 - len(prefix) - 4; len(s) > max { // room for "-" and a "-NN" suffix
-		s = strings.TrimRight(s[:max], "-")
+	if len(prefix)+1+len(s) <= 28 {
+		return prefix + "-" + s
 	}
-	return prefix + "-" + s
+	sum := sha256.Sum256([]byte(name))
+	keep := 28 - len(prefix) - 1 - 5
+	return prefix + "-" + strings.TrimRight(s[:keep], "-") + "-" + hex.EncodeToString(sum[:])[:4]
+}
+
+// sameFinding: id, or id with a "-N" recurrence suffix.
+func sameFinding(taskID, id string) bool {
+	if strings.EqualFold(taskID, id) {
+		return true
+	}
+	rest, ok := strings.CutPrefix(strings.ToLower(taskID), strings.ToLower(id)+"-")
+	if !ok || rest == "" {
+		return false
+	}
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func vulnTask(v audit.VulnPackage) NewTaskInput {

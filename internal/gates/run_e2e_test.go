@@ -2,11 +2,13 @@ package gates_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 type runOut struct {
@@ -21,6 +23,7 @@ type runOut struct {
 			Attempts int    `json:"attempts"`
 			Handoff  string `json:"handoff"`
 			Commit   string `json:"commit"`
+			Stash    string `json:"stash"`
 			Note     string `json:"note"`
 		} `json:"tasks"`
 		Stopped string `json:"stopped"`
@@ -141,5 +144,91 @@ func TestRunStopsWhenTheAgentCannotStart(t *testing.T) {
 	r = aitkRun(t, dir, "--cmd", goodAgent, "--max-tasks", "1")
 	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].ID != x.ID || r.Data.Tasks[0].Status != "done" {
 		t.Fatalf("the interrupted task must be resumed first: %+v", r)
+	}
+}
+
+// Review A #1: a status edited by hand is not done.
+func TestRunRejectsForgedDone(t *testing.T) {
+	dir := runProject(t)
+	forge := `f=$(ls docs/ai/tasks/*.md | xargs grep -l "$AITK_RUN_TASK" | head -1); sed -i.bak 's/^status: in_progress/status: done/' "$f"; rm -f "$f.bak"; touch ok.txt`
+	r := aitkRun(t, dir, "--cmd", forge, "--max-tasks", "1", "--commit")
+	if r.Error != nil {
+		t.Fatalf("run failed: %+v", r)
+	}
+	x := r.Data.Tasks[0]
+	if x.Status != "blocked" || !strings.Contains(x.Note, "without passing aitk close") || x.Attempts != 2 {
+		t.Fatalf("a forged done must be reopened and handed over: %+v", x)
+	}
+	if log := must(t, dir, "git", "log", "--format=%s", "-1"); strings.HasPrefix(log, "feat:") {
+		t.Fatalf("forged work must not be committed as a feature: %s", log)
+	}
+	// A run agent cannot accept UAT for a person either.
+	out, err := sh(t, dir, "sh", "-c", "AITK_RUN=1 AITK_TOOL= "+bin+" uat accept "+x.ID)
+	if err == nil || !strings.Contains(out, "E_UAT_AGENT") {
+		t.Fatalf("uat accept must refuse an agent started by aitk run:\n%s", out)
+	}
+}
+
+// Review A #2: --commit needs a clean tree, and unfinished work never reaches a commit.
+func TestRunCommitHoldsOnlyTheTasksWork(t *testing.T) {
+	dir := runProject(t)
+	write(t, dir, "local-notes.txt", "DB_PASSWORD=hunter2\n")
+	r := aitkRun(t, dir, "--cmd", goodAgent, "--commit")
+	if r.Error == nil || r.Error.Code != "E_RUN_DIRTY" {
+		t.Fatalf("--commit must refuse a dirty tree: %+v", r)
+	}
+	os.Remove(filepath.Join(dir, "local-notes.txt"))
+	// First task: the agent leaves partial work and gives up; second task: done.
+	mark := filepath.Join(t.TempDir(), "first.done") // outside the repository: stashing must not reset it
+	agent := "if [ ! -f " + mark + " ]; then touch " + mark + " partial.txt; aitk close --status blocked --summary \"cannot finish\" --knowledge none; else\n" + goodAgent + "fi\n"
+	r = aitkRun(t, dir, "--cmd", agent, "--commit")
+	if len(r.Data.Tasks) != 2 || r.Data.Tasks[0].Status != "blocked" || r.Data.Tasks[0].Stash == "" || r.Data.Tasks[1].Status != "done" {
+		t.Fatalf("unexpected run: %+v", r)
+	}
+	files := must(t, dir, "git", "show", "--name-only", "--format=", "HEAD")
+	if strings.Contains(files, "partial.txt") {
+		t.Fatalf("the second task's commit holds the first task's leftovers:\n%s", files)
+	}
+	if stash := must(t, dir, "git", "stash", "list"); !strings.Contains(stash, "unfinished work on") {
+		t.Fatalf("unfinished work must be stashed, not lost:\n%s", stash)
+	}
+	if st := strings.TrimSpace(must(t, dir, "git", "status", "--porcelain")); st != "" {
+		t.Fatalf("the run must leave a clean tree:\n%s", st)
+	}
+}
+
+// Review A #3: a timeout ends everything the agent started.
+func TestRunTimeoutKillsTheAgentsChildren(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for a one-minute timeout")
+	}
+	dir := runProject(t)
+	agent := `(sleep 66; touch late.txt) & sleep 300`
+	start := time.Now()
+	r := aitkRun(t, dir, "--cmd", agent, "--timeout", "1", "--max-attempts", "1", "--max-tasks", "1")
+	_ = r
+	if time.Since(start) > 100*time.Second {
+		t.Fatal("the run waited for the agent beyond its timeout")
+	}
+	time.Sleep(time.Until(start.Add(70 * time.Second)))
+	if _, err := os.Stat(filepath.Join(dir, "late.txt")); err == nil {
+		t.Fatal("a child of the timed-out agent kept running and wrote into the repository")
+	}
+}
+
+// Review A #7: one run per worktree.
+func TestRunLock(t *testing.T) {
+	dir := runProject(t)
+	agent := bin + ` --json run --cmd true > second-run.json; ` + goodAgent
+	aitkRun(t, dir, "--cmd", agent, "--max-tasks", "1")
+	b, _ := os.ReadFile(filepath.Join(dir, "second-run.json"))
+	if !strings.Contains(string(b), "E_RUN_NESTED") && !strings.Contains(string(b), "E_LOCKED") {
+		t.Fatalf("a second run in the same worktree must be refused:\n%s", b)
+	}
+	gitDir := strings.TrimSpace(must(t, dir, "git", "rev-parse", "--absolute-git-dir"))
+	os.MkdirAll(filepath.Join(gitDir, "aitk"), 0o755)
+	os.WriteFile(filepath.Join(gitDir, "aitk", "run.lock"), []byte(fmt.Sprint(os.Getpid())), 0o600)
+	if r := aitkRun(t, dir, "--cmd", goodAgent); r.Error == nil || r.Error.Code != "E_LOCKED" {
+		t.Fatalf("a live run lock must refuse a second run: %+v", r)
 	}
 }

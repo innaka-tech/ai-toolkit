@@ -49,7 +49,7 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `aitk task block <id> --reason "<text>"` | Status → `blocked`. |
 | `aitk check` | Run `check.cmd` with `check.timeout`; record evidence on the active task. Exit 1 if the command fails. |
 | `aitk close --summary "<text>" --knowledge "<text>\|none" [--next "<step>"]... [--status S]` | Apply the Definition of Done, write evidence, handoff, and knowledge. |
-| `aitk run [--agent A \| --cmd C] [--max-tasks N] [--max-attempts N] [--timeout MIN] [--goal G] [--tag T] [--commit] [--dry-run]` | Autonomous loop: for each ready task (as `task next`), start it and run a headless agent with the brief and rules (`$AITK_RUN_TASK`, `$AITK_RUN_PROMPT_FILE`, `AITK_RUN=1`). Never changes a task to done itself: the agent's `close` must pass the Definition of Done. Afterwards `done`/`in_review`/`blocked` move on; anything else after `--max-attempts` is closed as `blocked` with a handoff. Stops when nothing is ready, after `--max-tasks`, or after two unfinished tasks in a row. Defaults from `[run]`. |
+| `aitk run [--agent A \| --cmd C] [--max-tasks N] [--max-attempts N] [--timeout MIN] [--goal G] [--tag T] [--commit] [--dry-run]` | Autonomous loop: for each ready task (as `task next`), start it and run a headless agent with the brief and rules (`$AITK_RUN_TASK`, `$AITK_RUN_PROMPT_FILE`, `AITK_RUN=1`). Never changes a task to done itself: the agent's `close` must pass the Definition of Done, and aitk verifies it (handoff, DoD on current files, check rerun) or reopens the task. Afterwards `done`/`in_review`/`blocked` move on; anything else after `--max-attempts` is closed as `blocked` with a handoff. Stops when nothing is ready, after `--max-tasks`, after two unfinished tasks in a row, or when the agent cannot start. `--commit` needs a clean tree (`E_RUN_DIRTY`), commits finished work per task, and stashes unfinished work. One run per worktree (`E_LOCKED`). Defaults from `[run]`. |
 | `aitk impact` | For each changed source file: files referencing it (by file name, and by Go import path) and the tests covering it (referencing tests, tests of the same unit, tests changed with it); `untested` lists changed files without any. Heuristic, not a call graph. |
 | `aitk review start\|pass --findings N\|done` | Record bug-hunt passes for strict tasks. |
 | `aitk switch <tool> [--note "…"] [--print]` | Write a handoff (`outcome: switched`, `to: <tool>`) and a prompt file containing the brief; on a terminal start the tool with it (`claude`, `codex`, `gemini -i`, `opencode --prompt`), otherwise or with `--print` print how to. Unknown tools get the prompt file only, never a guessed command. |
@@ -125,7 +125,8 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `E_DOD_CHECK_STALE` | 3 | No passing check for the current tree | `aitk check` |
 | `E_DOD_ACCEPTANCE` | 3 | Criteria missing or unchecked | `aitk task update <id> --ac-done N` |
 | `E_DOD_RISK` | 3 | Strict task without risk analysis | edit the Risk section |
-| `E_DOD_REGRESSION_TEST` | 3 | Task tagged `bug`/`fix` changes no test file (`quality.regression_tests`) | add a regression test |
+| `E_DOD_REGRESSION_TEST` | 3 | Task tagged `bug` changed no test file (`quality.regression_tests`) | add a regression test |
+| `E_RUN_DIRTY` | 3 | `aitk run --commit` with uncommitted changes | commit or stash first |
 | `E_RUN_NESTED` | 3 | `aitk run` started by an agent that `aitk run` started | finish the task with `aitk close` |
 | `E_INSTALL` | 1 | `aitk audit install` could not install osv-scanner | install it manually |
 | `E_SCHEMA` | 3 | A file fails its JSON Schema | `aitk doctor --fix` |

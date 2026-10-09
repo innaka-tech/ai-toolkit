@@ -20,6 +20,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/compat"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/conv"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/knowledge"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/plugins"
@@ -601,13 +602,6 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			return err
 		}
 		res.Handoff, res.Status = h.File, target
-		if target == task.Done {
-			if ok, err := syncSource(p, t); ok {
-				res.Notes = append(res.Notes, "checked off in "+fmt.Sprint(t.Legacy["file"]))
-			} else if err != nil {
-				res.Notes = append(res.Notes, "could not check off the source item: "+err.Error())
-			}
-		}
 		if entry != nil {
 			if err := knowledge.Add(p, *entry); err != nil {
 				return err
@@ -630,6 +624,14 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 		}
 		if len(changes) > 40 || total > 2000 {
 			res.Notes = append(res.Notes, fmt.Sprintf("large change (%d files, %d lines): smaller tasks are easier to review and safer to revert", len(changes), total))
+		}
+		// Last, after aitk's own records: the plan file of an imported task.
+		if target == task.Done {
+			if ok, err := syncSource(p, t); ok {
+				res.Notes = append(res.Notes, "checked off in "+fmt.Sprint(t.Legacy["file"]))
+			} else if err != nil {
+				res.Notes = append(res.Notes, "could not check off the source item: "+err.Error())
+			}
 		}
 		if target == task.InReview {
 			if prof == "strict" && !reviewDone(t) {
@@ -688,7 +690,7 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 	if len(open) > 0 {
 		return "", apperr.New("E_DOD_ACCEPTANCE", apperr.ExitGate, fmt.Sprintf("aitk task update %s --ac-done %s", t.ID, strings.Join(open, ",")), "acceptance criteria not yet satisfied: %s", strings.Join(open, ", "))
 	}
-	if p.Config.RegressionTestsRequired() && IsBugTask(t) && !touchesTests(p, t) {
+	if p.Config.RegressionTestsRequired() && IsBugTask(t) && !regressionTested(p, t) {
 		return "", apperr.New("E_DOD_REGRESSION_TEST", apperr.ExitGate,
 			"add a test that fails without the fix and passes with it, then run: aitk check (or remove the bug tag if this is not a bug fix)",
 			"bug fix %s changes no test file: add a regression test so the bug cannot come back unnoticed", t.ID)
@@ -812,26 +814,50 @@ func mergeUnique(a, b []string) []string {
 	return out
 }
 
-// IsBugTask reports whether t is a bug fix (tagged bug or fix).
+// IsBugTask reports whether t is a bug fix (tagged bug).
 func IsBugTask(t *task.Task) bool {
-	return contains(t.Tags, "bug") || contains(t.Tags, "fix")
+	return contains(t.Tags, "bug")
 }
 
-// touchesTests reports whether the task's changes include a test file.
-func touchesTests(p *project.Project, t *task.Task) bool {
-	paths := append([]string{}, t.Paths...)
-	for _, c := range profile.Diff(p) {
-		paths = append(paths, c.Path)
+// regressionTested reports whether the task's own changes include a test file: the commits made
+// since the task was created plus uncommitted changes (not the whole branch, so another task's
+// tests do not count). The first match is recorded as evidence, so a later UAT acceptance, after
+// the work is committed or merged, still sees it.
+func regressionTested(p *project.Project, t *task.Task) bool {
+	if t.Evidence != nil && len(t.Evidence.RegressionTests) > 0 {
+		return true
 	}
-	for _, path := range paths {
-		if IsTestPath(path) {
-			return true
+	var tests []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if IsTestPath(path) && !seen[path] {
+			seen[path] = true
+			tests = append(tests, path)
 		}
 	}
-	return false
+	for _, c := range profile.Commits(p, t.Created) {
+		out, _ := gitx.RunRaw(p.Root, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root", c)
+		for _, f := range strings.Split(string(out), "\x00") {
+			if f != "" {
+				add(f)
+			}
+		}
+	}
+	for _, f := range worktreeChanges(p) {
+		add(f)
+	}
+	if len(tests) == 0 {
+		return false
+	}
+	if t.Evidence == nil {
+		t.Evidence = &task.Evidence{}
+	}
+	sort.Strings(tests)
+	t.Evidence.RegressionTests = firstN(tests, 10)
+	return true
 }
 
-var testFile = regexp.MustCompile(`((?i:_test\.[a-z0-9]+|\.(test|spec)\.[a-z0-9]+|_spec\.rb)|^test_[^/]+\.py|[a-z0-9](Test|Tests|Spec)\.(java|kt|cs|php|swift|scala|groovy))$`)
+var testFile = regexp.MustCompile(`((?i:_test\.[a-z0-9]+|\.(test|spec)\.(js|jsx|ts|tsx|mjs|cjs|vue|svelte|py|rb|php|go|java|kt|cs|swift|dart|ex|exs|rs|c|cc|cpp|scala|sh|lua)|_spec\.rb|_tests?\.exs?)|^tests?\.py|^test_[^/]+\.py|^conftest\.py|[A-Za-z0-9](Test|Tests|Spec|IT)\.(java|kt|cs|php|swift|scala|groovy))$`)
 
 // IsTestPath reports whether a repository path is a test file, by common naming conventions.
 func IsTestPath(path string) bool {
@@ -839,7 +865,7 @@ func IsTestPath(path string) bool {
 	parts := strings.Split(path, "/")
 	for _, d := range parts[:len(parts)-1] {
 		switch strings.ToLower(d) {
-		case "test", "tests", "__tests__", "spec", "e2e", "testing", "integration-tests":
+		case "test", "tests", "__tests__", "spec", "e2e", "testing", "testdata", "integration-tests":
 			return true
 		}
 	}

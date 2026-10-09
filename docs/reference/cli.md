@@ -426,7 +426,7 @@ aitk run [flags]
 ```
       --agent string       claude-code, codex, opencode, or gemini-cli (default: [run] agent)
       --cmd string         custom agent command, run through the shell
-      --commit             commit each finished task (one Conventional Commit per task)
+      --commit             one commit per task: finished work as a Conventional Commit, unfinished work stashed (needs a clean tree; default: [run] commit)
       --dry-run            show the order without running anything
       --goal string        only tasks of this goal
       --max-attempts int   agent runs per task before handing it over as blocked (default 2)

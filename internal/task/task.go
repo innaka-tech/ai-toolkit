@@ -97,6 +97,8 @@ type Evidence struct {
 	CheckFailures int         `yaml:"check_failures,omitempty" json:"check_failures,omitempty"`
 	UAT           *UAT        `yaml:"uat,omitempty" json:"uat,omitempty"`
 	Audit         *Audit      `yaml:"audit,omitempty" json:"audit,omitempty"`
+	// RegressionTests: test files changed with a bug fix, recorded when the gate first passes.
+	RegressionTests []string `yaml:"regression_tests,omitempty" json:"regression_tests,omitempty"`
 }
 
 // Meta is the frontmatter (schemas/task.schema.json).

@@ -152,6 +152,9 @@ func AgentInEnv() string {
 	if t := os.Getenv("AITK_TOOL"); t != "" && t != "human" {
 		return t
 	}
+	if os.Getenv(RunEnv) != "" { // started by aitk run, whatever the tool
+		return "aitk-run-agent"
+	}
 	return ""
 }
 

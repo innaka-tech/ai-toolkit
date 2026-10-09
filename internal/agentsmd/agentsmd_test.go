@@ -34,6 +34,12 @@ func TestApplyKeepsUserTextAndReplacesOldBlocks(t *testing.T) {
 		t.Fatal("Apply is not idempotent")
 	}
 	old := user + "\n" + Begin + "\nold steps\n" + End + "\ntail\n"
+	if Inspect(old) != Edited || Inspect(user+previous[0]+"\n") != Outdated {
+		t.Fatal("hand-edited and older-release blocks must be told apart")
+	}
+	if Inspect(strings.ReplaceAll(got, "\n", "\r\n")) != Current {
+		t.Fatal("a CRLF checkout of the current block is current")
+	}
 	if got := Apply(old); !strings.Contains(got, "tail") || strings.Contains(got, "old steps") || Inspect(got) != Current {
 		t.Fatalf("outdated block not replaced in place:\n%s", got)
 	}

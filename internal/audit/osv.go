@@ -48,6 +48,7 @@ type osvOutput struct {
 						Ecosystem string `json:"ecosystem"`
 					} `json:"package"`
 					Ranges []struct {
+						Type   string `json:"type"`
 						Events []struct {
 							Fixed string `json:"fixed"`
 						} `json:"events"`
@@ -136,10 +137,13 @@ func ParseOSV(out []byte) ([]VulnPackage, error) {
 				// The fix for this advisory: its lowest fixed version above the installed one.
 				fix := ""
 				for _, a := range v.Affected {
-					if a.Package.Name != pk.Package.Name {
+					if a.Package.Name != pk.Package.Name || a.Package.Ecosystem != "" && !strings.EqualFold(a.Package.Ecosystem, pk.Package.Ecosystem) {
 						continue
 					}
 					for _, rg := range a.Ranges {
+						if strings.EqualFold(rg.Type, "GIT") {
+							continue // commit hashes, not versions
+						}
 						for _, e := range rg.Events {
 							if e.Fixed != "" && CompareVersions(e.Fixed, pk.Package.Version) > 0 && (fix == "" || CompareVersions(e.Fixed, fix) < 0) {
 								fix = e.Fixed
@@ -167,8 +171,9 @@ func ParseOSV(out []byte) ([]VulnPackage, error) {
 	return out2, nil
 }
 
-// CompareVersions compares dotted versions numerically segment by segment ("1.10.0" > "1.9.2").
-// Pre-release suffixes compare as text after the numbers. "" is lower than any version.
+// CompareVersions orders package versions across the common schemes: SemVer (build metadata
+// ignored, pre-releases before the release), PEP 440 ("2.0.0rc1" < "2.0.0", "1.10a1" > "1.9"),
+// and Maven qualifiers (".Final" equals the release). "" is lower than any version.
 func CompareVersions(a, b string) int {
 	if a == b {
 		return 0
@@ -179,52 +184,131 @@ func CompareVersions(a, b string) int {
 		}
 		return 1
 	}
-	pa, pb := splitVersion(a), splitVersion(b)
-	for i := 0; i < len(pa) || i < len(pb); i++ {
-		var x, y string
-		if i < len(pa) {
-			x = pa[i]
+	ta, tb := versionTokens(a), versionTokens(b)
+	for i := 0; ; i++ {
+		switch {
+		case i >= len(ta) && i >= len(tb):
+			return 0
+		case i >= len(ta):
+			return -tail(tb[i:])
+		case i >= len(tb):
+			return tail(ta[i:])
 		}
-		if i < len(pb) {
-			y = pb[i]
-		}
+		x, y := ta[i], tb[i]
 		nx, ex := strconv.Atoi(x)
 		ny, ey := strconv.Atoi(y)
 		switch {
 		case ex == nil && ey == nil:
 			if nx != ny {
-				if nx < ny {
-					return -1
-				}
-				return 1
+				return sign(nx - ny)
 			}
-		case x == "" || y == "":
-			// "1.2" vs "1.2.0-rc": the shorter numeric version wins only against a pre-release
-			if x == "" {
-				if ey != nil {
-					return 1
-				}
-				return -1
-			}
-			if ex != nil {
-				return -1
-			}
+		case ex == nil: // number > qualifier: 1.0.1 > 1.0.rc1
 			return 1
+		case ey == nil:
+			return -1
 		default:
-			if x != y {
-				if x < y {
-					return -1
-				}
-				return 1
+			if rx, ry := qualifierRank(x), qualifierRank(y); rx != ry {
+				return sign(rx - ry)
 			}
+			if x != y {
+				return strings.Compare(x, y)
+			}
+		}
+	}
+}
+
+// tail compares the rest of the longer version with nothing: zeros do not count (1.2 == 1.2.0).
+func tail(rest []string) int {
+	for _, t := range rest {
+		if t != "0" {
+			return tailSign(t)
 		}
 	}
 	return 0
 }
 
-func splitVersion(v string) []string {
-	v = strings.TrimPrefix(strings.TrimPrefix(v, "v"), "V")
-	return strings.FieldsFunc(v, func(r rune) bool { return r == '.' || r == '-' || r == '+' || r == '_' })
+// tailSign: how the longer version compares when the other one has run out at token t.
+// "1.2.1" > "1.2"; "1.2rc1" < "1.2"; "1.2.post1" > "1.2".
+func tailSign(t string) int {
+	if _, err := strconv.Atoi(t); err == nil {
+		return 1
+	}
+	if qualifierRank(t) > qualifierRank("") {
+		return 1
+	}
+	return -1
+}
+
+func qualifierRank(q string) int {
+	switch q {
+	case "dev", "snapshot":
+		return 0
+	case "a", "alpha":
+		return 1
+	case "b", "beta":
+		return 2
+	case "m", "milestone":
+		return 3
+	case "pre", "preview", "c", "rc", "cr":
+		return 4
+	case "": // the release itself
+		return 5
+	case "post", "p", "sp", "patch":
+		return 6
+	}
+	return 4 // unknown qualifiers count as pre-releases
+}
+
+func sign(n int) int {
+	switch {
+	case n < 0:
+		return -1
+	case n > 0:
+		return 1
+	}
+	return 0
+}
+
+// versionTokens splits a version into numbers and words, dropping separators, a leading "v",
+// build metadata, and qualifiers that mean "the release" (final, ga, release).
+func versionTokens(v string) []string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.IndexByte(v, '+'); i >= 0 {
+		v = v[:i]
+	}
+	var out []string
+	cur, digit := "", false
+	flush := func() {
+		if cur != "" {
+			out = append(out, cur)
+		}
+		cur = ""
+	}
+	for _, r := range v {
+		isDigit := r >= '0' && r <= '9'
+		isAlpha := r >= 'a' && r <= 'z'
+		switch {
+		case !isDigit && !isAlpha:
+			flush()
+		case cur != "" && isDigit != digit:
+			flush()
+			cur, digit = string(r), isDigit
+		default:
+			cur += string(r)
+			digit = isDigit
+		}
+	}
+	flush()
+	for len(out) > 0 {
+		switch out[len(out)-1] {
+		case "final", "ga", "release":
+			out = out[:len(out)-1]
+			continue
+		}
+		break
+	}
+	return out
 }
 
 func has(xs []string, s string) bool {

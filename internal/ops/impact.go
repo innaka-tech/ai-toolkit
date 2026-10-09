@@ -43,38 +43,69 @@ func Impact(p *project.Project) *ImpactResult {
 	res := &ImpactResult{Files: []ImpactFile{}, TestsChanged: []string{}, Untested: []string{}}
 	changes := profile.Diff(p)
 	changedTests := map[string]bool{}
+	type src struct {
+		path, ext, dir, stem, imp string
+		lines                     int
+	}
+	var sources []src
+	goModule := goModulePath(p)
 	for _, c := range changes {
 		if IsTestPath(c.Path) {
 			res.TestsChanged = append(res.TestsChanged, c.Path)
 			changedTests[c.Path] = true
-		}
-	}
-	tracked := trackedFiles(p)
-	goModule := goModulePath(p)
-	for _, c := range changes {
-		ext := strings.ToLower(path.Ext(c.Path))
-		if !codeExt[ext] || IsTestPath(c.Path) || strings.HasPrefix(c.Path, "docs/") {
 			continue
 		}
-		f := ImpactFile{Path: c.Path, Lines: c.Lines, ReferencedBy: []string{}, Tests: []string{}}
-		refs := map[string]bool{}
-		stem := strings.TrimSuffix(path.Base(c.Path), path.Ext(c.Path))
-		if len(stem) >= 4 && !genericStems[strings.ToLower(stem)] {
-			for _, r := range grepFiles(p, "-w", stem) {
-				refs[r] = true
-			}
+		ext := strings.ToLower(path.Ext(c.Path))
+		if !codeExt[ext] || strings.HasPrefix(c.Path, "docs/") {
+			continue
 		}
-		dir := path.Dir(c.Path)
+		if _, err := os.Stat(p.Path(c.Path)); err != nil {
+			continue // deleted: nothing left to cover
+		}
+		s := src{path: c.Path, ext: ext, dir: path.Dir(c.Path), stem: strings.TrimSuffix(path.Base(c.Path), path.Ext(c.Path)), lines: c.Lines}
 		if ext == ".go" && goModule != "" {
-			imp := goModule
-			if dir != "." {
-				imp += "/" + dir
+			s.imp = goModule
+			if s.dir != "." {
+				s.imp += "/" + s.dir
 			}
-			for _, r := range grepFiles(p, "", `"`+imp+`"`) {
+		}
+		sources = append(sources, s)
+		if len(sources) == maxImpactFiles {
+			break
+		}
+	}
+	// Two searches for the whole change: file names as words, and Go import paths.
+	var stems, imports []string
+	for _, s := range sources {
+		if len(s.stem) >= 4 && !genericStems[strings.ToLower(s.stem)] {
+			stems = append(stems, s.stem)
+		}
+		if s.imp != "" {
+			imports = append(imports, `"`+s.imp+`"`)
+		}
+	}
+	byStem := grepMatches(p, true, stems)
+	byImport := grepMatches(p, false, imports)
+	tracked := trackedFiles(p)
+	for _, s := range sources {
+		f := ImpactFile{Path: s.path, Lines: s.lines, ReferencedBy: []string{}, Tests: []string{}}
+		refs := map[string]bool{}
+		if len(s.stem) >= 4 && !genericStems[strings.ToLower(s.stem)] {
+			for _, r := range byStem[s.stem] {
 				refs[r] = true
 			}
 		}
-		delete(refs, c.Path)
+		if s.imp != "" {
+			for _, r := range byImport[`"`+s.imp+`"`] {
+				refs[r] = true
+			}
+		}
+		delete(refs, s.path)
+		for r := range refs {
+			if !codeExt[strings.ToLower(path.Ext(r))] {
+				delete(refs, r) // docs that mention a file do not depend on it
+			}
+		}
 		tests := map[string]bool{}
 		for r := range refs {
 			if IsTestPath(r) {
@@ -82,12 +113,12 @@ func Impact(p *project.Project) *ImpactResult {
 			}
 		}
 		for _, t := range tracked {
-			if IsTestPath(t) && path.Dir(t) == dir && path.Ext(t) == ext && sameUnit(t, c.Path, ext) {
+			if IsTestPath(t) && path.Dir(t) == s.dir && path.Ext(t) == s.ext && sameUnit(t, s.path, s.ext) {
 				tests[t] = true
 			}
 		}
 		for t := range changedTests {
-			if path.Dir(t) == dir || strings.Contains(t, stem) {
+			if path.Dir(t) == s.dir || len(s.stem) >= 4 && strings.Contains(path.Base(t), s.stem) {
 				tests[t] = true
 			}
 		}
@@ -104,12 +135,15 @@ func Impact(p *project.Project) *ImpactResult {
 		}
 		sort.Strings(f.Tests)
 		if len(f.Tests) == 0 {
-			res.Untested = append(res.Untested, c.Path)
+			res.Untested = append(res.Untested, s.path)
 		}
 		res.Files = append(res.Files, f)
 	}
 	return res
 }
+
+// maxImpactFiles bounds the work on very large changes.
+const maxImpactFiles = 300
 
 // sameUnit: in Go every _test.go file of the package covers it; elsewhere the test is named after the file.
 func sameUnit(test, file, ext string) bool {
@@ -120,24 +154,36 @@ func sameUnit(test, file, ext string) bool {
 	return strings.Contains(strings.ToLower(path.Base(test)), strings.ToLower(stem))
 }
 
-func grepFiles(p *project.Project, flag, pattern string) []string {
-	args := []string{"grep", "--untracked", "-l", "-z", "-I", "-F"}
-	if flag != "" {
-		args = append(args, flag)
+// grepMatches searches tracked and untracked files once for all patterns and returns, per
+// pattern, the files containing it. Paths are relative to the repository root.
+func grepMatches(p *project.Project, words bool, patterns []string) map[string][]string {
+	found := map[string][]string{}
+	if len(patterns) == 0 {
+		return found
 	}
-	args = append(args, "-e", pattern, "--", ".", ":(exclude)docs/ai", ":(exclude)vendor", ":(exclude)node_modules")
+	args := []string{"grep", "--untracked", "--full-name", "-I", "-F", "-o", "-z"}
+	if words {
+		args = append(args, "-w")
+	}
+	for _, pt := range patterns {
+		args = append(args, "-e", pt)
+	}
+	args = append(args, "--", ".", ":(exclude)docs/ai", ":(exclude)vendor", ":(exclude)node_modules")
 	out, _ := gitx.RunRaw(p.Root, args...)
-	var files []string
-	for _, f := range strings.Split(string(out), "\x00") {
-		if f != "" {
-			files = append(files, f)
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		file, match, ok := strings.Cut(line, "\x00")
+		if !ok || seen[file+"\x00"+match] {
+			continue
 		}
+		seen[file+"\x00"+match] = true
+		found[match] = append(found[match], file)
 	}
-	return files
+	return found
 }
 
 func trackedFiles(p *project.Project) []string {
-	out, _ := gitx.RunRaw(p.Root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	out, _ := gitx.RunRaw(p.Root, "ls-files", "-z", "--full-name", "--cached", "--others", "--exclude-standard")
 	var files []string
 	for _, f := range strings.Split(string(out), "\x00") {
 		if f != "" {

@@ -36,16 +36,38 @@ const (
 	Current
 	Outdated
 	V1Only
+	Edited // a v2 block that matches no aitk release: changed by hand
 )
+
+// previous holds the blocks of earlier aitk releases. A file with one of them is Outdated, not
+// Edited, so teammates on different aitk versions do not reject each other's commits.
+var previous = []string{Begin + `
+## Working in this repository (aitk)
+
+1. Run ` + "`aitk brief`" + ` and read its output. Do not read other files under docs/ai/ unless the brief points to them.
+2. Run ` + "`aitk task start <id>`" + ` to continue a task, or ` + "`aitk task new \"<title>\"`" + ` to create one.
+3. Do the work. Run ` + "`aitk check`" + ` until it passes.
+4. Run ` + "`aitk close --summary \"<what changed>\" --knowledge \"<lasting finding, or none>\"`" + `.
+5. If unsure, blocked, the change is risky, or the check fails twice: stop and ask the user.
+
+If ` + "`aitk`" + ` is not installed, read docs/ai/project-context.md and the newest file in docs/ai/handoff/.
+` + End}
 
 // Inspect reports the block state of content.
 func Inspect(content string) State {
+	content = strings.ReplaceAll(content, "\r\n", "\n") // CRLF checkouts
 	i, j := strings.Index(content, Begin), strings.Index(content, End)
 	if i >= 0 && j > i {
-		if content[i:j+len(End)] == Block {
+		got := content[i : j+len(End)]
+		if got == Block {
 			return Current
 		}
-		return Outdated
+		for _, old := range previous {
+			if got == old {
+				return Outdated
+			}
+		}
+		return Edited
 	}
 	if strings.Contains(content, v1Begin) {
 		return V1Only
