@@ -26,21 +26,36 @@ type file struct {
 	Claims        []Claim `json:"claims"`
 }
 
-func path(p *project.Project) string { return filepath.Join(p.CommonDir, "aitk", "claims.json") }
+func path(p *project.Project) string { return filepath.Join(p.SharedDir(), "claims.json") }
 
-// Load returns unexpired claims. Callers must hold the project lock to modify.
+// Load returns unexpired claims from every shared location (newest per task and worktree).
+// Callers must hold the project lock to modify.
 func Load(p *project.Project) []Claim {
-	var f file
-	b, err := os.ReadFile(path(p))
-	if err == nil {
-		json.Unmarshal(b, &f)
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	var out []Claim
-	for _, c := range f.Claims {
-		if c.Expires > now {
-			out = append(out, c)
+	byKey := map[string]Claim{}
+	var order []string
+	for _, d := range p.SharedStateDirs() {
+		var f file
+		b, err := os.ReadFile(filepath.Join(d, "claims.json"))
+		if err != nil || json.Unmarshal(b, &f) != nil {
+			continue
 		}
+		for _, c := range f.Claims {
+			if c.Expires <= now {
+				continue
+			}
+			k := c.Task + "\x00" + c.Worktree
+			if old, ok := byKey[k]; !ok || c.At > old.At {
+				if !ok {
+					order = append(order, k)
+				}
+				byKey[k] = c
+			}
+		}
+	}
+	out := make([]Claim, 0, len(order))
+	for _, k := range order {
+		out = append(out, byKey[k])
 	}
 	return out
 }

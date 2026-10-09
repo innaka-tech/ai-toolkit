@@ -4,6 +4,7 @@ package ops
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,15 +34,17 @@ func Tool() string {
 	if t := os.Getenv("AITK_TOOL"); t != "" {
 		return project.Slug(t, 32)
 	}
+	// Tools inherit their parent's environment, so when one tool runs inside another
+	// (e.g. Codex started from Claude Code) the innermost one is checked first.
 	switch {
-	case os.Getenv("CLAUDECODE") != "":
-		return "claude-code"
+	case os.Getenv("CODEX_SESSION_ID") != "" || os.Getenv("CODEX_VERSION") != "" || os.Getenv("CODEX_SANDBOX") != "" || os.Getenv("CODEX_MANAGED_BY_NPM") != "":
+		return "codex"
 	case os.Getenv("GEMINI_CLI") != "":
 		return "gemini-cli"
 	case os.Getenv("OPENCODE") != "":
 		return "opencode"
-	case os.Getenv("CODEX_SANDBOX") != "" || os.Getenv("CODEX_MANAGED_BY_NPM") != "":
-		return "codex"
+	case os.Getenv("CLAUDECODE") != "":
+		return "claude-code"
 	}
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		return "human"
@@ -83,8 +86,12 @@ func Release(p *project.Project, id string, force bool) (bool, error) {
 // WithLock runs fn while holding the project lock.
 func WithLock(p *project.Project, fn func() error) error {
 	l, err := fsx.Acquire(p.LockPath(), 10*time.Second)
-	if err != nil {
+	if errors.Is(err, fsx.ErrLocked) {
 		return apperr.New("E_LOCKED", apperr.ExitConflict, "retry in a moment", "another aitk process holds the project lock")
+	}
+	if err != nil {
+		return apperr.New("E_STATE_UNWRITABLE", apperr.ExitRuntime, "allow writes to the repository (for sandboxed agents: the working tree must be writable)",
+			"cannot write aitk state in %s or %s: %v", p.StateDirs()[0], p.StateDirs()[1], err)
 	}
 	defer l.Release()
 	return fn()
@@ -559,6 +566,7 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			}
 		}
 		if target == task.Done || target == task.Blocked {
+			s.LastTask, s.LastTaskAt = t.ID, now
 			s.SetActive("", "", "")
 			claims.Release(p, t.ID, false)
 		}

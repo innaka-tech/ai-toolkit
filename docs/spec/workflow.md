@@ -29,7 +29,7 @@ Rules:
 - Committed files MUST NOT contain absolute paths, user names, or host names produced by aitk.
 - Any other file under `docs/ai/` is user content. aitk MUST NOT modify it.
 - Writes MUST be atomic (temporary file in the same directory, fsync, rename) and serialized by `$(git rev-parse --git-common-dir)/aitk/lock`.
-- Per-worktree session state is stored in `$(git rev-parse --git-dir)/aitk/session.json` (schemas/session.schema.json) and is never committed.
+- Per-worktree session state is stored in `$(git rev-parse --git-dir)/aitk/session.json` (schemas/session.schema.json) and is never committed. When the git directory is read-only (agent sandboxes such as Codex `workspace-write`), aitk falls back to `<worktree>/.aitk/` (which ignores itself through its own `.gitignore`); reads take the most recent session from either location, so a sandboxed tool still sees the task an unsandboxed one started. Claims and the lock fall back the same way; in that mode claims are not shared across worktrees.
 
 ## 2. AGENTS.md
 

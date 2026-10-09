@@ -950,7 +950,7 @@ func (a *app) hookCmd() *cobra.Command {
 				return &result{data: []gates.Violation{*v}}, gateErr([]gates.Violation{*v}, `git commit -m "feat(scope): summary"`)
 			}
 			if perr == nil {
-				if err := gates.AddTrailers(r.Root, args[1], session.Load(p).Active(), ops.Tool()); err != nil {
+				if err := gates.AddTrailers(r.Root, args[1], session.Load(p).CommitTask(time.Now()), ops.Tool()); err != nil {
 					return nil, err
 				}
 			}

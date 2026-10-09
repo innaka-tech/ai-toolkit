@@ -25,8 +25,15 @@ First release of `aitk`, a rewrite of the toolkit as a single Go binary. See the
 
 ### Changed
 - Project lock is now a kernel lock (flock / LockFileEx); no stale locks.
+- Agent sandboxes: when `.git` is read-only (Codex `workspace-write`), private state falls back to a self-ignoring `.aitk/` and reads merge both locations; lock errors distinguish contention (`E_LOCKED`) from unwritable state (`E_STATE_UNWRITABLE`).
+- Tool attribution checks the innermost tool first (Codex/Gemini/OpenCode before Claude Code) when tools run inside each other.
+- `AI-Task` commit trailer also names a task closed in the last hour.
 - Definition of Done: criteria written on a task must be satisfied under every profile; the profile comes from the diff unless pinned.
 - Spec: config is validated from TOML; knowledge entries may carry `file`; checks record a `tree` fingerprint; session keeps `last_check`; hand-written and v1-frontmatter task files migrate (ID collisions get a fresh ID with `legacy.v1_id`).
+
+### Validation
+- 1,000 random operations (property test in CI): no corruption, no lost knowledge, zero doctor errors.
+- Live agents, given only the coding task: Claude Code (Haiku) created, checked, and closed its task and committed with trailers; Codex continued a task handed over by Claude Code from the repository state alone and closed it.
 
 ### Notes
 - English only; Indonesian output is planned for 2.1 (ADR-0010).
