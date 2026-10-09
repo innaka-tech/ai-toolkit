@@ -2,13 +2,12 @@
 # ai-start: v1 command kept for compatibility; see scripts/_shim.sh.
 . "$(dirname "$0")/_shim.sh"
 if shim_is_v1; then shim_v1 ai-start "$@"; fi
-# ai-start "<task>" [--goal G] [--sub-goal S]  ->  aitk task new "<task>" --start [--goal G]
+# ai-start "<task>" [--goal G] [--sub-goal S]  ->  aitk task new "<task>" --start
 title=""
 set -- "$@" --end--
 while [ "$1" != --end-- ]; do
   case "$1" in
-    --goal) set -- "$@" --goal "$2"; shift 2 ;;
-    --sub-goal) shift 2 ;;
+    --goal|--sub-goal) shift 2 ;; # v1 goal ids are free text; v2 goals are created with aitk goal add
     *) [ -z "$title" ] && title=$1 || title="$title $1"; shift ;;
   esac
 done
