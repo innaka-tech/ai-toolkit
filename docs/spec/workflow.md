@@ -115,17 +115,21 @@ The profile is computed from the diff between the merge base with `default_branc
 | `lite` | ≤ `risk.lite_max_files` files and ≤ `risk.lite_max_lines` changed lines, and not strict |
 | `standard` | Otherwise |
 
-`aitk close` MUST reject (exit 3, `E_DOD_*`) unless every rule of the profile holds:
+`aitk close` MUST reject (exit 3, `E_DOD_*`) unless every rule of the profile holds. Rules are applied in this order:
 
 | Rule | lite | standard | strict |
 |---|---|---|---|
-| `--summary` non-empty | ✔ | ✔ | ✔ |
-| `--knowledge` given (`none` allowed) | ✔ | ✔ | ✔ |
+| `--summary` non-empty, `--knowledge` given (`none` allowed), no credentials in either | ✔ | ✔ | ✔ |
 | `check.cmd` configured → latest check passed on the current tree | ✔ | ✔ | ✔ |
 | Every acceptance criterion written on the task is checked | ✔ | ✔ | ✔ |
 | At least one acceptance criterion exists | | ✔ | ✔ |
 | Risk section filled (no placeholder text) | | | ✔ |
-| ≥ 2 review passes, last pass 0 findings, ≥ 1 pass by a tool that did not work on the task (`workers`, the creator, and the closing tool) | | | ✔ for `done`; otherwise status stays `in_review` |
+| OWASP ASVS 4.0.3 checklist present and every item verified or marked N/A (`security.asvs_level` ≥ 1, default 1) | | | ✔ |
+| Security audit passed on the current tree (`security.audit`: `strict` by default, `all`, or `off`) | `all` | `all` | ✔ |
+| ≥ 2 review passes, last with 0 findings, ≥ 1 by a tool that did not work on the task | | | ✔ for `done`; otherwise `in_review` |
+| A person accepted the task (`aitk uat accept`) when `uat.required` covers the profile (`none` by default; `strict`, `standard`, `all`) | as configured | as configured | as configured — otherwise `in_review` |
+
+User acceptance is recorded only by a person: `aitk uat accept|reject` refuses to run when an AI agent's environment is detected. `aitk uat script <id>` writes `docs/ai/uat/<id>.md` with one scenario per criterion. A rejection sends the task back to `in_progress` with the reason in its notes and in a handoff, so the next agent sees it in the brief.
 
 "Latest check passed on the current tree" means `evidence.check.exit_code == 0` and it was recorded after the last modification of any tracked file.
 
@@ -163,7 +167,13 @@ On disk, an entry is one Markdown bullet with trailing metadata:
   Compaction MUST NOT delete text. Rewording by a model is out of scope for the core; a plugin may propose it as a diff.
 - `aitk knowledge search <query>` ranks by term overlap and recency, then merges `knowledge.search` plugin results.
 
-## 9. Self-control
+## 9. Conventions, goals, and versioning
+
+- `docs/ai/conventions.md` (created by `aitk init`) holds the project's coding conventions: stack, structure, naming, errors, data, tests, security, git, UI. The brief shows up to 12 of its lines to every agent and asks for it to be written while it is still the template; `aitk doctor` warns when it is missing or unfilled.
+- Goals live in `ai-state.json` (`aitk goal add|list|status`); tasks link with `--goal`, which must exist. The brief shows the active task's goal and its progress; `docs/ai/goals.md` is a generated index.
+- `aitk release` versions the managed project: the next SemVer from Conventional Commits since the last `release.tag_prefix` tag (breaking → major, or minor in 0.x; feat → minor; fix/perf → patch; a pre-release of X.Y.Z stays X.Y.Z), a Keep a Changelog section in `release.changelog` with commit hashes and `AI-Task` ids, the version in `package.json` / `pyproject.toml` / `Cargo.toml` and `ai-state.json`. It refuses uncommitted code changes and a failing check, warns about tasks in progress or awaiting acceptance, and with `--tag` commits `chore(release): vX.Y.Z` and creates an annotated tag. It never pushes.
+
+## 10. Self-control
 
 aitk restrains agents where prompts alone do not:
 
@@ -176,7 +186,7 @@ aitk restrains agents where prompts alone do not:
 | Independent review | Review passes count as independent only when made by a tool outside `workers` (tools that started or closed the task), the creator, and the closing tool. |
 | Large changes | `close` warns above 40 files or 2,000 changed lines. |
 
-## 10. Self-healing
+## 11. Self-healing
 
 aitk repairs its own files instead of failing on them. Every repair is reported (as a `self-healed:` warning on the command, or in `aitk doctor --fix`), and no content is discarded: anything that cannot stay in place is moved to `docs/ai/_legacy/quarantine/`.
 

@@ -6,7 +6,7 @@
 
 | Tool | Instructions | MCP registration | Session hook |
 |---|---|---|---|
-| Claude Code | `CLAUDE.md` starting with `@AGENTS.md` | `.mcp.json` (project) | `.claude/settings.json`: `SessionStart` (`startup\|resume\|compact`) → `aitk brief` |
+| Claude Code | `CLAUDE.md` starting with `@AGENTS.md`; Agent Skill `.claude/skills/aitk/SKILL.md` | `.mcp.json` (project) | `.claude/settings.json`: `SessionStart` (`startup\|resume\|compact`) → `aitk brief` |
 | Codex CLI | `AGENTS.md` (native) | `~/.codex/config.toml` `[mcp_servers.aitk]`, only with `--global` (Codex has no project MCP config) | — |
 | OpenCode | `AGENTS.md` (native) | `opencode.json` `mcp.aitk` (`type: local`) | — |
 | Gemini CLI | `.gemini/settings.json` `context.fileName` includes `AGENTS.md` | `.gemini/settings.json` `mcpServers.aitk` | `SessionStart` (`startup`) → `aitk brief` |
@@ -78,3 +78,19 @@ A plugin is any executable on PATH named `aitk-<name>` (ADR-0007).
 | `knowledge.search` | `knowledge search`, `brief` | `{query, limit}` | `[{text, score, source}]` |
 
 Reference plugins (separate repositories): `aitk-uteke` (memory store), `aitk-codebase-memory` (code graph).
+
+## Planning tools
+
+aitk executes and verifies plans made elsewhere; it does not replace planning frameworks.
+
+| Source | Command | Mapping |
+|---|---|---|
+| BMAD Method tickets (`<type>-<slug>.md` with YAML frontmatter, type story/bug/spike) | `aitk import bmad [dir|file]` | id `BM-<EPIC>-<id>`; numbered Given/When/Then items (or the `Verify:` line) → criteria; status from the sibling `<type>-<slug>-plan.md` (draft/ready-for-dev → todo, in-progress, in-review/built → implemented, done, blocked, dropped → cancelled); `risk: high` → strict (pinned) |
+| Superpowers plans (`docs/superpowers/plans/*.md`) | `aitk import superpowers [plan.md]` | each `### Task N: Name` → task `SP-<PLAN>-<N>`; its `- [ ] **Step k: …**` lines → criteria; all steps checked → done; `Files:` list → objective |
+| Spec Kit / OpenSpec `tasks.md` | `aitk import spec-kit|openspec` | checklist lines → tasks; `T001` ids kept |
+| Any markdown checklist | `aitk import markdown <file>` | checklist lines → tasks |
+| GitHub Issues | `aitk import github-issues` | see the CLI reference |
+
+Imports are idempotent: existing task ids are skipped. Imported tasks then follow aitk's Definition of Done.
+
+The Agent Skill in `skills/aitk/SKILL.md` teaches agents the workflow (and when to stop); `aitk adapters sync` installs it for Claude Code.

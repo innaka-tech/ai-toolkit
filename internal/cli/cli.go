@@ -1282,7 +1282,7 @@ func (a *app) pluginCmd() *cobra.Command {
 }
 
 func (a *app) importCmd() *cobra.Command {
-	c := &cobra.Command{Use: "import", Short: "Import tasks from GitHub Issues, Spec Kit, or OpenSpec"}
+	c := &cobra.Command{Use: "import", Short: "Import tasks from GitHub Issues, BMAD, Superpowers, Spec Kit, OpenSpec, or a markdown checklist"}
 	var repo, label, state string
 	var limit int
 	var dry bool
@@ -1307,17 +1307,37 @@ func (a *app) importCmd() *cobra.Command {
 		return &result{data: r, human: importSummary(r)}, nil
 	})
 	c.AddCommand(gh)
-	for _, kind := range []string{"spec-kit", "openspec"} {
+	for _, kind := range []string{"spec-kit", "openspec", "markdown", "superpowers", "bmad"} {
 		kind := kind
 		var dry bool
-		k := &cobra.Command{Use: kind + " [tasks.md ...]", Short: "Import a " + kind + " tasks checklist (default: discovered tasks.md files)"}
+		short := map[string]string{
+			"spec-kit":    "Import Spec Kit tasks (default: specs/*/tasks.md)",
+			"openspec":    "Import OpenSpec tasks (default: openspec/changes/*/tasks.md)",
+			"markdown":    "Import any markdown checklist: each checkbox line becomes a task",
+			"superpowers": "Import Superpowers plans (default: docs/superpowers/plans/*.md): each Task N becomes a task, its steps the criteria",
+			"bmad":        "Import BMAD tickets (story/bug/spike files; default: search the repository): criteria, status from the plan, risk high → strict",
+		}[kind]
+		k := &cobra.Command{Use: kind + " [path ...]", Short: short}
 		k.Flags().BoolVar(&dry, "dry-run", false, "show what would be imported")
 		k.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
 			p, err := a.openWrite()
 			if err != nil {
 				return nil, err
 			}
-			r, err := ops.ImportChecklist(p, kind, args, dry)
+			for i, a2 := range args { // relative paths are relative to where aitk runs (-C)
+				if !filepath.IsAbs(a2) {
+					args[i] = filepath.Join(a.cwd(), a2)
+				}
+			}
+			var r *ops.ImportResult
+			switch kind {
+			case "superpowers":
+				r, err = ops.ImportSuperpowers(p, args, dry)
+			case "bmad":
+				r, err = ops.ImportBMAD(p, args, dry)
+			default:
+				r, err = ops.ImportChecklist(p, kind, args, dry)
+			}
 			if err != nil {
 				return nil, err
 			}

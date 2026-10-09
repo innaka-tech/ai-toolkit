@@ -15,6 +15,7 @@ import (
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/jsonedit"
+	"github.com/innaka-tech/ai-toolkit/v2/skills"
 )
 
 // Change is one file write an adapter wants.
@@ -317,6 +318,8 @@ func claudeProject(e Env) ([]Change, error) {
 		}
 	}
 	cs = append(cs, Change{Path: p, Rel: "CLAUDE.md", What: "import AGENTS.md", before: before, after: after})
+	sp, sb := projectFile(e, ".claude/skills/aitk/SKILL.md")
+	cs = append(cs, Change{Path: sp, Rel: ".claude/skills/aitk/SKILL.md", What: "Agent Skill: aitk workflow", before: sb, after: skills.AitkSkill})
 	return cs, nil
 }
 

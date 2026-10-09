@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [2.2.0] - 2026-10-09
+
+Quality and delivery standards for the projects aitk manages.
+
+### Added
+- **User acceptance (UAT)**: `uat.required` per profile; `aitk uat script|accept|reject`; only a person can accept (agents are refused); rejection reopens the task and reaches the next agent through the brief.
+- **Security standards**: OWASP ASVS 4.0.3 checklist required for strict tasks (`aitk security checklist`); `aitk audit` runs dependency scanners (osv-scanner, npm/pnpm audit, govulncheck, pip-audit, composer audit, cargo audit), semgrep OWASP Top 10, and a secret scan of tracked files, recorded as evidence and required by the Definition of Done (`security.audit`).
+- **Project versioning**: `aitk release` computes the next SemVer from Conventional Commits, writes a Keep a Changelog section (with commit hashes and task ids), updates `package.json` / `pyproject.toml` / `Cargo.toml` and `ai-state.json`, and with `--tag` commits and tags; pre-releases; refuses dirty trees and failing checks; never pushes.
+- **Conventions**: `docs/ai/conventions.md` created by init and shown in every brief; doctor flags missing or unfilled conventions.
+- **Goals**: `aitk goal add|list|status`; tasks link with `--goal`; brief and `docs/ai/goals.md` show progress.
+- **Integrations**: `aitk import bmad` (BMAD Method tickets and plan status), `aitk import superpowers` (Superpowers plans), `aitk import markdown`; Agent Skill `skills/aitk/SKILL.md`, installed for Claude Code by `adapters sync`; MCP tools `audit`, `security_checklist`, `uat_script`.
+
+### Fixed
+- Handoffs written in the same second were ordered wrongly, so a UAT rejection could be missing from the brief.
+- Relative paths given to `aitk import` resolved against the process directory instead of aitk's working directory.
+
 ## [2.1.1] - 2026-10-09
 
 ### Fixed

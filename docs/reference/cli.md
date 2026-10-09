@@ -169,6 +169,18 @@ Remove aitk from the git hooks
 aitk hooks uninstall
 ```
 
+## `aitk import bmad`
+
+Import BMAD tickets (story/bug/spike files; default: search the repository): criteria, status from the plan, risk high → strict
+
+```
+aitk import bmad [path ...] [flags]
+```
+
+```
+      --dry-run   show what would be imported
+```
+
 ## `aitk import github-issues`
 
 Import issues as tasks (GH-<number>) via the gh CLI
@@ -185,12 +197,24 @@ aitk import github-issues [flags]
       --state string   open, closed, or all (default "open")
 ```
 
-## `aitk import openspec`
+## `aitk import markdown`
 
-Import a openspec tasks checklist (default: discovered tasks.md files)
+Import any markdown checklist: each checkbox line becomes a task
 
 ```
-aitk import openspec [tasks.md ...] [flags]
+aitk import markdown [path ...] [flags]
+```
+
+```
+      --dry-run   show what would be imported
+```
+
+## `aitk import openspec`
+
+Import OpenSpec tasks (default: openspec/changes/*/tasks.md)
+
+```
+aitk import openspec [path ...] [flags]
 ```
 
 ```
@@ -199,10 +223,22 @@ aitk import openspec [tasks.md ...] [flags]
 
 ## `aitk import spec-kit`
 
-Import a spec-kit tasks checklist (default: discovered tasks.md files)
+Import Spec Kit tasks (default: specs/*/tasks.md)
 
 ```
-aitk import spec-kit [tasks.md ...] [flags]
+aitk import spec-kit [path ...] [flags]
+```
+
+```
+      --dry-run   show what would be imported
+```
+
+## `aitk import superpowers`
+
+Import Superpowers plans (default: docs/superpowers/plans/*.md): each Task N becomes a task, its steps the criteria
+
+```
+aitk import superpowers [path ...] [flags]
 ```
 
 ```

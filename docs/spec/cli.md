@@ -72,6 +72,16 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `aitk report [--since 7d] [--format md\|json]` | Done, in progress, and blocked tasks; who (which tool) did what; evidence links. |
 | `aitk log [--task ID]` | Chronological handoffs. |
 
+### Quality and delivery of the managed project
+
+| Command | Purpose |
+|---|---|
+| `aitk audit` | Dependency vulnerabilities (osv-scanner, npm/pnpm audit, govulncheck, pip-audit, composer audit, cargo audit — whichever apply and are installed, or `security.scanners`), static analysis (semgrep OWASP Top 10 when installed), and a secret scan of tracked files; records evidence on the active task |
+| `aitk security checklist [id]` | Add the OWASP ASVS 4.0.3 checklist to a task |
+| `aitk uat script [id]` / `uat accept [id] [--by] [--note]` / `uat reject [id] --reason` | User acceptance (a person only) |
+| `aitk goal add "<outcome>" [--id] [--parent]` / `goal list` / `goal status <id> <status>` | Goals with task progress |
+| `aitk release [--bump] [--pre rc] [--dry-run] [--tag] [--skip-check]` | Version the project (SemVer, changelog, manifests, tag; never pushes) |
+
 ### Integration
 
 | Command | Purpose |
@@ -97,6 +107,12 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `E_TASK_NOT_FOUND` | 2 | Unknown task ID | `aitk task list` |
 | `E_TASK_CLAIMED` | 4 | Claimed by another session | `aitk task list` or wait for expiry |
 | `E_LOCKED` | 4 | Another aitk process holds the lock | retry |
+| `E_DOD_SECURITY` | 3 | Strict task without a verified OWASP ASVS checklist | `aitk security checklist <id>` |
+| `E_DOD_AUDIT` | 3 | Security audit missing, failing, or stale | `aitk audit` |
+| `E_AUDIT_FAILED` | 1 | A scanner or the secret scan found problems | fix and rerun `aitk audit` |
+| `E_UAT_AGENT` | 3 | An AI agent tried to accept or reject on a person's behalf | the user runs `aitk uat accept <id>` |
+| `E_SECRET` | 3 | Recorded text contains a credential | remove it |
+| `E_RELEASE_NOTHING`, `E_RELEASE_DIRTY`, `E_RELEASE_CHECK` | 3 | Nothing releasable, uncommitted changes, failing check | commit work / `--bump`; commit or stash; fix the check |
 | `E_STATE_UNWRITABLE` | 1 | Neither the git directory nor the working tree can hold aitk's private state | allow writes to the working tree |
 | `E_CHECK_NOT_CONFIGURED` | 3 | `check.cmd` missing where required | `aitk init --check "<cmd>"` |
 | `E_CHECK_FAILED` | 1 | Check command exited non-zero | fix and `aitk check` |
