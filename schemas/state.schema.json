@@ -30,6 +30,11 @@
         "summary": {
           "type": "string",
           "maxLength": 280
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$",
+          "description": "Last version released with aitk release"
         }
       }
     },

@@ -207,7 +207,7 @@ func (a *app) root() *cobra.Command {
 	root.PersistentFlags().StringVarP(&a.dir, "path", "C", "", "run as if started in this directory")
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
-		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd())
+		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd())
 	return root
 }
 
@@ -1507,4 +1507,43 @@ func indent(s string) string {
 		lines[i] = "    " + l
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (a *app) releaseCmd() *cobra.Command {
+	var in ops.ReleaseInput
+	c := &cobra.Command{Use: "release", Short: "Version the project: next SemVer from Conventional Commits, CHANGELOG, manifests; --tag commits and tags (never pushes)", Args: cobra.NoArgs}
+	c.Flags().StringVar(&in.Bump, "bump", "auto", "auto, major, minor, or patch")
+	c.Flags().StringVar(&in.Pre, "pre", "", "pre-release label, e.g. rc → 1.4.0-rc.1")
+	c.Flags().BoolVar(&in.DryRun, "dry-run", false, "show the version and notes without writing")
+	c.Flags().BoolVar(&in.Tag, "tag", false, "commit the release files and create an annotated tag")
+	c.Flags().BoolVar(&in.SkipCheck, "skip-check", false, "do not run the check command first")
+	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		r, err := ops.ReleaseProject(p, in)
+		res := &result{data: r}
+		if r != nil {
+			res.warnings = r.Warnings
+			if r.Plan != nil && r.Version != "" {
+				prev := r.Previous
+				if prev == "" {
+					prev = "(first release)"
+				}
+				h := fmt.Sprintf("%s → %s (%s, %d commits)\n\n%s", prev, r.Version, r.Bump, len(r.Commits), r.Notes)
+				switch {
+				case in.DryRun:
+					h += "\ndry run: nothing written"
+				case r.Tagged:
+					h += fmt.Sprintf("\ncommitted and tagged %s. Publish with: git push --follow-tags", r.Tag)
+				default:
+					h += "\nwrote " + strings.Join(r.Written, ", ") + ". Review, then: aitk release --tag (or commit and tag yourself)"
+				}
+				res.human = h
+			}
+		}
+		return res, err
+	})
+	return c
 }

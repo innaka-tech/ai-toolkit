@@ -284,6 +284,22 @@ List discovered plugins, their hooks, and whether they are enabled
 aitk plugin list
 ```
 
+## `aitk release`
+
+Version the project: next SemVer from Conventional Commits, CHANGELOG, manifests; --tag commits and tags (never pushes)
+
+```
+aitk release [flags]
+```
+
+```
+      --bump string   auto, major, minor, or patch (default "auto")
+      --dry-run       show the version and notes without writing
+      --pre string    pre-release label, e.g. rc → 1.4.0-rc.1
+      --skip-check    do not run the check command first
+      --tag           commit the release files and create an annotated tag
+```
+
 ## `aitk report`
 
 What was done, what is in progress or blocked, and which tools did it
