@@ -26,7 +26,10 @@ jobs:
       - name: vet
         run: go vet ./...
       - name: test
-        run: go test -race -count=1 ./...
+        run: go test -race -short -count=1 ./...
+      - name: property test (1000 random operations)
+        if: runner.os == 'Linux'
+        run: go test -count=1 -run TestRandomOperationsNeverCorruptState -timeout 20m ./internal/cli/
       - name: build
         run: go build -o aitk-bin ./cmd/aitk
       - name: smoke

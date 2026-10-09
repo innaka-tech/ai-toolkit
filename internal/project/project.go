@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 
@@ -127,11 +128,71 @@ func (p *Project) Path(rel ...string) string {
 	return filepath.Join(append([]string{p.Root}, rel...)...)
 }
 
-// AitkDir is the per-worktree private state directory.
-func (p *Project) AitkDir() string { return filepath.Join(p.GitDir, "aitk") }
+// LocalStateDir is the in-tree fallback for aitk's private state, used when the git
+// directory is read-only (for example inside an agent sandbox). It ignores itself.
+const LocalStateDir = ".aitk"
 
-// LockPath is shared by all worktrees.
-func (p *Project) LockPath() string { return filepath.Join(p.CommonDir, "aitk", "lock") }
+// StateDirs lists per-worktree state locations in order of preference.
+func (p *Project) StateDirs() []string {
+	return []string{filepath.Join(p.GitDir, "aitk"), filepath.Join(p.Root, LocalStateDir)}
+}
+
+// SharedStateDirs lists locations shared by all worktrees, in order of preference.
+func (p *Project) SharedStateDirs() []string {
+	return []string{filepath.Join(p.CommonDir, "aitk"), filepath.Join(p.Root, LocalStateDir)}
+}
+
+// AitkDir is the per-worktree private state directory (the first writable of StateDirs).
+func (p *Project) AitkDir() string { return writableDir(p.StateDirs()) }
+
+// SharedDir is the shared state directory (the first writable of SharedStateDirs).
+func (p *Project) SharedDir() string { return writableDir(p.SharedStateDirs()) }
+
+// LockPath is the project lock, shared by all worktrees when the git directory is writable.
+func (p *Project) LockPath() string { return filepath.Join(p.SharedDir(), "lock") }
+
+var (
+	writableMu    sync.Mutex
+	writableCache = map[string]bool{}
+)
+
+// writableDir returns the first directory that can be created and written to.
+// When none can, it returns the first one (callers then report the write error).
+func writableDir(dirs []string) string {
+	writableMu.Lock()
+	defer writableMu.Unlock()
+	for _, d := range dirs {
+		ok, seen := writableCache[d]
+		if !seen {
+			ok = probe(d)
+			writableCache[d] = ok
+		}
+		if ok {
+			return d
+		}
+	}
+	return dirs[0]
+}
+
+func probe(dir string) bool {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false
+	}
+	f, err := os.CreateTemp(dir, ".probe-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	f.Close()
+	os.Remove(name)
+	if filepath.Base(dir) == LocalStateDir {
+		ign := filepath.Join(dir, ".gitignore")
+		if _, err := os.Stat(ign); err != nil {
+			os.WriteFile(ign, []byte("# aitk private state (fallback when .git is read-only)\n*\n"), 0o644)
+		}
+	}
+	return true
+}
 
 // Repo locates the git repository containing dir without requiring aitk.toml.
 func Repo(dir string) (*Project, error) {

@@ -97,6 +97,7 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `E_TASK_NOT_FOUND` | 2 | Unknown task ID | `aitk task list` |
 | `E_TASK_CLAIMED` | 4 | Claimed by another session | `aitk task list` or wait for expiry |
 | `E_LOCKED` | 4 | Another aitk process holds the lock | retry |
+| `E_STATE_UNWRITABLE` | 1 | Neither the git directory nor the working tree can hold aitk's private state | allow writes to the working tree |
 | `E_CHECK_NOT_CONFIGURED` | 3 | `check.cmd` missing where required | `aitk init --check "<cmd>"` |
 | `E_CHECK_FAILED` | 1 | Check command exited non-zero | fix and `aitk check` |
 | `E_DOD_SUMMARY` | 3 | `--summary` missing | add `--summary` |

@@ -77,6 +77,16 @@
     "last_check": {
       "$ref": "https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/schemas/task.schema.json#/$defs/check",
       "description": "Latest check in this worktree; used when close creates an implicit lite task"
+    },
+    "last_task": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9-]{0,31}$",
+      "description": "Task most recently closed in this worktree (used for the AI-Task commit trailer)"
+    },
+    "last_task_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
     }
   }
 }

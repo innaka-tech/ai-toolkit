@@ -100,6 +100,16 @@ func TestCommitGates(t *testing.T) {
 		t.Fatalf("trailers missing:\n%s", msg)
 	}
 
+	// A commit right after closing a task still names it.
+	write(t, dir, "ok.txt", "1")
+	must(t, dir, bin, "check")
+	must(t, dir, bin, "close", "--summary", "env read", "--knowledge", "none", "--status", "blocked")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "docs: record handover")
+	if msg := must(t, dir, "git", "log", "-1", "--format=%B"); !strings.Contains(msg, "AI-Task: T-") {
+		t.Fatalf("AI-Task trailer missing after close:\n%s", msg)
+	}
+
 	write(t, dir, "docs/ai/tasks/T-zzzz-broken.md", "---\nid: T-zzzz\nstatus: finished\n---\nbody\n")
 	must(t, dir, "git", "add", "docs/ai/tasks/T-zzzz-broken.md")
 	out, err = sh(t, dir, "git", "commit", "-qm", "docs: add task")
