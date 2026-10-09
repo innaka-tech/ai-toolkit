@@ -464,7 +464,7 @@ func (r *runner) commitWork(rt *RunTask) error {
 		if _, err := literalGit(p, "add", "-A"); err != nil {
 			return err
 		}
-		if err := r.commit(commitSubject(t), t.ID); err != nil {
+		if err := r.commit(rt, commitSubject(t)); err != nil {
 			return err
 		}
 	} else {
@@ -478,7 +478,7 @@ func (r *runner) commitWork(rt *RunTask) error {
 			return err
 		}
 		if out, _ := literalGit(p, "diff", "--cached", "--name-only"); strings.TrimSpace(out) != "" {
-			if err := r.commit("chore(aitk): hand over "+t.ID, t.ID); err != nil {
+			if err := r.commit(rt, "chore(aitk): hand over "+t.ID); err != nil {
 				return err
 			}
 		}
@@ -497,11 +497,13 @@ func (r *runner) commitWork(rt *RunTask) error {
 	return nil
 }
 
-func (r *runner) commit(subject, id string) error {
-	if out, err := literalGit(r.p, "commit", "-q", "-m", subject, "-m", "AI-Task: "+id+"\nAI-Tool: "+r.agentName); err != nil {
+func (r *runner) commit(rt *RunTask, subject string) error {
+	if out, err := literalGit(r.p, "commit", "-q", "-m", subject, "-m", "AI-Task: "+rt.ID+"\nAI-Tool: "+r.agentName); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(checkSummary(out)))
 	}
-	return nil
+	out, err := gitx.RunRaw(r.p.Root, "rev-parse", "--short", "HEAD")
+	rt.Commit = strings.TrimSpace(string(out))
+	return err
 }
 
 // literalGit runs git with pathspec magic off, so a file named ":x" is just a file.

@@ -84,8 +84,8 @@ func TestRunFinishesTasksThroughTheDefinitionOfDone(t *testing.T) {
 		t.Fatalf("both tasks must finish: %+v", r)
 	}
 	for _, x := range r.Data.Tasks {
-		if x.Status != "done" || x.Attempts != 1 {
-			t.Fatalf("task not done on the first attempt: %+v", x)
+		if x.Status != "done" || x.Attempts != 1 || x.Commit == "" {
+			t.Fatalf("task not done on the first attempt, or its commit not reported: %+v", x)
 		}
 	}
 	// The first commit holds the first task's work; the second commit has nothing new except state.
