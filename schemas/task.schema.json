@@ -213,6 +213,11 @@
           "format": "date-time",
           "pattern": "Z$",
           "description": "UTC timestamp, RFC 3339"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 fingerprint of the working tree (excluding aitk-managed files) when the check ran; used to detect stale checks"
         }
       }
     }

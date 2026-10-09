@@ -1,4 +1,16 @@
-# AI Toolkit Directory
+# aitk (ai-toolkit)
+
+> **v2 in development** on `main`: a single Go binary, `aitk`, that keeps project state in git so any AI coding agent can resume another's work, and verifies every task before it is done. Spec: [docs/spec](docs/spec/README.md) · Decisions: [docs/adr](docs/adr/README.md).
+>
+> ```bash
+> go install github.com/innaka-tech/ai-toolkit/cmd/aitk@main
+> aitk init          # or, in a v1 project: aitk migrate --dry-run && aitk migrate
+> aitk brief         # start every agent session here
+> ```
+>
+> The bash implementation below is v1 (final release `v1.0.0`).
+
+# AI Toolkit Directory (v1)
 
 Shared context and delivery workflow for projects worked on by multiple AI coding tools.
 
