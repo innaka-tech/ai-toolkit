@@ -1,0 +1,30 @@
+name: aitk ci
+description: Run aitk gates (schemas, secrets in the diff, Conventional Commits) on a pull request or push.
+branding:
+  icon: check-circle
+  color: green
+inputs:
+  base:
+    description: Ref to compare against (default: the pull request base, else the merge base with the default branch).
+    required: false
+    default: ""
+  version:
+    description: aitk version (git ref) to install.
+    required: false
+    default: main
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version: stable
+        cache: false
+    - name: Install aitk
+      shell: bash
+      run: go install github.com/innaka-tech/ai-toolkit/cmd/aitk@${{ inputs.version }}
+    - name: aitk ci
+      shell: bash
+      run: |
+        args=()
+        if [ -n "${{ inputs.base }}" ]; then args+=(--base "${{ inputs.base }}"); fi
+        aitk ci "${args[@]}"

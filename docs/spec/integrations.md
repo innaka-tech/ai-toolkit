@@ -49,15 +49,17 @@ Rules:
 
 ## Gates
 
-`aitk hooks install` uses the [pre-commit](https://pre-commit.com) framework when a `.pre-commit-config.yaml` exists, otherwise native git hooks (`core.hooksPath` is respected).
+`aitk hooks install` adds an aitk block (between `# aitk:begin` and `# aitk:end`) to the `pre-commit`, `commit-msg`, and `pre-push` hooks in the effective hooks directory (`core.hooksPath` is respected). Existing hook content is kept and still runs; `aitk hooks uninstall` removes only the block. The block does nothing when `aitk` is not on PATH.
 
 | Hook | Checks | On failure |
 |---|---|---|
-| pre-commit | Secret scan (gitleaks rules, embedded); schema validation of changed aitk files; AGENTS.md block intact | block |
-| commit-msg | [Conventional Commits 1.0](https://www.conventionalcommits.org); trailers `AI-Task: <id>` and `AI-Tool: <tool>` added automatically when a task is active | block |
-| pre-push | `aitk check` passes for the active task | block |
+| pre-commit | Secrets in added lines (built-in rules for private keys, cloud/API tokens, JWTs, and high-entropy secret assignments; `aitk:allow-secret` marks a false positive); schema validation of staged `ai-state.json`, `aitk.toml`, task and handoff files; AGENTS.md block intact | block |
+| commit-msg | [Conventional Commits 1.0](https://www.conventionalcommits.org) header (merge, revert, fixup, squash, and amend commits pass); trailers `AI-Task: <id>` and `AI-Tool: <tool>` added when a task is active | block |
+| pre-push | `aitk check` passes when a task is active and a check is configured | block |
 
-Humans can bypass with `--no-verify`; `aitk ci` runs the same gates in CI, where they cannot be bypassed. A reusable GitHub Action (`innaka-tech/ai-toolkit/action@v2`) and a GitLab CI template are provided.
+Humans can bypass with `--no-verify`; `aitk ci` runs the same gates in CI, where they cannot be bypassed: secrets and commit messages over `base..HEAD`, schema validation of changed files, and every `aitk doctor` error. The base comes from `--base`, `GITHUB_BASE_REF` / `CI_MERGE_REQUEST_TARGET_BRANCH_NAME`, or the merge base with the default branch.
+
+GitHub Actions: `uses: innaka-tech/ai-toolkit/action@<ref>` (inputs `base`, `version`).
 
 ## Plugins
 

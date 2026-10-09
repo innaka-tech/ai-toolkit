@@ -21,6 +21,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/internal/brief"
 	"github.com/innaka-tech/ai-toolkit/internal/compat"
 	"github.com/innaka-tech/ai-toolkit/internal/doctor"
+	"github.com/innaka-tech/ai-toolkit/internal/gates"
 	"github.com/innaka-tech/ai-toolkit/internal/knowledge"
 	"github.com/innaka-tech/ai-toolkit/internal/mcpserver"
 	"github.com/innaka-tech/ai-toolkit/internal/migrate"
@@ -179,7 +180,7 @@ func (a *app) root() *cobra.Command {
 	root.PersistentFlags().StringVarP(&a.dir, "path", "C", "", "run as if started in this directory")
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
-		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd())
+		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd())
 	return root
 }
 
@@ -830,4 +831,151 @@ func stateDir() string {
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "state", "aitk")
+}
+
+func (a *app) hooksCmd() *cobra.Command {
+	c := &cobra.Command{Use: "hooks", Short: "Install or remove aitk's git hooks (pre-commit, commit-msg, pre-push)"}
+	inst := &cobra.Command{Use: "install", Short: "Add aitk to the git hooks (existing hooks are kept)", Args: cobra.NoArgs}
+	inst.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		changed, err := gates.Install(p.Root)
+		if err != nil {
+			return nil, err
+		}
+		h := "hooks already installed"
+		if len(changed) > 0 {
+			h = "installed: " + strings.Join(changed, ", ")
+		}
+		if changed == nil {
+			changed = []string{}
+		}
+		return &result{data: map[string]any{"changed": changed}, human: h}, nil
+	})
+	un := &cobra.Command{Use: "uninstall", Short: "Remove aitk from the git hooks", Args: cobra.NoArgs}
+	un.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := project.Repo(a.cwd())
+		if err != nil {
+			return nil, err
+		}
+		changed, err := gates.Uninstall(p.Root)
+		if err != nil {
+			return nil, err
+		}
+		if changed == nil {
+			changed = []string{}
+		}
+		return &result{data: map[string]any{"changed": changed}, human: fmt.Sprintf("removed from %d hooks", len(changed))}, nil
+	})
+	c.AddCommand(inst, un)
+	return c
+}
+
+func (a *app) cwd() string {
+	if a.dir != "" {
+		return a.dir
+	}
+	d, _ := os.Getwd()
+	return d
+}
+
+func gateErr(vs []gates.Violation, fix string) error {
+	var lines []string
+	for _, v := range vs {
+		lines = append(lines, v.String())
+	}
+	return apperr.New("E_GATE", apperr.ExitGate, fix, "%d problem(s):\n%s", len(vs), strings.Join(lines, "\n"))
+}
+
+// hookCmd is called by the git hooks installed by `aitk hooks install`.
+func (a *app) hookCmd() *cobra.Command {
+	c := &cobra.Command{Use: "hook <pre-commit|commit-msg|pre-push> [args]", Short: "Run a git hook (called by git)", Hidden: true, Args: cobra.MinimumNArgs(1)}
+	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		r, err := project.Repo(a.cwd())
+		if err != nil {
+			return nil, err
+		}
+		p, perr := project.Open(r.Root)
+		switch args[0] {
+		case "pre-commit":
+			vs, err := gates.PreCommit(r.Root)
+			if err != nil {
+				return nil, err
+			}
+			if len(vs) > 0 {
+				return &result{data: vs}, gateErr(vs, "fix the problems above and stage again")
+			}
+			return &result{human: "aitk pre-commit: ok"}, nil
+		case "commit-msg":
+			if len(args) < 2 {
+				return nil, apperr.Usage("commit-msg needs the message file")
+			}
+			b, err := os.ReadFile(args[1])
+			if err != nil {
+				return nil, err
+			}
+			if v := gates.CheckMessage(string(b)); v != nil {
+				return &result{data: []gates.Violation{*v}}, gateErr([]gates.Violation{*v}, `git commit -m "feat(scope): summary"`)
+			}
+			if perr == nil {
+				if err := gates.AddTrailers(r.Root, args[1], session.Load(p).Active(), ops.Tool()); err != nil {
+					return nil, err
+				}
+			}
+			return &result{}, nil
+		case "pre-push":
+			if perr != nil || p.Config.Check.Cmd == "" || session.Load(p).Active() == "" {
+				return &result{human: "aitk pre-push: nothing to verify"}, nil
+			}
+			if _, err := ops.Check(p, false); err != nil {
+				return nil, apperr.New("E_GATE", apperr.ExitGate, "aitk check (fix the failures), then push again", "pre-push: the check failed for the active task")
+			}
+			return &result{human: "aitk pre-push: check passed"}, nil
+		}
+		return nil, apperr.Usage("unknown hook %q", args[0])
+	})
+	return c
+}
+
+func (a *app) ciCmd() *cobra.Command {
+	var base string
+	c := &cobra.Command{Use: "ci", Short: "Run every gate non-interactively (schemas, secrets, commit messages) for CI", Args: cobra.NoArgs}
+	c.Flags().StringVar(&base, "base", "", "compare against this ref (default: PR base from CI env, else merge base with the default branch)")
+	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		if base == "" {
+			base = gates.DefaultBase(p.Root, p.Config.DefaultBranch())
+		}
+		var report *doctor.Report
+		ops.WithLock(p, func() error { report = doctor.Run(p, false); return nil })
+		vs, err := gates.CI(p.Root, base)
+		if err != nil {
+			return nil, err
+		}
+		for _, ch := range report.Checks {
+			if ch.Status == "error" {
+				vs = append(vs, gates.Violation{Gate: "doctor", Detail: ch.Name + ": " + ch.Detail})
+			}
+		}
+		data := map[string]any{"base": base, "violations": vs}
+		if len(vs) > 0 {
+			return &result{data: data}, gateErr(vs, "fix the problems above")
+		}
+		if vs == nil {
+			data["violations"] = []gates.Violation{}
+		}
+		h := "aitk ci: all gates passed"
+		if base == "" {
+			h += " (no base to compare; only project files were validated)"
+		} else {
+			h += " (base " + base + ")"
+		}
+		return &result{data: data, human: h}, nil
+	})
+	return c
 }
