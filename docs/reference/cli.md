@@ -28,7 +28,7 @@ aitk adapters sync [flags]
 ```
       --dry-run            show what would change
       --global             also edit user-level config (e.g. ~/.codex/config.toml); backed up first
-      --tool stringArray   only this tool (repeatable): claude-code, codex, opencode, gemini-cli, kiro, cursor
+      --tool stringArray   only this tool (repeatable): claude-code, codex, opencode, gemini-cli, kiro, cursor, copilot, windsurf, cline, roo, aider, junie, qwen-code
 ```
 
 ## `aitk adr list`
@@ -441,6 +441,20 @@ Add the OWASP ASVS checklist to a task (required for strict tasks)
 
 ```
 aitk security checklist [id]
+```
+
+## `aitk setup`
+
+Once per machine: make every installed AI tool recognise aitk projects without being told
+
+```
+aitk setup [flags]
+```
+
+```
+      --dry-run            show what would change
+      --remove             remove aitk from the tools' user-level config
+      --tool stringArray   only this tool (repeatable)
 ```
 
 ## `aitk switch`

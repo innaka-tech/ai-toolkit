@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [2.5.0] - 2026-10-10
+
+Every AI tool picks up aitk without being told.
+
+### Added
+- **`aitk setup`** (once per machine, no project needed): a short marked section in each installed AI tool's user-level instructions (Claude Code, Codex, OpenCode, Gemini CLI, Qwen Code, Kiro, Windsurf) says that a repository with `aitk.toml` is managed by aitk and the agent starts with `aitk brief`, so agents follow aitk in every aitk repository, including fresh clones that were never synced. Also installs the Agent Skill for Claude Code at user level and registers the MCP server for Codex, OpenCode, and Gemini CLI. Backups first; `--dry-run`; `--remove` restores the files.
+- **Adapters for more tools**: GitHub Copilot (`.github/copilot-instructions.md`, `.vscode/mcp.json`), Windsurf, Cline, Roo Code (with MCP), Aider (`read: [AGENTS.md]`), Junie, Qwen Code (with MCP). `aitk adapters sync --tool all` writes every tool's files for mixed teams.
+
+### Changed
+- The MCP server's instructions and the `brief` tool tell agents to call `brief` first in every session without being asked, include `task_next` and `impact`, and say to ignore the tools in repositories without aitk.
+- `aitk init` and the install script point to `aitk setup`; the README explains the four layers that make agents follow aitk.
+
 ## [2.4.0] - 2026-10-10
 
 Autonomous work with the same Definition of Done.
