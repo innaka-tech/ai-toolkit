@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [2.0.1] - 2026-10-09
+
+### Fixed
+- `go install` failed for v2: the module path is now `github.com/innaka-tech/ai-toolkit/v2` (Go requires the major-version suffix). Install with `go install github.com/innaka-tech/ai-toolkit/v2/cmd/aitk@latest`.
+- The GitHub Action installs the latest v2 release by default instead of `main`.
+
 ## [2.0.0] - 2026-10-09
 
 First release of `aitk`, a rewrite of the toolkit as a single Go binary. See the [README](README.md) and [specification](docs/spec/README.md).

@@ -23,7 +23,7 @@ need uname
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$os" in
   darwin|linux) ;;
-  mingw*|msys*|cygwin*) die "on Windows, download the .zip from https://github.com/$REPO/releases or run: go install github.com/$REPO/cmd/aitk@latest" ;;
+  mingw*|msys*|cygwin*) die "on Windows, download the .zip from https://github.com/$REPO/releases or run: go install github.com/$REPO/v2/cmd/aitk@latest" ;;
   *) die "unsupported OS: $os" ;;
 esac
 arch=$(uname -m)

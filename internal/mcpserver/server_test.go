@@ -12,8 +12,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/innaka-tech/ai-toolkit/internal/cli"
-	"github.com/innaka-tech/ai-toolkit/internal/mcpserver"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/cli"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver"
 )
 
 func gitRepo(t *testing.T) string {

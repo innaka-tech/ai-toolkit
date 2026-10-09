@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/innaka-tech/ai-toolkit/internal/fsx"
-	"github.com/innaka-tech/ai-toolkit/internal/project"
-	"github.com/innaka-tech/ai-toolkit/internal/task"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/task"
 )
 
 // Session mirrors schemas/session.schema.json.

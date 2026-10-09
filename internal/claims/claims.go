@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/innaka-tech/ai-toolkit/internal/fsx"
-	"github.com/innaka-tech/ai-toolkit/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
 )
 
 // Claim of a task by a worktree.

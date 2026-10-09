@@ -13,10 +13,10 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/innaka-tech/ai-toolkit/internal/doc"
-	"github.com/innaka-tech/ai-toolkit/internal/fsx"
-	"github.com/innaka-tech/ai-toolkit/internal/project"
-	"github.com/innaka-tech/ai-toolkit/internal/schema"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/doc"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/schema"
 )
 
 // Statuses.

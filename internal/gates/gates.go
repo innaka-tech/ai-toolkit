@@ -13,13 +13,13 @@ import (
 	"github.com/BurntSushi/toml"
 	"go.yaml.in/yaml/v3"
 
-	"github.com/innaka-tech/ai-toolkit/internal/agentsmd"
-	"github.com/innaka-tech/ai-toolkit/internal/doc"
-	"github.com/innaka-tech/ai-toolkit/internal/fsx"
-	"github.com/innaka-tech/ai-toolkit/internal/gitx"
-	"github.com/innaka-tech/ai-toolkit/internal/project"
-	"github.com/innaka-tech/ai-toolkit/internal/schema"
-	"github.com/innaka-tech/ai-toolkit/internal/secrets"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/agentsmd"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/doc"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/schema"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/secrets"
 )
 
 // Hooks managed by aitk.

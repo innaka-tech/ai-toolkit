@@ -83,7 +83,7 @@ No server, no account, works offline. The active task lives in the git directory
 | Method | Command |
 |---|---|
 | Script (macOS, Linux) | `curl -fsSL https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/install.sh \| sh` (verifies SHA-256, and the cosign signature when cosign is installed) |
-| Go | `go install github.com/innaka-tech/ai-toolkit/cmd/aitk@latest` |
+| Go | `go install github.com/innaka-tech/ai-toolkit/v2/cmd/aitk@latest` |
 | Manual / Windows | download from [Releases](https://github.com/innaka-tech/ai-toolkit/releases) and check `checksums.txt` |
 
 One static binary, no runtime dependencies besides git.

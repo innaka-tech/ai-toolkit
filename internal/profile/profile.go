@@ -12,8 +12,8 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 
-	"github.com/innaka-tech/ai-toolkit/internal/gitx"
-	"github.com/innaka-tech/ai-toolkit/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
 )
 
 // Managed reports whether rel is maintained by aitk itself (excluded from diffs and fingerprints).

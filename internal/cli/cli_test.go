@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/innaka-tech/ai-toolkit/internal/schema"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/schema"
 )
 
 // repo creates a git repository with one commit and a Makefile whose test target

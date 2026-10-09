@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/innaka-tech/ai-toolkit/internal/doc"
-	"github.com/innaka-tech/ai-toolkit/internal/fsx"
-	"github.com/innaka-tech/ai-toolkit/internal/project"
-	"github.com/innaka-tech/ai-toolkit/internal/textx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/doc"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/textx"
 )
 
 // Record is one ADR.

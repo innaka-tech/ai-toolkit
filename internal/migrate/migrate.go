@@ -15,17 +15,17 @@ import (
 	"github.com/BurntSushi/toml"
 	"go.yaml.in/yaml/v3"
 
-	"github.com/innaka-tech/ai-toolkit/internal/agentsmd"
-	"github.com/innaka-tech/ai-toolkit/internal/compat"
-	"github.com/innaka-tech/ai-toolkit/internal/doc"
-	"github.com/innaka-tech/ai-toolkit/internal/fsx"
-	"github.com/innaka-tech/ai-toolkit/internal/gitx"
-	"github.com/innaka-tech/ai-toolkit/internal/handoff"
-	"github.com/innaka-tech/ai-toolkit/internal/knowledge"
-	"github.com/innaka-tech/ai-toolkit/internal/project"
-	"github.com/innaka-tech/ai-toolkit/internal/schema"
-	"github.com/innaka-tech/ai-toolkit/internal/task"
-	"github.com/innaka-tech/ai-toolkit/internal/textx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/agentsmd"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/compat"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/doc"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/knowledge"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/schema"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/task"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/textx"
 )
 
 // Report describes a migration.

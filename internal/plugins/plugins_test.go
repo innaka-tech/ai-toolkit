@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/innaka-tech/ai-toolkit/internal/cli"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/cli"
 )
 
 func setup(t *testing.T, enable bool, timeout string) string {
