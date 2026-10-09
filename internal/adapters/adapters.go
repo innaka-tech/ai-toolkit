@@ -299,11 +299,11 @@ func unsafeTarget(path string) string {
 	if info.IsDir() {
 		return "is a directory"
 	}
-	if info.Mode().Perm()&0o200 == 0 {
-		return "read-only; make it writable to let aitk edit it"
-	}
 	if _, err := os.ReadFile(path); err != nil {
 		return "cannot be read (" + err.Error() + "); left alone"
+	}
+	if info.Mode().Perm()&0o200 == 0 {
+		return "read-only; make it writable to let aitk edit it"
 	}
 	return ""
 }
@@ -700,6 +700,9 @@ func contains(xs []string, s string) bool {
 // Diff renders a short before/after summary for dry runs.
 func Diff(c Change) string {
 	if c.Delete {
+		if info, err := os.Lstat(c.Path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return "empty " + c.Rel + " (symlink kept)"
+		}
 		return "delete " + c.Rel
 	}
 	if len(c.before) == 0 {
