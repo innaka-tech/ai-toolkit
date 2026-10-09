@@ -124,6 +124,35 @@ aitk doctor [flags]
       --fix   repair generated files, the AGENTS.md block, and an overfull inbox
 ```
 
+## `aitk goal add`
+
+Add a goal (status planned)
+
+```
+aitk goal add "<outcome>" [flags]
+```
+
+```
+      --id string       goal id (default: next G-<n>)
+      --parent string   parent goal id
+```
+
+## `aitk goal list`
+
+Goals with task progress
+
+```
+aitk goal list
+```
+
+## `aitk goal status`
+
+Change a goal's status
+
+```
+aitk goal status <id> <planned|active|achieved|dropped>
+```
+
 ## `aitk hooks install`
 
 Add aitk to the git hooks (existing hooks are kept)

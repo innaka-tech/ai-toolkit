@@ -207,7 +207,7 @@ func (a *app) root() *cobra.Command {
 	root.PersistentFlags().StringVarP(&a.dir, "path", "C", "", "run as if started in this directory")
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
-		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd())
+		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd())
 	return root
 }
 
@@ -1545,5 +1545,57 @@ func (a *app) releaseCmd() *cobra.Command {
 		}
 		return res, err
 	})
+	return c
+}
+
+func (a *app) goalCmd() *cobra.Command {
+	c := &cobra.Command{Use: "goal", Short: "Goals: the outcomes tasks deliver toward (aitk task new --goal G-1)"}
+	var id, parent string
+	add := &cobra.Command{Use: `add "<outcome>"`, Short: "Add a goal (status planned)", Args: cobra.ExactArgs(1)}
+	add.Flags().StringVar(&id, "id", "", "goal id (default: next G-<n>)")
+	add.Flags().StringVar(&parent, "parent", "", "parent goal id")
+	add.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		g, err := ops.GoalAdd(p, args[0], id, parent)
+		if err != nil {
+			return nil, err
+		}
+		compat.Write(p)
+		return &result{data: g, human: fmt.Sprintf("added %s %s", g.ID, g.Title)}, nil
+	})
+	list := &cobra.Command{Use: "list", Short: "Goals with task progress", Args: cobra.NoArgs}
+	list.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		p, err := a.open()
+		if err != nil {
+			return nil, err
+		}
+		gs := ops.Goals(p)
+		var b strings.Builder
+		for _, g := range gs {
+			fmt.Fprintf(&b, "%-6s %-9s %3d/%-3d %s\n", g.ID, g.Status, g.Done, g.Tasks, g.Title)
+		}
+		if gs == nil {
+			gs = []ops.Goal{}
+			b.WriteString("no goals")
+		}
+		return &result{data: gs, human: b.String()}, nil
+	})
+	status := &cobra.Command{Use: "status <id> <planned|active|achieved|dropped>", Short: "Change a goal's status", Args: cobra.ExactArgs(2)}
+	status.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		p, err := a.openWrite()
+		if err != nil {
+			return nil, err
+		}
+		g, err := ops.GoalStatus(p, args[0], args[1])
+		if err != nil {
+			return nil, err
+		}
+		compat.Write(p)
+		return &result{data: g, human: fmt.Sprintf("%s → %s", g.ID, g.Status)}, nil
+	})
+	c.AddCommand(add, list, status)
 	return c
 }
