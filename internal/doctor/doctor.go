@@ -91,10 +91,12 @@ func Run(p *project.Project, fix bool) *Report {
 	// AGENTS.md
 	b, _ := os.ReadFile(p.Path(project.AgentsFile))
 	switch agentsmd.Inspect(string(b)) {
+	case agentsmd.Newer:
+		r.add("AGENTS.md block", "warn", "aitk block from a newer aitk release: upgrade aitk (the block is left as it is)")
 	case agentsmd.Current:
 		r.add("AGENTS.md block", "ok", "")
 	default:
-		why := map[agentsmd.State]string{agentsmd.Outdated: "from an older aitk release", agentsmd.Edited: "edited by hand", agentsmd.Missing: "missing", agentsmd.V1Only: "still the v1 protocol"}[agentsmd.Inspect(string(b))]
+		why := map[agentsmd.State]string{agentsmd.Outdated: "from an older aitk release", agentsmd.Edited: "edited by hand", agentsmd.Missing: "missing", agentsmd.V1Only: "still the v1 protocol", agentsmd.Newer: "from a newer aitk release: upgrade aitk"}[agentsmd.Inspect(string(b))]
 		c := r.add("AGENTS.md block", "warn", "aitk block "+why+" (doctor --fix replaces only the block)")
 		if fix {
 			if _, err := agentsmd.Sync(p.Path(project.AgentsFile)); err == nil {

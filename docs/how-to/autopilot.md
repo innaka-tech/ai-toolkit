@@ -57,6 +57,25 @@ Run it on a branch or in a worktree (`aitk work <id>` for parallel runs), and re
 
 Together with the check on the final tree, the risk profiles, the security audit, and independent review for strict tasks, these are aitk's defences against a fix that breaks something else.
 
+## How far the verification goes
+
+Agents run as your user, so they can write any file in the repository, aitk's records included. `aitk run` therefore does not believe a task file that says `done`. It re-derives the outcome itself:
+
+- The fields an agent must not grant itself go back to their values from before the attempt: user acceptance, review passes, audit results, and regression evidence.
+- aitk runs the check itself, and the audit too when the profile requires one.
+- It recomputes the regression evidence from the task's own commits and uncommitted changes. Deleted tests do not count, and neither do other tasks' commits, which are recognized by their `AI-Task` trailer.
+- It then applies the Definition of Done.
+
+A task the agent claims but aitk cannot confirm is reopened.
+
+This protects against sloppy and dishonest agents. It is not a sandbox:
+
+- An agent that rewrites your test suite to pass trivially still passes the check. That is what review and `aitk impact` are for.
+- A process that detaches into its own session can outlive the timeout.
+- An agent that runs `git commit` itself bypasses `--commit`'s stash.
+
+Run unattended work on a branch or in a worktree, use Codex's sandbox or Claude Code's permission rules, and review the commits before merging.
+
 ## What stays with a person
 
 User acceptance (`aitk uat accept`), pushing and releasing (`aitk release --tag` never pushes), and anything an agent hands over as blocked.

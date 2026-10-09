@@ -3,6 +3,8 @@ package agentsmd
 
 import (
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
@@ -17,6 +19,7 @@ const (
 
 // Block is the canonical protocol block.
 const Block = Begin + `
+<!-- aitk:block-revision 2 -->
 ## Working in this repository (aitk)
 
 1. Run ` + "`aitk brief`" + ` and read its output. Do not read other files under docs/ai/ unless the brief points to them.
@@ -37,7 +40,14 @@ const (
 	Outdated
 	V1Only
 	Edited // a v2 block that matches no aitk release: changed by hand
+	Newer  // the block of a later aitk release (higher block revision)
 )
+
+// Revision of Block. Later releases raise it, so an older aitk recognizes their block as newer
+// rather than hand-edited, and never replaces it with its own.
+const Revision = 2
+
+var revisionLine = regexp.MustCompile(`<!-- aitk:block-revision (\d+) -->`)
 
 // previous holds the blocks of earlier aitk releases. A file with one of them is Outdated, not
 // Edited, so teammates on different aitk versions do not reject each other's commits.
@@ -65,6 +75,11 @@ func Inspect(content string) State {
 		for _, old := range previous {
 			if got == old {
 				return Outdated
+			}
+		}
+		if m := revisionLine.FindStringSubmatch(got); m != nil {
+			if n, _ := strconv.Atoi(m[1]); n > Revision {
+				return Newer
 			}
 		}
 		return Edited
@@ -102,6 +117,9 @@ func Sync(path string) (bool, error) {
 	b, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
+	}
+	if Inspect(string(b)) == Newer {
+		return false, nil // never downgrade a newer release's block
 	}
 	next := Apply(string(b))
 	if next == string(b) {

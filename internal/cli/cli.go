@@ -560,6 +560,9 @@ func (a *app) impactCmd() *cobra.Command {
 		if len(r.Untested) > 0 {
 			res.warnings = append(res.warnings, "no test appears to cover: "+strings.Join(r.Untested, ", ")+" (add tests before closing; a side effect there would go unnoticed)")
 		}
+		for _, d := range r.Deleted {
+			res.warnings = append(res.warnings, "deleted "+d.Path+" is still referenced by "+strings.Join(d.ReferencedBy, ", "))
+		}
 		return res, nil
 	})
 	return c

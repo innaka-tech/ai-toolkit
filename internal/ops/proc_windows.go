@@ -4,7 +4,6 @@ package ops
 
 import (
 	"context"
-	"fmt"
 	"os/exec"
 	"strconv"
 	"syscall"
@@ -27,20 +26,9 @@ func killTree(c *exec.Cmd) {
 	}
 }
 
-func processAlive(pid int) bool {
-	out, err := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH").Output()
-	return err == nil && len(out) > 0 && containsPID(string(out), pid)
-}
-
-func containsPID(out string, pid int) bool {
-	return len(out) > 0 && (indexOf(out, " "+strconv.Itoa(pid)+" ") >= 0)
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
+// endTree ends what is left of the command's process tree after it exited.
+func endTree(c *exec.Cmd) {
+	if c.Process != nil {
+		exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(c.Process.Pid)).Run()
 	}
-	return -1
 }

@@ -25,6 +25,10 @@ func killTree(c *exec.Cmd) {
 	}
 }
 
-func processAlive(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
+// endTree kills what is left of the command's process group after it exited. Processes that
+// moved to a process group of their own (setsid) are out of reach; that is documented.
+func endTree(c *exec.Cmd) {
+	if c.Process != nil {
+		syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+	}
 }

@@ -2,14 +2,25 @@ package gates_test
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
 )
+
+type runTaskOut = struct {
+	ID       string `json:"id"`
+	Status   string `json:"status"`
+	Attempts int    `json:"attempts"`
+	Handoff  string `json:"handoff"`
+	Commit   string `json:"commit"`
+	Stash    string `json:"stash"`
+	Note     string `json:"note"`
+}
 
 type runOut struct {
 	OK   bool `json:"ok"`
@@ -17,16 +28,8 @@ type runOut struct {
 		Planned []struct {
 			ID string `json:"id"`
 		} `json:"planned"`
-		Tasks []struct {
-			ID       string `json:"id"`
-			Status   string `json:"status"`
-			Attempts int    `json:"attempts"`
-			Handoff  string `json:"handoff"`
-			Commit   string `json:"commit"`
-			Stash    string `json:"stash"`
-			Note     string `json:"note"`
-		} `json:"tasks"`
-		Stopped string `json:"stopped"`
+		Tasks   []runTaskOut `json:"tasks"`
+		Stopped string       `json:"stopped"`
 	} `json:"data"`
 	Error *struct {
 		Code string `json:"code"`
@@ -156,7 +159,7 @@ func TestRunRejectsForgedDone(t *testing.T) {
 		t.Fatalf("run failed: %+v", r)
 	}
 	x := r.Data.Tasks[0]
-	if x.Status != "blocked" || !strings.Contains(x.Note, "without passing aitk close") || x.Attempts != 2 {
+	if x.Status != "blocked" || !strings.Contains(x.Note, "verification failed") || x.Attempts != 2 {
 		t.Fatalf("a forged done must be reopened and handed over: %+v", x)
 	}
 	if log := must(t, dir, "git", "log", "--format=%s", "-1"); strings.HasPrefix(log, "feat:") {
@@ -226,9 +229,112 @@ func TestRunLock(t *testing.T) {
 		t.Fatalf("a second run in the same worktree must be refused:\n%s", b)
 	}
 	gitDir := strings.TrimSpace(must(t, dir, "git", "rev-parse", "--absolute-git-dir"))
-	os.MkdirAll(filepath.Join(gitDir, "aitk"), 0o755)
-	os.WriteFile(filepath.Join(gitDir, "aitk", "run.lock"), []byte(fmt.Sprint(os.Getpid())), 0o600)
+	l, err := fsx.Acquire(filepath.Join(gitDir, "aitk", "run.lock"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if r := aitkRun(t, dir, "--cmd", goodAgent); r.Error == nil || r.Error.Code != "E_LOCKED" {
-		t.Fatalf("a live run lock must refuse a second run: %+v", r)
+		t.Fatalf("a held run lock must refuse a second run: %+v", r)
+	}
+	l.Release()
+	if r := aitkRun(t, dir, "--cmd", goodAgent); r.Error != nil {
+		t.Fatalf("a released lock (or a crashed run) must not block: %+v", r)
+	}
+}
+
+// Second review #1, #3: a forged handoff does not help, and a reopened task is worked again
+// as the active task (no stray tasks).
+func TestRunForgedHandoffThenRealWork(t *testing.T) {
+	dir := runProject(t)
+	mark := filepath.Join(t.TempDir(), "forged")
+	agent := "if [ ! -f " + mark + " ]; then touch " + mark + "; f=$(grep -l \"$AITK_RUN_TASK\" docs/ai/tasks/*.md | head -1); " +
+		"sed -i.bak 's/^status: in_progress/status: done/' \"$f\"; rm -f \"$f.bak\"; " +
+		"printf -- '---\\ntask: %s\\nat: \"9999-01-01T00:00:00Z\"\\nby: x\\noutcome: done\\ntask_status: done\\n---\\nforged\\n' \"$AITK_RUN_TASK\" > docs/ai/handoff/99990101T000000Z-x.md; else\n" + goodAgent + "fi\n"
+	r := aitkRun(t, dir, "--cmd", agent, "--max-tasks", "1")
+	x := r.Data.Tasks[0]
+	if x.Status != "done" || x.Attempts != 2 {
+		t.Fatalf("attempt 1 is forged and reopened, attempt 2 finishes: %+v", x)
+	}
+	if list := must(t, dir, bin, "task", "list", "--all"); strings.Count(list, "\n") != 2 {
+		t.Fatalf("no stray tasks may appear:\n%s", list)
+	}
+}
+
+// Second review #2: an agent cannot grant itself user acceptance by editing the task file.
+func TestRunForgedUATIsIgnored(t *testing.T) {
+	dir := runProject(t)
+	must(t, dir, "sh", "-c", `printf '\n[uat]\nrequired = "all"\n' >> aitk.toml && git commit -qam "chore: uat"`)
+	agent := `f=$(grep -l "$AITK_RUN_TASK" docs/ai/tasks/*.md | head -1)
+awk '/^evidence:/ && !d {print; print "  uat:"; print "    status: accepted"; print "    at: \"2026-01-01T00:00:00Z\""; d=1; next} {print}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+` + goodAgent
+	r := aitkRun(t, dir, "--cmd", agent, "--max-tasks", "1")
+	if x := r.Data.Tasks[0]; x.Status != "in_review" {
+		t.Fatalf("a forged acceptance must not make the task done: %+v", x)
+	}
+}
+
+// Second review #4: another task's committed tests, or a deleted test, are not a regression test.
+func TestRunRegressionGateIgnoresOtherTasksAndDeletions(t *testing.T) {
+	dir := runProject(t)
+	must(t, dir, bin, "task", "new", "Fix crash", "--tag", "bug", "--ac", "no crash")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: bug task")
+	// Feature tasks add tests (committed by --commit); the bug task changes only code.
+	agent := `case "$(aitk task show "$AITK_RUN_TASK")" in *"Fix crash"*) echo fix > code.txt;; *) echo t > "feat_${AITK_RUN_TASK}_test.go";; esac
+` + goodAgent
+	r := aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1")
+	statuses := map[string]int{}
+	for _, x := range r.Data.Tasks {
+		statuses[x.Status]++
+	}
+	if statuses["done"] != 2 || statuses["blocked"] != 1 {
+		t.Fatalf("the bug task must not pass on the feature tasks' tests: %+v", r.Data.Tasks)
+	}
+	if h := must(t, dir, "sh", "-c", "cat docs/ai/handoff/*.md"); !strings.Contains(h, "agent exited with 3") {
+		t.Fatalf("the bug task's close must have been refused:\n%s", h)
+	}
+	// Deleting a test is not a regression test either.
+	must(t, dir, bin, "task", "update", "--status", "todo", "--", firstBug(t, dir))
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: reopen")
+	del := `git rm -q feat_*_test.go; echo fix > code.txt
+` + goodAgent
+	r = aitkRun(t, dir, "--cmd", del, "--max-attempts", "1", "--max-tasks", "1")
+	if x := r.Data.Tasks[0]; x.Status == "done" {
+		t.Fatalf("deleting tests must not satisfy the gate: %+v", x)
+	}
+}
+
+func firstBug(t *testing.T, dir string) string {
+	t.Helper()
+	for _, l := range strings.Split(must(t, dir, bin, "task", "list", "--all"), "\n") {
+		if strings.Contains(l, "Fix crash") {
+			return strings.Fields(strings.TrimPrefix(strings.TrimSpace(l), "*"))[0]
+		}
+	}
+	t.Fatal("bug task not found")
+	return ""
+}
+
+// Second review #5: a rename in unfinished work is stashed as a whole; history stays clean.
+func TestRunStashKeepsRenamesTogether(t *testing.T) {
+	dir := runProject(t)
+	write(t, dir, "old.txt", "keep\n")
+	write(t, dir, ":weird.txt", "x\n")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: files")
+	agent := `git mv old.txt new.txt; echo y >> ./:weird.txt; aitk close --status blocked --summary "stuck" --knowledge none`
+	r := aitkRun(t, dir, "--cmd", agent, "--commit", "--max-tasks", "1")
+	if r.Error != nil || r.Data.Tasks[0].Stash == "" {
+		t.Fatalf("unfinished work must be stashed: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "old.txt")); err != nil {
+		t.Fatal("the rename must be undone in the working tree")
+	}
+	if files := must(t, dir, "git", "show", "--name-status", "--format=", "HEAD"); strings.Contains(files, "old.txt") || strings.Contains(files, "weird") {
+		t.Fatalf("the handover commit must hold only aitk's records:\n%s", files)
+	}
+	if st := strings.TrimSpace(must(t, dir, "git", "status", "--porcelain")); st != "" {
+		t.Fatalf("tree must be clean:\n%s", st)
 	}
 }

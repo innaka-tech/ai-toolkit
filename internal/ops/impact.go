@@ -24,7 +24,8 @@ type ImpactFile struct {
 type ImpactResult struct {
 	Files        []ImpactFile `json:"files"`
 	TestsChanged []string     `json:"tests_changed"`
-	Untested     []string     `json:"untested"` // changed source files no test appears to cover
+	Untested     []string     `json:"untested"`          // changed source files no test appears to cover
+	Deleted      []ImpactFile `json:"deleted,omitempty"` // deleted source files that code still references
 }
 
 var codeExt = map[string]bool{".go": true, ".js": true, ".jsx": true, ".ts": true, ".tsx": true, ".mjs": true, ".cjs": true, ".vue": true, ".svelte": true,
@@ -46,6 +47,7 @@ func Impact(p *project.Project) *ImpactResult {
 	type src struct {
 		path, ext, dir, stem, imp string
 		lines                     int
+		deleted                   bool
 	}
 	var sources []src
 	goModule := goModulePath(p)
@@ -59,10 +61,10 @@ func Impact(p *project.Project) *ImpactResult {
 		if !codeExt[ext] || strings.HasPrefix(c.Path, "docs/") {
 			continue
 		}
-		if _, err := os.Stat(p.Path(c.Path)); err != nil {
-			continue // deleted: nothing left to cover
-		}
 		s := src{path: c.Path, ext: ext, dir: path.Dir(c.Path), stem: strings.TrimSuffix(path.Base(c.Path), path.Ext(c.Path)), lines: c.Lines}
+		if _, err := os.Stat(p.Path(c.Path)); err != nil {
+			s.deleted = true
+		}
 		if ext == ".go" && goModule != "" {
 			s.imp = goModule
 			if s.dir != "." {
@@ -134,6 +136,12 @@ func Impact(p *project.Project) *ImpactResult {
 			f.Tests = append(f.Tests, t)
 		}
 		sort.Strings(f.Tests)
+		if s.deleted {
+			if len(f.ReferencedBy) > 0 { // whatever still refers to a deleted file is likely broken
+				res.Deleted = append(res.Deleted, f)
+			}
+			continue
+		}
 		if len(f.Tests) == 0 {
 			res.Untested = append(res.Untested, s.path)
 		}

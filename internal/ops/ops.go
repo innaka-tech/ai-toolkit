@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -574,6 +575,9 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 		if t.Evidence == nil {
 			t.Evidence = &task.Evidence{}
 		}
+		if in.Status == "" && IsBugTask(t) && len(t.Evidence.RegressionTests) == 0 {
+			t.Evidence.RegressionTests = capList(regressionTests(p, t), 10)
+		}
 		if cs := t.Criteria(); len(cs) > 0 {
 			n := 0
 			for _, c := range cs {
@@ -819,14 +823,20 @@ func IsBugTask(t *task.Task) bool {
 	return contains(t.Tags, "bug")
 }
 
-// regressionTested reports whether the task's own changes include a test file: the commits made
-// since the task was created plus uncommitted changes (not the whole branch, so another task's
-// tests do not count). The first match is recorded as evidence, so a later UAT acceptance, after
-// the work is committed or merged, still sees it.
+// regressionTested reports whether a bug task changed a test file. Evidence recorded by a
+// successful close counts (a later UAT acceptance, after the work is committed or merged, still
+// sees it); otherwise the task's own changes are inspected.
 func regressionTested(p *project.Project, t *task.Task) bool {
 	if t.Evidence != nil && len(t.Evidence.RegressionTests) > 0 {
 		return true
 	}
+	return len(regressionTests(p, t)) > 0
+}
+
+// regressionTests lists test files added or modified by the task: in commits made since it was
+// created that do not name another task in an AI-Task trailer, and in uncommitted changes.
+// Deleting a test is not a regression test.
+func regressionTests(p *project.Project, t *task.Task) []string {
 	var tests []string
 	seen := map[string]bool{}
 	add := func(path string) {
@@ -835,26 +845,66 @@ func regressionTested(p *project.Project, t *task.Task) bool {
 			tests = append(tests, path)
 		}
 	}
-	for _, c := range profile.Commits(p, t.Created) {
-		out, _ := gitx.RunRaw(p.Root, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root", c)
+	for _, c := range taskCommits(p, t) {
+		out, _ := gitx.RunRaw(p.Root, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root", "--diff-filter=AMR", c)
 		for _, f := range strings.Split(string(out), "\x00") {
 			if f != "" {
 				add(f)
 			}
 		}
 	}
-	for _, f := range worktreeChanges(p) {
-		add(f)
-	}
-	if len(tests) == 0 {
-		return false
-	}
-	if t.Evidence == nil {
-		t.Evidence = &task.Evidence{}
+	out, _ := gitx.RunRaw(p.Root, "status", "--porcelain", "-z", "--untracked-files=all")
+	toks := strings.Split(string(out), "\x00")
+	for i := 0; i < len(toks); i++ {
+		e := toks[i]
+		if len(e) < 4 {
+			continue
+		}
+		if e[0] != 'D' && e[1] != 'D' {
+			add(e[3:])
+		}
+		if e[0] == 'R' || e[0] == 'C' {
+			i++
+		}
 	}
 	sort.Strings(tests)
-	t.Evidence.RegressionTests = firstN(tests, 10)
-	return true
+	return tests
+}
+
+// taskCommits are the recent commits made at or after the task's creation that belong to it:
+// with its ID in an AI-Task trailer, or with no AI-Task trailer at all. Commit times are read
+// per commit, so one commit with a skewed date does not hide the others.
+func taskCommits(p *project.Project, t *task.Task) []string {
+	created, err := time.Parse("2006-01-02T15:04:05Z", t.Created)
+	if err != nil || gitx.Head(p.Root) == "" {
+		return nil
+	}
+	out, _ := gitx.RunRaw(p.Root, "log", "-n", "500", "--format=%H%x1f%ct%x1f%(trailers:key=AI-Task,valueonly,separator=%x2c)%x1e")
+	var cs []string
+	for _, rec := range strings.Split(string(out), "\x1e") {
+		f := strings.Split(strings.TrimSpace(rec), "\x1f")
+		if len(f) != 3 {
+			continue
+		}
+		ct, _ := strconv.ParseInt(f[1], 10, 64)
+		if ct < created.Unix() {
+			continue
+		}
+		if ids := strings.TrimSpace(f[2]); ids != "" && !containsFold(strings.Split(ids, ","), t.ID) {
+			continue // another task's commit
+		}
+		cs = append(cs, f[0])
+	}
+	return cs
+}
+
+func containsFold(xs []string, s string) bool {
+	for _, x := range xs {
+		if strings.EqualFold(strings.TrimSpace(x), s) {
+			return true
+		}
+	}
+	return false
 }
 
 var testFile = regexp.MustCompile(`((?i:_test\.[a-z0-9]+|\.(test|spec)\.(js|jsx|ts|tsx|mjs|cjs|vue|svelte|py|rb|php|go|java|kt|cs|swift|dart|ex|exs|rs|c|cc|cpp|scala|sh|lua)|_spec\.rb|_tests?\.exs?)|^tests?\.py|^test_[^/]+\.py|^conftest\.py|[A-Za-z0-9](Test|Tests|Spec|IT)\.(java|kt|cs|php|swift|scala|groovy))$`)
@@ -870,4 +920,11 @@ func IsTestPath(path string) bool {
 		}
 	}
 	return testFile.MatchString(parts[len(parts)-1])
+}
+
+func capList(xs []string, n int) []string {
+	if len(xs) > n {
+		return xs[:n]
+	}
+	return xs
 }

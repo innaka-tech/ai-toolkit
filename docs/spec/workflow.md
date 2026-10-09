@@ -37,6 +37,7 @@ aitk owns exactly one block, delimited by markers. Everything outside the marker
 
 ```markdown
 <!-- aitk:begin v=2 -->
+<!-- aitk:block-revision 2 -->
 ## Working in this repository (aitk)
 
 1. Run `aitk brief` and read its output. Do not read other files under docs/ai/ unless the brief points to them.
@@ -51,6 +52,7 @@ If `aitk` is not installed, read docs/ai/project-context.md and the newest file 
 
 - The block MUST stay ≤ 25 lines. It MUST NOT depend on MCP; every step is a shell command.
 - `aitk init` and `aitk adapters sync` create or update the block idempotently. A changed block is reported by `aitk doctor`.
+- `aitk:block-revision` increases with each release that changes the block. A block from an earlier release is outdated (`doctor --fix` updates it); one with a higher revision comes from a newer aitk and is left alone; any other difference is a hand edit, which the pre-commit gate rejects.
 - The whole file SHOULD stay ≤ 120 lines; `aitk doctor` warns above that.
 
 ## 3. Agent protocol

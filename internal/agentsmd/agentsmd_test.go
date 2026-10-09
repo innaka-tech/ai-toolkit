@@ -48,3 +48,17 @@ func TestApplyKeepsUserTextAndReplacesOldBlocks(t *testing.T) {
 		t.Fatalf("v1 block not replaced:\n%s", got)
 	}
 }
+
+func TestNewerReleaseBlockIsKept(t *testing.T) {
+	newer := strings.Replace(Block, "block-revision 2", "block-revision 9", 1)
+	newer = strings.Replace(newer, "Run `aitk brief`", "Run `aitk brief --full`", 1)
+	content := "# P\n\n" + newer + "\n"
+	if Inspect(content) != Newer {
+		t.Fatalf("a higher revision is a newer release, got %v", Inspect(content))
+	}
+	path := t.TempDir() + "/AGENTS.md"
+	os.WriteFile(path, []byte(content), 0o644)
+	if changed, _ := Sync(path); changed {
+		t.Fatal("an older aitk must not replace a newer block")
+	}
+}

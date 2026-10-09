@@ -179,6 +179,7 @@ func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) 
 		}
 	}
 	var items []importItem
+	batchPrefixes := map[string]string{} // prefix → file, for features imported together
 	for _, path := range paths {
 		b, err := os.ReadFile(path)
 		if err != nil {
@@ -204,6 +205,11 @@ func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) 
 		}
 		n := 0
 		prefix := checklistPrefix(p, feature, filepath.ToSlash(rel))
+		if owner, ok := batchPrefixes[prefix]; ok && owner != filepath.ToSlash(rel) {
+			sum := sha256.Sum256([]byte(filepath.ToSlash(rel)))
+			prefix = strings.ToUpper(feature[:min(len(feature), 7)]) + "-" + strings.ToUpper(hex.EncodeToString(sum[:])[:4])
+		}
+		batchPrefixes[prefix] = filepath.ToSlash(rel)
 		barriers, group := []string(nil), []string(nil)
 		for _, l := range strings.Split(string(b), "\n") {
 			if kind == "spec-kit" && strings.HasPrefix(strings.TrimSpace(l), "## ") && len(group) > 0 {

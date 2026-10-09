@@ -231,8 +231,8 @@ func validateFile(rel string, content []byte) []Violation {
 			return bad(err.Error())
 		}
 	case rel == project.AgentsFile:
-		// A block from an older or newer aitk release is fine here (teammates may run different
-		// versions); doctor offers the update. Only a missing or hand-edited block is rejected.
+		// A block from an older or newer aitk release (2.4 and later recognize both) is fine here,
+		// since teammates may run different versions; only a missing or hand-edited block is rejected.
 		if st := agentsmd.Inspect(string(content)); st == agentsmd.Missing || st == agentsmd.Edited || st == agentsmd.V1Only {
 			return bad("aitk block missing or edited; run `aitk doctor --fix` and stage AGENTS.md")
 		}

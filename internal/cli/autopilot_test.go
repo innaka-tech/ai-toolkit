@@ -172,6 +172,11 @@ func TestImpactFindsReferencesAndUntestedFiles(t *testing.T) {
 	if u := data(aitk(t, dir, "impact"))["untested"].([]any); len(u) != 0 {
 		t.Fatalf("pricing_test.go covers the package now: %v", u)
 	}
+	// Deleting a file that code still imports is reported.
+	os.RemoveAll(filepath.Join(dir, "pricing"))
+	if d, _ := data(aitk(t, dir, "impact"))["deleted"].([]any); len(d) != 1 || d[0].(map[string]any)["path"] != "pricing/pricing.go" {
+		t.Fatalf("deleted but referenced file not reported: %v", d)
+	}
 }
 
 const osvJSON = `{"results":[{"source":{"path":"SRC/package-lock.json","type":"lockfile"},"packages":[
@@ -271,4 +276,17 @@ func TestRegressionGateCountsOnlyTheTasksChanges(t *testing.T) {
 	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
 	mustOK(t, aitk(t, dir, "check"))
 	expect(t, aitk(t, dir, "close", "--summary", "fixed", "--knowledge", "none"), 3, "E_DOD_REGRESSION_TEST")
+}
+
+// Second review #6: features sharing a 12-character prefix, imported together, both get tasks.
+func TestSpecKitPrefixCollisionInOneImport(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "specs/001-checkout-flow-v1/tasks.md", "- [ ] T001 One\n- [ ] T002 Two\n")
+	write(t, dir, "specs/002-checkout-flow-v2/tasks.md", "- [ ] T001 Three\n- [ ] T002 Four\n")
+	r := aitk(t, dir, "import", "spec-kit")
+	mustOK(t, r)
+	if imp := data(r)["imported"].([]any); len(imp) != 4 {
+		t.Fatalf("all four tasks must be imported: %v", data(r))
+	}
 }

@@ -13,12 +13,11 @@ import (
 	"unicode"
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/apperr"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/audit"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/brief"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/checkrun"
-	"github.com/innaka-tech/ai-toolkit/v2/internal/claims"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
-	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/profile"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/session"
@@ -223,12 +222,13 @@ func (r *runner) one(c Candidate) RunTask {
 	for rt.Attempts < r.attempts {
 		rt.Attempts++
 		fmt.Fprintf(r.log, "aitk run: %s %q, attempt %d of %d\n", t.ID, t.Title, rt.Attempts, r.attempts)
-		if rt.Attempts > 1 {
-			WithLock(p, func() error { _, err := claims.Take(p, t.ID, r.agentName, DefaultClaimTTL); return err }) // renew
+		// Every attempt starts with the task active and claimed (a reopened task lost both).
+		if cur, err := TaskStart(p, t.ID); err == nil {
+			t = cur
 		}
+		snap := protectedOf(t)
 		prompt := runPrompt(p, t, rt.Attempts, r.attempts)
 		before := profile.Fingerprint(p)
-		started := task.Now()
 		ar := r.runAgent(prompt, t.ID)
 		code, runErr := ar.code, ar.err
 		cur, ferr := task.Find(p, t.ID)
@@ -252,19 +252,22 @@ func (r *runner) one(c Candidate) RunTask {
 		}
 		switch t.Status {
 		case task.Done, task.InReview:
-			if why := r.verify(t, started); why != "" {
-				// Not reached through aitk close: put it back and treat the attempt as unfinished.
+			claimed := t.Status
+			target, why := r.decide(t, snap)
+			if why != "" {
 				t.Status, t.Closed, t.Updated = task.InProgress, "", task.Now()
 				WithLock(p, func() error { return task.Save(p, t) })
-				rt.Note = "the task was marked " + string(cur.Status) + " without passing aitk close (" + why + "); reopened"
+				rt.Note = "the agent reported " + claimed + ", but aitk's own verification failed (" + why + "); reopened"
 				continue
 			}
-			rt.Status = t.Status
-			if t.Status == task.InReview {
+			rt.Status = target
+			if target == task.InReview {
 				rt.Note = "waiting for review passes or a person's acceptance (aitk uat accept " + t.ID + ")"
 			}
 			return rt
 		case task.Blocked, task.Cancelled:
+			restoreProtected(t, snap) // whatever else the agent wrote, it cannot grant itself UAT or reviews
+			WithLock(p, func() error { return task.Save(p, t) })
 			rt.Status, rt.Note = t.Status, "the agent stopped the task; see its handoff"
 			return rt
 		}
@@ -284,42 +287,95 @@ func (r *runner) one(c Candidate) RunTask {
 	return r.handOver(t, rt)
 }
 
-// verify confirms that a done or in_review status came from aitk close (or a person's UAT
-// acceptance): a matching handoff written during the attempt, the Definition of Done holding
-// on the current files, and the check passing when aitk runs it itself. It returns why not.
-func (r *runner) verify(t *task.Task, since string) string {
-	p := r.p
-	found := false
-	for _, h := range handoff.List(p) {
-		if strings.EqualFold(h.Task, t.ID) && h.At >= since && h.TaskStatus == t.Status {
-			found = true
-			break
+// protected holds the fields an agent must not be able to grant itself: a person's acceptance,
+// review passes (which count only from other tools), audit results, and regression evidence.
+type protected struct {
+	uat        *task.UAT
+	review     *task.Review
+	audit      *task.Audit
+	regression []string
+}
+
+func protectedOf(t *task.Task) protected {
+	var s protected
+	if t.Review != nil {
+		r := *t.Review
+		r.Passes = append([]task.Pass(nil), t.Review.Passes...)
+		s.review = &r
+	}
+	if e := t.Evidence; e != nil {
+		if e.UAT != nil {
+			u := *e.UAT
+			s.uat = &u
 		}
+		if e.Audit != nil {
+			a := *e.Audit
+			s.audit = &a
+		}
+		s.regression = append([]string(nil), e.RegressionTests...)
 	}
-	if !found {
-		return "no handoff from aitk close"
+	return s
+}
+
+func restoreProtected(t *task.Task, s protected) {
+	t.Review = s.review
+	if t.Evidence == nil {
+		t.Evidence = &task.Evidence{}
 	}
-	prof := t.Profile
-	if computed := profile.Compute(p, profile.Diff(p)); !t.ProfilePinned || computed == "strict" {
-		prof = computed
-	}
-	target, err := dod(p, t, prof, CloseInput{})
-	if err != nil {
-		return "the Definition of Done does not hold: " + err.Error()
-	}
-	if target != t.Status {
-		return "the Definition of Done allows " + target
-	}
+	t.Evidence.UAT, t.Evidence.Audit, t.Evidence.RegressionTests = s.uat, s.audit, s.regression
+}
+
+// decide re-derives the outcome of a task the agent reports as done or in_review, from what aitk
+// itself can establish rather than from files the agent can write: the protected fields go back to
+// their values before the attempt, the check (and the audit, when required) are run by aitk, the
+// regression evidence is recomputed, and the Definition of Done decides. It returns the status to
+// record, or why the task cannot leave in_progress.
+func (r *runner) decide(t *task.Task, snap protected) (string, string) {
+	p := r.p
+	restoreProtected(t, snap)
+	t.Evidence.RegressionTests = nil
+	tree := profile.Fingerprint(p)
 	if cmd := p.Config.Check.Cmd; cmd != "" {
 		timeout, err := time.ParseDuration(p.Config.CheckTimeout())
 		if err != nil {
 			timeout = 10 * time.Minute
 		}
-		if res := checkrun.Run(p.Root, cmd, timeout, false); res.ExitCode != 0 {
-			return fmt.Sprintf("the check fails when aitk runs it (exit %d)", res.ExitCode)
+		res := checkrun.Run(p.Root, cmd, timeout, false)
+		if res.ExitCode != 0 {
+			return "", fmt.Sprintf("the check fails when aitk runs it (exit %d)", res.ExitCode)
+		}
+		t.Evidence.Check = &task.Check{Cmd: cmd, ExitCode: 0, DurationMs: res.DurationMs, Summary: checkrun.Summary(strings.TrimSpace(res.Output), 1500), At: task.Now(), Tree: tree}
+	}
+	prof := t.Profile
+	if computed := profile.Compute(p, profile.Diff(p)); !t.ProfilePinned || computed == "strict" {
+		prof = computed
+	}
+	if p.Config.AuditRequired(prof) {
+		a, _ := audit.Run(p, false)
+		a.Tree = tree
+		t.Evidence.Audit = a
+		if !a.Passed {
+			return "", "the security audit fails when aitk runs it"
 		}
 	}
-	return ""
+	target, err := dod(p, t, prof, CloseInput{})
+	if err != nil {
+		return "", "the Definition of Done does not hold: " + err.Error()
+	}
+	if IsBugTask(t) {
+		t.Evidence.RegressionTests = capList(regressionTests(p, t), 10)
+	}
+	t.Status, t.Profile, t.Updated = target, prof, task.Now()
+	if target == task.Done && t.Closed == "" {
+		t.Closed = t.Updated
+	}
+	if target != task.Done {
+		t.Closed = ""
+	}
+	if err := WithLock(p, func() error { return task.Save(p, t) }); err != nil {
+		return "", err.Error()
+	}
+	return target, ""
 }
 
 // handOver closes an unfinished task as blocked with a handoff, attributed to the agent.
@@ -370,8 +426,9 @@ func worktreeChanges(p *project.Project) []string {
 			continue
 		}
 		paths = append(paths, e[3:])
-		if e[0] == 'R' || e[0] == 'C' {
-			i++ // the rename's source path follows
+		if (e[0] == 'R' || e[0] == 'C') && i+1 < len(toks) {
+			i++
+			paths = append(paths, toks[i]) // the rename's source: part of the same change
 		}
 	}
 	return paths
@@ -395,48 +452,68 @@ func isAitkState(path string) bool {
 // record is committed, so a broken attempt never lands in the history or in the next task's commit.
 func (r *runner) commitWork(rt *RunTask) error {
 	p := r.p
-	changed := worktreeChanges(p)
-	if len(changed) == 0 {
+	if len(worktreeChanges(p)) == 0 {
 		return nil
 	}
 	t, err := task.Find(p, rt.ID)
 	if err != nil {
 		return err
 	}
-	var subject string
-	if rt.Status == task.Done || rt.Status == task.InReview {
-		subject = commitSubject(t)
+	finished := rt.Status == task.Done || rt.Status == task.InReview
+	if finished {
+		if _, err := literalGit(p, "add", "-A"); err != nil {
+			return err
+		}
+		if err := r.commit(commitSubject(t), t.ID); err != nil {
+			return err
+		}
 	} else {
-		var work []string
-		for _, c := range changed {
-			if !isAitkState(c) {
-				work = append(work, c)
+		// Commit aitk's handover record alone, then set everything else aside. Unstaging first
+		// means a rename or a staged change by the agent cannot ride along in the commit; stashing
+		// without pathspecs keeps renames and odd file names intact.
+		if _, err := literalGit(p, "reset", "-q"); err != nil {
+			return err
+		}
+		if _, err := literalGit(p, "add", "-A", "--", project.DocsAI, "ai-state.json"); err != nil {
+			return err
+		}
+		if out, _ := literalGit(p, "diff", "--cached", "--name-only"); strings.TrimSpace(out) != "" {
+			if err := r.commit("chore(aitk): hand over "+t.ID, t.ID); err != nil {
+				return err
 			}
 		}
-		if len(work) > 0 {
+		if len(worktreeChanges(p)) > 0 {
 			msg := "aitk run: unfinished work on " + t.ID
-			args := append([]string{"stash", "push", "--include-untracked", "-m", msg, "--"}, work...)
-			if _, err := gitx.RunRaw(p.Root, args...); err != nil {
-				return err
+			// No pathspecs here, and not literalGit: stash uses pathspec magic internally.
+			if _, err := gitx.RunRaw(p.Root, "stash", "push", "--include-untracked", "-m", msg); err != nil {
+				return fmt.Errorf("could not set the unfinished work aside: %w", err)
 			}
 			rt.Stash = msg
 		}
-		if len(worktreeChanges(p)) == 0 {
-			return nil
-		}
-		subject = "chore(aitk): hand over " + t.ID
 	}
-	if _, err := gitx.RunRaw(p.Root, "add", "-A"); err != nil {
-		return err
+	if left := worktreeChanges(p); len(left) > 0 {
+		return fmt.Errorf("files left in the working tree: %s", strings.Join(firstN(left, 5), ", "))
 	}
-	c := exec.Command("git", "commit", "-q", "-m", subject, "-m", "AI-Task: "+t.ID+"\nAI-Tool: "+r.agentName)
+	return nil
+}
+
+func (r *runner) commit(subject, id string) error {
+	if out, err := literalGit(r.p, "commit", "-q", "-m", subject, "-m", "AI-Task: "+id+"\nAI-Tool: "+r.agentName); err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(checkSummary(out)))
+	}
+	return nil
+}
+
+// literalGit runs git with pathspec magic off, so a file named ":x" is just a file.
+func literalGit(p *project.Project, args ...string) (string, error) {
+	c := exec.Command("git", args...)
 	c.Dir = p.Root
-	if out, err := c.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s", strings.TrimSpace(checkSummary(string(out))))
+	c.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
+	out, err := c.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("git %s: %v: %s", args[0], err, strings.TrimSpace(string(out)))
 	}
-	out, err := gitx.RunRaw(p.Root, "rev-parse", "--short", "HEAD")
-	rt.Commit = strings.TrimSpace(string(out))
-	return err
+	return string(out), nil
 }
 
 func commitSubject(t *task.Task) string {
@@ -521,6 +598,7 @@ func (r *runner) runAgent(prompt, id string) agentRun {
 	c.WaitDelay = 10 * time.Second
 	start := time.Now()
 	err := c.Run()
+	endTree(c) // background processes the agent left behind (servers, watchers) end with it
 	res := agentRun{duration: time.Since(start), tail: strings.TrimSpace(string(tail.b))}
 	var ee *exec.ExitError
 	switch {
@@ -534,21 +612,19 @@ func (r *runner) runAgent(prompt, id string) agentRun {
 	return res
 }
 
-// runLock allows one aitk run per worktree.
+// runLock allows one aitk run per worktree. The kernel holds the lock and releases it when the
+// process ends, so a crash leaves nothing stale.
 func runLock(p *project.Project) (func(), error) {
 	path := filepath.Join(p.AitkDir(), "run.lock")
-	if b, err := os.ReadFile(path); err == nil {
-		var pid int
-		fmt.Sscan(string(b), &pid)
-		if pid > 0 && pid != os.Getpid() && processAlive(pid) {
-			return nil, apperr.New("E_LOCKED", apperr.ExitConflict, "wait for it to finish, or use another worktree (aitk work <id>)",
-				"another aitk run is working in this worktree (pid %d)", pid)
-		}
+	l, err := fsx.Acquire(path, 0)
+	if errors.Is(err, fsx.ErrLocked) {
+		return nil, apperr.New("E_LOCKED", apperr.ExitConflict, "wait for it to finish, or use another worktree (aitk work <id>)",
+			"another aitk run is working in this worktree")
 	}
-	if err := fsx.WriteFile(path, []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
+	if err != nil {
 		return nil, err
 	}
-	return func() { os.Remove(path) }, nil
+	return l.Release, nil
 }
 
 // tailBuffer keeps the last max bytes written to it.
