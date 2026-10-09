@@ -619,7 +619,11 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			res.Notes = append(res.Notes, fmt.Sprintf("large change (%d files, %d lines): smaller tasks are easier to review and safer to revert", len(changes), total))
 		}
 		if target == task.InReview {
-			res.Notes = append(res.Notes, "strict task needs ≥2 review passes (last with 0 findings, one by a different tool/session) before it can be done: aitk review pass --findings N")
+			if prof == "strict" && !reviewDone(t) {
+				res.Notes = append(res.Notes, "strict task needs ≥2 review passes (last with 0 findings, one by a tool that did not work on it) before it can be done: aitk review pass --findings N")
+			} else {
+				res.Notes = append(res.Notes, "waiting for user acceptance: a person runs aitk uat accept "+t.ID+" (script: aitk uat script "+t.ID+")")
+			}
 		}
 		return session.Save(p, s)
 	})
@@ -636,11 +640,14 @@ func implicitTitle(summary string) string {
 	return t
 }
 
-// dod returns the status the task may move to, or a gate error.
+// dod returns the status the task may move to, or a gate error (docs/spec/workflow.md §5):
+// check → criteria → risk analysis (strict) → ASVS checklist (strict) → security audit →
+// independent review (strict) → user acceptance.
 func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, error) {
 	if in.Status != "" { // handing over unfinished work: no DoD
 		return in.Status, nil
 	}
+	tree := profile.Fingerprint(p)
 	if p.Config.Check.Cmd != "" {
 		c := (*task.Check)(nil)
 		if t.Evidence != nil {
@@ -651,15 +658,12 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 			return "", apperr.New("E_DOD_CHECK_STALE", apperr.ExitGate, "aitk check", "no check has been recorded for this task")
 		case c.ExitCode != 0:
 			return "", apperr.New("E_DOD_CHECK_STALE", apperr.ExitGate, "fix the failures, then run: aitk check", "the last check failed (exit %d)", c.ExitCode)
-		case c.Tree != profile.Fingerprint(p):
+		case c.Tree != tree:
 			return "", apperr.New("E_DOD_CHECK_STALE", apperr.ExitGate, "aitk check", "files changed after the last passing check")
 		}
 	}
 	cs := t.Criteria()
-	if len(cs) == 0 && prof == "lite" {
-		return task.Done, nil // lite: criteria optional, but any written must be met (below)
-	}
-	if len(cs) == 0 {
+	if len(cs) == 0 && prof != "lite" {
 		return "", apperr.New("E_DOD_ACCEPTANCE", apperr.ExitGate, fmt.Sprintf(`aitk task update %s --add-ac "Given …, when …, then …"`, t.ID), "a %s task needs at least one acceptance criterion", prof)
 	}
 	var open []string
@@ -671,16 +675,42 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 	if len(open) > 0 {
 		return "", apperr.New("E_DOD_ACCEPTANCE", apperr.ExitGate, fmt.Sprintf("aitk task update %s --ac-done %s", t.ID, strings.Join(open, ",")), "acceptance criteria not yet satisfied: %s", strings.Join(open, ", "))
 	}
-	if prof == "lite" || prof == "standard" {
-		return task.Done, nil
+	if prof == "strict" {
+		if !t.RiskFilled() {
+			return "", apperr.New("E_DOD_RISK", apperr.ExitGate, "fill the Risk section of "+t.File+" (Impact, Security, Rollback, Validation)", "strict task without risk analysis")
+		}
+		if p.Config.ASVSLevel() > 0 {
+			present, openSec := securityOpen(t)
+			if !present {
+				return "", apperr.New("E_DOD_SECURITY", apperr.ExitGate, "aitk security checklist "+t.ID, "strict task without the OWASP ASVS security checklist")
+			}
+			if len(openSec) > 0 {
+				return "", apperr.New("E_DOD_SECURITY", apperr.ExitGate, "verify each item in "+t.File+" (check it, or write \"N/A: <reason>\" and check it)",
+					"security checklist items not verified: %s", strings.Join(openSec, ", "))
+			}
+		}
 	}
-	if !t.RiskFilled() {
-		return "", apperr.New("E_DOD_RISK", apperr.ExitGate, "fill the Risk section of "+t.File+" (Impact, Security, Rollback, Validation)", "strict task without risk analysis")
+	if p.Config.AuditRequired(prof) {
+		a := (*task.Audit)(nil)
+		if t.Evidence != nil {
+			a = t.Evidence.Audit
+		}
+		switch {
+		case a == nil:
+			return "", apperr.New("E_DOD_AUDIT", apperr.ExitGate, "aitk audit", "a %s task needs a security audit (dependencies, static analysis, secrets)", prof)
+		case !a.Passed:
+			return "", apperr.New("E_DOD_AUDIT", apperr.ExitGate, "fix what the scanners report, then run: aitk audit", "the last security audit found problems")
+		case a.Tree != tree:
+			return "", apperr.New("E_DOD_AUDIT", apperr.ExitGate, "aitk audit", "files changed after the last passing audit")
+		}
 	}
-	if reviewDone(t) {
-		return task.Done, nil
+	if prof == "strict" && !reviewDone(t) {
+		return task.InReview, nil
 	}
-	return task.InReview, nil
+	if p.Config.UATRequired(prof) && (t.Evidence == nil || t.Evidence.UAT == nil || t.Evidence.UAT.Status != "accepted") {
+		return task.InReview, nil
+	}
+	return task.Done, nil
 }
 
 // reviewDone: ≥2 passes, the last with 0 findings, and at least one pass by a tool that did

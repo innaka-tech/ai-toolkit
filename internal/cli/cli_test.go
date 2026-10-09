@@ -48,6 +48,12 @@ func initRepo(t *testing.T, dir string) {
 	write(t, dir, "aitk.toml", cfg)
 }
 
+// reviewOnly turns off the security gates so a test can focus on review rules.
+func reviewOnly(t *testing.T, dir string) {
+	t.Helper()
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[security]\nasvs_level = 0\naudit = \"off\"\n")
+}
+
 func run(t *testing.T, dir string, name string, args ...string) string {
 	t.Helper()
 	c := exec.Command(name, args...)
@@ -249,6 +255,7 @@ func TestStrictNeedsRiskAndIndependentReview(t *testing.T) {
 	initRepo(t, dir)
 	cfg := read(t, dir, "aitk.toml")
 	write(t, dir, "aitk.toml", strings.Replace(cfg, "sensitive_paths = []", `sensitive_paths = ["db/**"]`, 1))
+	reviewOnly(t, dir)
 	id := newStarted(t, dir, "Add migration", "--ac", "migration applies")
 	write(t, dir, "db/001.sql", "create table x(id int);\n")
 	write(t, dir, "ok.txt", "1")

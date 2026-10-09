@@ -47,6 +47,14 @@ Create the next ADR
 aitk adr new "<title>"
 ```
 
+## `aitk audit`
+
+Security audit: dependency vulnerabilities, static analysis, and secrets; records evidence on the active task
+
+```
+aitk audit
+```
+
 ## `aitk brief`
 
 Print the bounded session brief: start every session here
@@ -301,6 +309,14 @@ aitk review pass [flags]
       --findings int   number of problems found in this pass (required) (default -1)
 ```
 
+## `aitk security checklist`
+
+Add the OWASP ASVS checklist to a task (required for strict tasks)
+
+```
+aitk security checklist [id]
+```
+
 ## `aitk switch`
 
 Hand the work to another AI tool: write a handoff and start it with the brief
@@ -412,6 +428,44 @@ aitk task update [id] [flags]
       --profile string       pin the risk profile
       --status string        new status: todo, in_progress, blocked, or cancelled (done is set by close)
       --tag stringArray      add a tag (repeatable)
+```
+
+## `aitk uat accept`
+
+Record a person's acceptance (refused for AI agents); completes the task when nothing else blocks it
+
+```
+aitk uat accept [id] [flags]
+```
+
+```
+      --by string     who accepts (default: git user.name)
+      --note string   what was tested
+```
+
+## `aitk uat reject`
+
+Record a person's rejection; the task goes back to in_progress
+
+```
+aitk uat reject [id] [flags]
+```
+
+```
+      --by string       who rejects (default: git user.name)
+      --reason string   what failed (required)
+```
+
+## `aitk uat script`
+
+Write docs/ai/uat/<id>.md: scenarios from the acceptance criteria
+
+```
+aitk uat script [id] [flags]
+```
+
+```
+      --force   overwrite an existing script
 ```
 
 ## `aitk version`

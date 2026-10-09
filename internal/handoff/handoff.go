@@ -35,8 +35,9 @@ type Meta struct {
 // Handoff is a parsed handoff file.
 type Handoff struct {
 	Meta
-	Body string `json:"body"`
-	File string `json:"file"`
+	Body    string `json:"body"`
+	File    string `json:"file"`
+	written int64
 }
 
 // Write creates docs/ai/handoff/<UTC>-<task>.md and refreshes the index.
@@ -87,11 +88,17 @@ func List(p *project.Project) []*Handoff {
 		if yaml.Unmarshal([]byte(front), &h.Meta) != nil {
 			continue
 		}
+		if info, err := e.Info(); err == nil {
+			h.written = info.ModTime().UnixNano()
+		}
 		out = append(out, h)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].At != out[j].At {
 			return out[i].At > out[j].At
+		}
+		if out[i].written != out[j].written { // same second: the later write is newer
+			return out[i].written > out[j].written
 		}
 		return out[i].File > out[j].File
 	})
