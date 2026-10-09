@@ -35,7 +35,7 @@ aitk uat accept T-k3m9 --note "refunded a test order in staging"   # → done
 aitk uat reject T-k3m9 --reason "refund email shows the wrong amount" # → back to in_progress
 ```
 
-Install scanners for your stack to make the audit meaningful: [osv-scanner](https://google.github.io/osv-scanner/) covers most ecosystems; semgrep adds static analysis. Or set them explicitly:
+The install script already installs [osv-scanner](https://google.github.io/osv-scanner/), which covers most ecosystems; on a machine that lacks it, run `aitk audit install` (Homebrew on macOS, else the checksum-verified release binary). `aitk doctor` warns when a project has dependency manifests and no scanner. Install semgrep for static analysis. Or set them explicitly:
 
 ```toml
 [[security.scanners]]

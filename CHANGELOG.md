@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [2.3.0] - 2026-10-09
+
+### Added
+- `aitk audit install` installs osv-scanner, the dependency vulnerability scanner `aitk audit` uses for every ecosystem: Homebrew on macOS, otherwise the official release binary after its SHA-256 is verified against the release checksum file (`--dir`, `--no-brew`).
+- `install.sh` now installs osv-scanner along with aitk (skip with `AITK_NO_SCANNER=1`), so audits work out of the box.
+- `aitk doctor` warns when a project has dependency manifests but no scanner is installed, with the fix command; `aitk audit` warnings name it too.
+
+### Fixed
+- `aitk audit` failed in repositories without dependency manifests once osv-scanner was installed (osv-scanner exits 128 when there is nothing to scan).
+
 ## [2.2.0] - 2026-10-09
 
 Quality and delivery standards for the projects aitk manages.

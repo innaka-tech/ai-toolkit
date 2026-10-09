@@ -55,6 +55,19 @@ Security audit: dependency vulnerabilities, static analysis, and secrets; record
 aitk audit
 ```
 
+## `aitk audit install`
+
+Install osv-scanner, the dependency vulnerability scanner aitk audit uses (Homebrew on macOS, else the checksum-verified release binary)
+
+```
+aitk audit install [flags]
+```
+
+```
+      --dir string   directory for the downloaded binary (default ~/.local/bin; %LOCALAPPDATA%\aitk\bin on Windows)
+      --no-brew      download the release binary even when Homebrew is available
+```
+
 ## `aitk brief`
 
 Print the bounded session brief: start every session here

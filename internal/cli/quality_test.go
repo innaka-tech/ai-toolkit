@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -113,4 +117,61 @@ func TestAuditFindsCommittedSecret(t *testing.T) {
 	if strings.Contains(r.stdout, token) || !strings.Contains(r.stdout, "config.env") {
 		t.Fatalf("audit must name the file without printing the secret:\n%s", r.stdout)
 	}
+}
+
+// doctor names a missing dependency scanner and the command that installs it.
+func TestDoctorWarnsWhenNoScannerInstalled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH isolation uses a symlink to git")
+	}
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "go.mod", "module example.com/x\n")
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not found")
+	}
+	bin := t.TempDir()
+	if err := os.Symlink(git, filepath.Join(bin, "git")); err != nil {
+		t.Skip(err)
+	}
+	t.Setenv("PATH", bin) // git only: no osv-scanner, no govulncheck
+	r := aitk(t, dir, "doctor")
+	if !strings.Contains(r.stdout, "security scanners") || !strings.Contains(r.stdout, "aitk audit install") {
+		t.Fatalf("doctor must point at aitk audit install:\n%s", r.stdout)
+	}
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[security]\naudit = \"off\"\n")
+	if r := aitk(t, dir, "doctor"); strings.Contains(r.stdout, "security scanners") {
+		t.Fatalf("no scanner warning when audit is off:\n%s", r.stdout)
+	}
+}
+
+// osv-scanner exits 128 in a repository without dependency manifests; that is not a finding.
+func TestAuditPassesWhenOSVFindsNoManifests(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake scanner is a shell script")
+	}
+	dir := repo(t)
+	initRepo(t, dir)
+	newStarted(t, dir, "Config", "--ac", "loads")
+	bin := t.TempDir()
+	write(t, bin, "osv-scanner", "#!/bin/sh\necho 'No package sources found'\nexit 128\n")
+	os.Chmod(filepath.Join(bin, "osv-scanner"), 0o755)
+	for _, tool := range []string{"git", "sh"} { // only these: no real scanners
+		if p, err := exec.LookPath(tool); err == nil {
+			os.Symlink(p, filepath.Join(bin, tool))
+		}
+	}
+	t.Setenv("PATH", bin)
+	r := aitk(t, dir, "audit")
+	mustOK(t, r)
+	if !strings.Contains(r.stdout, "found no package sources") {
+		t.Fatalf("osv-scanner result missing:\n%s", r.stdout)
+	}
+	write(t, bin, "osv-scanner", "#!/bin/sh\necho 'GHSA-xxxx found'\nexit 1\n")
+	expect(t, aitk(t, dir, "audit"), 1, "E_AUDIT_FAILED")
+	// With a manifest present, exit 128 means osv-scanner could not read it: still a failure.
+	write(t, bin, "osv-scanner", "#!/bin/sh\necho 'No package sources found'\nexit 128\n")
+	write(t, dir, "build.gradle", "plugins {}\n")
+	expect(t, aitk(t, dir, "audit"), 1, "E_AUDIT_FAILED")
 }

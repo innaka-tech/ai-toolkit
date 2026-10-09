@@ -11,6 +11,7 @@ import (
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/adapters"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/agentsmd"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/audit"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/compat"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/conv"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
@@ -242,6 +243,11 @@ func Run(p *project.Project, fix bool) *Report {
 		}
 	} else if unfilled {
 		r.add("conventions", "warn", conv.File+" is still the template: fill in the stack, style, errors, data, tests, and security rules")
+	}
+	if p.Config.Security.Audit != "off" && len(p.Config.Security.Scanners) == 0 && audit.HasManifest(p.Root) {
+		if _, missing := audit.Detect(p); len(missing) > 0 {
+			r.add("security scanners", "warn", "none installed for "+strings.Join(missing, ", ")+": aitk audit cannot check dependency vulnerabilities (fix: aitk audit install)")
+		}
 	}
 	if hw := compat.HandWritten(p); len(hw) > 0 {
 		r.add("generated indexes", "warn", "left untouched because they are hand-written: "+strings.Join(hw, ", ")+" (move them to docs/ai/_legacy/ to let aitk maintain them)")

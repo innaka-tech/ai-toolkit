@@ -90,7 +90,7 @@ No server, no account, works offline. The active task lives in the git directory
 | Go | `go install github.com/innaka-tech/ai-toolkit/v2/cmd/aitk@latest` |
 | Manual / Windows | download from [Releases](https://github.com/innaka-tech/ai-toolkit/releases) and check `checksums.txt` |
 
-One static binary, no runtime dependencies besides git.
+One static binary, no runtime dependencies besides git. The script also installs [osv-scanner](https://google.github.io/osv-scanner/) for `aitk audit` (skip with `AITK_NO_SCANNER=1`; elsewhere run `aitk audit install`).
 
 ## Documentation
 

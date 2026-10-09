@@ -21,6 +21,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/adapters"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/adr"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/apperr"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/audit"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/brief"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/checkrun"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/compat"
@@ -1518,6 +1519,39 @@ func (a *app) auditCmd() *cobra.Command {
 		}
 		return res, err
 	})
+	var dir string
+	var noBrew bool
+	in := &cobra.Command{Use: "install", Short: "Install osv-scanner, the dependency vulnerability scanner aitk audit uses (Homebrew on macOS, else the checksum-verified release binary)", Args: cobra.NoArgs}
+	in.Flags().StringVar(&dir, "dir", "", `directory for the downloaded binary (default ~/.local/bin; %LOCALAPPDATA%\aitk\bin on Windows)`)
+	in.Flags().BoolVar(&noBrew, "no-brew", false, "download the release binary even when Homebrew is available")
+	in.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+		log := io.Writer(os.Stderr)
+		if a.json {
+			log = io.Discard
+		}
+		if dir == "" {
+			dir = audit.DefaultBinDir()
+		}
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+		r, err := audit.InstallOSV(dir, !noBrew, log)
+		if err != nil {
+			return nil, apperr.New("E_INSTALL", apperr.ExitRuntime, "install it yourself: https://google.github.io/osv-scanner/installation/", "%v", err)
+		}
+		res := &result{data: r}
+		switch r.Method {
+		case "present":
+			res.human = "osv-scanner " + r.Version + " is already installed: " + r.Path
+		default:
+			res.human = "installed osv-scanner " + r.Version + " (" + r.Method + "): " + r.Path
+			if _, err := osexec.LookPath("osv-scanner"); err != nil {
+				res.warnings = append(res.warnings, filepath.Dir(r.Path)+" is not on PATH; add it so aitk audit finds osv-scanner")
+			}
+		}
+		return res, nil
+	})
+	c.AddCommand(in)
 	return c
 }
 
