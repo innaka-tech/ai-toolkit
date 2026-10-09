@@ -161,7 +161,7 @@ func Apply(cs []Change, backupDir string) error {
 				return fmt.Errorf("backup %s: %w", c.Rel, err)
 			}
 		}
-		if err := fsx.WriteFile(c.Path, c.after, 0o644); err != nil {
+		if err := fsx.WriteFileKeep(c.Path, c.after, 0o644); err != nil {
 			return err
 		}
 	}

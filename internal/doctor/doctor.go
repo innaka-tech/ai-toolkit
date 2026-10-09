@@ -190,6 +190,9 @@ func Run(p *project.Project, fix bool) *Report {
 			}
 		}
 	}
+	if hw := compat.HandWritten(p); len(hw) > 0 {
+		r.add("generated indexes", "warn", "left untouched because they are hand-written: "+strings.Join(hw, ", ")+" (move them to docs/ai/_legacy/ to let aitk maintain them)")
+	}
 	if fix {
 		handoff.WriteIndex(p)
 		compat.Write(p)

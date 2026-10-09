@@ -107,7 +107,7 @@ todo → in_progress → implemented → in_review → done
 
 ## 5. Risk profiles and Definition of Done
 
-The profile is computed from the diff between the merge base with `default_branch` and the working tree. A task's stored `profile` only takes precedence when it is pinned (`profile_pinned: true`, set by `--profile`):
+The profile is computed from the diff between the merge base with `default_branch` and the working tree. A task's stored `profile` takes precedence when it is pinned (`profile_pinned: true`, set by `--profile`), except that a diff touching `risk.sensitive_paths` is always strict:
 
 | Profile | Condition |
 |---|---|
@@ -125,7 +125,7 @@ The profile is computed from the diff between the merge base with `default_branc
 | Every acceptance criterion written on the task is checked | ✔ | ✔ | ✔ |
 | At least one acceptance criterion exists | | ✔ | ✔ |
 | Risk section filled (no placeholder text) | | | ✔ |
-| ≥ 2 review passes, last pass 0 findings, ≥ 1 pass by a different tool or session than the implementer | | | ✔ for `done`; otherwise status stays `in_review` |
+| ≥ 2 review passes, last pass 0 findings, ≥ 1 pass by a tool that did not work on the task (`workers`, the creator, and the closing tool) | | | ✔ for `done`; otherwise status stays `in_review` |
 
 "Latest check passed on the current tree" means `evidence.check.exit_code == 0` and it was recorded after the last modification of any tracked file.
 

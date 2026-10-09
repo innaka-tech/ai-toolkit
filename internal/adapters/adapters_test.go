@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -174,5 +175,31 @@ func TestDoctor(t *testing.T) {
 		if s.Tool == "claude-code" && !s.Current {
 			t.Fatalf("claude should be current: %+v", s)
 		}
+	}
+}
+
+// Review #10: global edits follow symlinks and keep restrictive permissions.
+func TestGlobalEditKeepsSymlinkAndPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions")
+	}
+	e := env(t, "codex")
+	real := filepath.Join(e.Home, "dotfiles", "codex.toml")
+	put(t, real, "model = \"o3\"\n")
+	os.Chmod(real, 0o600)
+	os.MkdirAll(filepath.Join(e.Home, ".codex"), 0o755)
+	link := filepath.Join(e.Home, ".codex", "config.toml")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	sync(t, e, true, "codex")
+	if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("symlink was replaced by a regular file")
+	}
+	if fi, _ := os.Stat(real); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("permissions changed to %v", fi.Mode().Perm())
+	}
+	if !strings.Contains(get(t, real), "[mcp_servers.aitk]") {
+		t.Fatal("target not updated")
 	}
 }

@@ -68,9 +68,10 @@ type Acceptance struct {
 
 // Evidence is written by check and close.
 type Evidence struct {
-	Check      *Check      `yaml:"check,omitempty" json:"check,omitempty"`
-	Commits    []string    `yaml:"commits,omitempty" json:"commits,omitempty"`
-	Acceptance *Acceptance `yaml:"acceptance,omitempty" json:"acceptance,omitempty"`
+	Check         *Check      `yaml:"check,omitempty" json:"check,omitempty"`
+	Commits       []string    `yaml:"commits,omitempty" json:"commits,omitempty"`
+	Acceptance    *Acceptance `yaml:"acceptance,omitempty" json:"acceptance,omitempty"`
+	CheckFailures int         `yaml:"check_failures,omitempty" json:"check_failures,omitempty"`
 }
 
 // Meta is the frontmatter (schemas/task.schema.json).
@@ -87,6 +88,7 @@ type Meta struct {
 	Updated       string         `yaml:"updated" json:"updated"`
 	Closed        string         `yaml:"closed,omitempty" json:"closed,omitempty"`
 	CreatedBy     string         `yaml:"created_by,omitempty" json:"created_by,omitempty"`
+	Workers       []string       `yaml:"workers,omitempty" json:"workers,omitempty"`
 	Branch        string         `yaml:"branch,omitempty" json:"branch,omitempty"`
 	Paths         []string       `yaml:"paths,omitempty" json:"paths,omitempty"`
 	Review        *Review        `yaml:"review,omitempty" json:"review,omitempty"`
@@ -195,16 +197,39 @@ type Criterion struct {
 	Done bool   `json:"done"`
 }
 
-var acLine = regexp.MustCompile(`^\s*[-*] \[( |x|X)\] (.+)$`)
+var acLine = regexp.MustCompile(`^[-*] \[( |x|X)\] (.+)$`) // top level only; indented items are sub-steps
 
-// Criteria parses the "Acceptance criteria" section.
+// criteriaSection returns the body lines and the [start, end) line range of the
+// "Acceptance criteria" section content (start = -1 when the section is missing).
+func criteriaSection(body string) ([]string, int, int) {
+	lines := strings.Split(body, "\n")
+	start, end, fence := -1, len(lines), false
+	for i, l := range lines {
+		if strings.HasPrefix(l, "```") {
+			fence = !fence
+		}
+		if fence || !strings.HasPrefix(l, "## ") {
+			continue
+		}
+		if start >= 0 {
+			end = i
+			break
+		}
+		if strings.EqualFold(strings.TrimSpace(l[3:]), "Acceptance criteria") {
+			start = i + 1
+		}
+	}
+	return lines, start, end
+}
+
+// Criteria parses the top-level checkboxes of the "Acceptance criteria" section.
 func (t *Task) Criteria() []Criterion {
-	sec, ok := doc.Section(t.Body, "Acceptance criteria")
-	if !ok {
+	lines, start, end := criteriaSection(t.Body)
+	if start < 0 {
 		return nil
 	}
 	var out []Criterion
-	for _, l := range strings.Split(sec, "\n") {
+	for _, l := range lines[start:end] {
 		if m := acLine.FindStringSubmatch(l); m != nil {
 			out = append(out, Criterion{Text: m[2], Done: m[1] != " "})
 		}
@@ -212,17 +237,55 @@ func (t *Task) Criteria() []Criterion {
 	return out
 }
 
-// SetCriteria rewrites the "Acceptance criteria" section.
-func (t *Task) SetCriteria(cs []Criterion) {
-	var b strings.Builder
-	for _, c := range cs {
-		mark := " "
-		if c.Done {
-			mark = "x"
+// MarkCriteria checks the given 1-based criteria, editing only their checkbox.
+func (t *Task) MarkCriteria(nums []int) error {
+	lines, start, end := criteriaSection(t.Body)
+	var idx []int
+	if start >= 0 {
+		for i := start; i < end; i++ {
+			if acLine.MatchString(lines[i]) {
+				idx = append(idx, i)
+			}
 		}
-		fmt.Fprintf(&b, "- [%s] %s\n", mark, c.Text)
 	}
-	t.Body = doc.SetSection(t.Body, "Acceptance criteria", b.String())
+	for _, n := range nums {
+		if n < 1 || n > len(idx) {
+			return fmt.Errorf("criterion %d does not exist (task has %d)", n, len(idx))
+		}
+		l := lines[idx[n-1]]
+		lines[idx[n-1]] = l[:2] + "[x]" + l[5:]
+	}
+	t.Body = strings.Join(lines, "\n")
+	return nil
+}
+
+// AddCriteria appends criteria after the last existing one (creating the section if needed).
+func (t *Task) AddCriteria(texts []string) {
+	if len(texts) == 0 {
+		return
+	}
+	var add []string
+	for _, s := range texts {
+		add = append(add, "- [ ] "+strings.TrimSpace(s))
+	}
+	lines, start, end := criteriaSection(t.Body)
+	if start < 0 {
+		t.Body = strings.TrimRight(t.Body, "\n") + "\n\n## Acceptance criteria\n" + strings.Join(add, "\n") + "\n"
+		return
+	}
+	at := start
+	for i := start; i < end; i++ {
+		if acLine.MatchString(lines[i]) {
+			at = i + 1
+			for at < end && strings.HasPrefix(lines[at], "  ") { // keep sub-steps with their criterion
+				at++
+			}
+		}
+	}
+	out := append([]string{}, lines[:at]...)
+	out = append(out, add...)
+	out = append(out, lines[at:]...)
+	t.Body = strings.Join(out, "\n")
 }
 
 // NewBody renders the body template for a new task.
@@ -260,4 +323,17 @@ func (t *Task) RiskFilled() bool {
 		}
 	}
 	return true
+}
+
+// AddWorker records that tool worked on the task (ignores unknown tools).
+func (t *Task) AddWorker(tool string) {
+	if tool == "" || tool == "unknown" {
+		return
+	}
+	for _, w := range t.Workers {
+		if w == tool {
+			return
+		}
+	}
+	t.Workers = append(t.Workers, tool)
 }

@@ -215,6 +215,9 @@ func (a *app) initCmd() *cobra.Command {
 		for _, f := range r.Updated {
 			b.WriteString("updated " + f + "\n")
 		}
+		for _, f := range r.Kept {
+			b.WriteString("kept " + f + " (hand-written; aitk will not overwrite it)\n")
+		}
 		if len(r.Created)+len(r.Updated) == 0 {
 			b.WriteString("already initialized; nothing to do\n")
 		}
@@ -456,7 +459,7 @@ func (a *app) taskUpdate() *cobra.Command {
 	var in ops.UpdateInput
 	var acDone string
 	c := &cobra.Command{Use: "update [id]", Short: "Edit structured task fields (default: the active task)", Args: cobra.MaximumNArgs(1)}
-	c.Flags().StringVar(&in.Status, "status", "", "new status: "+strings.Join(task.Statuses, ", "))
+	c.Flags().StringVar(&in.Status, "status", "", "new status: todo, in_progress, blocked, or cancelled (done is set by close)")
 	c.Flags().StringVar(&acDone, "ac-done", "", "mark criteria done, e.g. 1 or 1,3")
 	c.Flags().StringArrayVar(&in.AddAC, "add-ac", nil, "add a criterion (repeatable)")
 	c.Flags().StringVar(&in.Note, "note", "", "append a timestamped note")
@@ -604,6 +607,9 @@ func (a *app) knowledgeCmd() *cobra.Command {
 		if err != nil {
 			return nil, err
 		}
+		if err := ops.GuardText("knowledge", args[0]); err != nil {
+			return nil, err
+		}
 		e := knowledge.Entry{Text: strings.TrimSpace(args[0]), Date: task.Now()[:10], Tags: tagSlugs(tags), Pinned: pin, Source: "manual", Topic: "general"}
 		if t := session.Load(p).Active(); t != "" {
 			e.Task = t
@@ -683,11 +689,7 @@ func (a *app) knowledgeCmd() *cobra.Command {
 			return nil, err
 		}
 		h := fmt.Sprintf("moved %d, merged %d duplicates, archived %d, %d topics", r.Moved, r.Duplicates, r.Archived, len(r.Topics))
-		var warns []string
-		if len(r.Frozen) > 0 {
-			warns = append(warns, "left untouched (contain hand-written prose): "+strings.Join(r.Frozen, ", "))
-		}
-		return &result{data: r, human: h, warnings: warns}, nil
+		return &result{data: r, human: h}, nil
 	})
 	pinCmd := &cobra.Command{Use: `pin "<text match>"`, Short: "Pin entries containing the text", Args: cobra.ExactArgs(1)}
 	pinCmd.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
@@ -720,6 +722,9 @@ func (a *app) adrCmd() *cobra.Command {
 	n.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
 		p, err := a.open()
 		if err != nil {
+			return nil, err
+		}
+		if err := ops.GuardText("adr title", args[0]); err != nil {
 			return nil, err
 		}
 		var r *adr.Record

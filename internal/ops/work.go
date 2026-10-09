@@ -119,6 +119,9 @@ func SwitchTools() []string {
 // Switch writes a handoff to tool and prepares the prompt that continues the work there.
 func Switch(p *project.Project, tool, note string) (*SwitchResult, error) {
 	tool = normalizeTool(tool)
+	if err := GuardText("switch note", note); err != nil {
+		return nil, err
+	}
 	var res *SwitchResult
 	err := WithLock(p, func() error {
 		s := session.Load(p)

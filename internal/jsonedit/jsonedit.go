@@ -45,6 +45,12 @@ func Parse(b []byte) (*Object, error) {
 		}
 		o.vals[k] = raw
 	}
+	if _, err := dec.Token(); err != nil { // closing brace
+		return nil, err
+	}
+	if rest := bytes.TrimSpace(b[dec.InputOffset():]); len(rest) > 0 {
+		return nil, fmt.Errorf("unexpected content after the JSON object")
+	}
 	return o, nil
 }
 

@@ -40,7 +40,11 @@ func initRepo(t *testing.T, dir string) {
 		check = "if exist ok.txt (exit 0) else (exit 1)"
 	}
 	cfg := read(t, dir, "aitk.toml")
-	cfg = strings.Replace(cfg, `cmd = "make test"`, "cmd = '"+check+"'", 1)
+	if strings.Contains(cfg, "\ncmd = \"make test\"") {
+		cfg = strings.Replace(cfg, "\ncmd = \"make test\"", "\ncmd = '"+check+"'", 1)
+	} else {
+		cfg += "\n[check]\ncmd = '" + check + "'\n"
+	}
 	write(t, dir, "aitk.toml", cfg)
 }
 
@@ -267,9 +271,10 @@ func TestStrictNeedsRiskAndIndependentReview(t *testing.T) {
 	}
 	mustOK(t, aitk(t, dir, "task", "start", id))
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "2")) // same tool as implementer
-	t.Setenv("AITK_TOOL", "codex")
+	t.Setenv("AITK_TOOL", "codex")                               // independent reviewer: reviews (and may run the check), does not close
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
 	mustOK(t, aitk(t, dir, "check"))
+	t.Setenv("AITK_TOOL", "claude-code")
 	r = aitk(t, dir, "close", "--summary", "reviewed", "--knowledge", "none")
 	mustOK(t, r)
 	if data(r)["status"] != "done" {

@@ -60,6 +60,7 @@ type TaskInfo struct {
 	Open     []task.Criterion `json:"open_criteria,omitempty"`
 	Criteria int              `json:"criteria"`
 	Check    *task.Check      `json:"last_check,omitempty"`
+	Failures int              `json:"consecutive_check_failures,omitempty"`
 }
 type TaskRef struct {
 	ID     string `json:"id"`
@@ -111,6 +112,7 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 		}
 		if t.Evidence != nil {
 			ti.Check = t.Evidence.Check
+			ti.Failures = t.Evidence.CheckFailures
 		}
 		b.Task = ti
 	} else {
@@ -141,7 +143,7 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 	// Knowledge ranking: task tags + topics of changed paths + title words.
 	b.Changed = profile.Diff(p)
 	b.Profile = profile.Compute(p, b.Changed)
-	if t != nil && t.ProfilePinned {
+	if t != nil && t.ProfilePinned && b.Profile != "strict" {
 		b.Profile = t.Profile
 	}
 	var tags []string
@@ -320,6 +322,9 @@ func render(b *Brief) string {
 		}
 		if c := b.Task.Check; c != nil {
 			fmt.Fprintf(&s, "Last check: exit %d at %s\n", c.ExitCode, c.At)
+		}
+		if b.Task.Failures >= 2 {
+			fmt.Fprintf(&s, "⚠ The check has failed %d times in a row. Do not keep retrying: ask the user, or hand over with aitk close --status blocked.\n", b.Task.Failures)
 		}
 	case len(b.Open) > 0:
 		s.WriteString("No active task. Open tasks:\n")
