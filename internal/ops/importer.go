@@ -149,6 +149,10 @@ func ImportGitHub(p *project.Project, repo, label, state string, limit int, dry 
 var taskIDToken = regexp.MustCompile(`^(T\d{3,})\b\s*((?:\[[^\]]*\]\s*)*)(.*)$`)
 var marker = regexp.MustCompile(`\[([^\]]*)\]`)
 
+// explicitDeps finds "depends on T012, T013" (and "after T005") in a Spec Kit description.
+var explicitDeps = regexp.MustCompile(`(?i)(?:depends on|after|requires)\s+((?:T\d{3,}(?:\s*(?:,|and|&)\s*)?)+)`)
+var specTaskID = regexp.MustCompile(`T\d{3,}`)
+
 // ImportChecklist imports Spec Kit (specs/*/tasks.md) or OpenSpec (openspec/changes/*/tasks.md)
 // checklists: each checkbox line becomes a task; "T001 …" keeps its ID (prefixed by the spec name).
 // Spec Kit markers become tags ([P] → parallel, [US1] → us1) and its phases become dependencies:
@@ -236,16 +240,27 @@ func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) 
 				it.objective += "\n\nContext: " + strings.Join(context, ", ")
 			}
 			if kind == "spec-kit" {
+				for _, m := range explicitDeps.FindAllStringSubmatch(text, -1) {
+					for _, dep := range specTaskID.FindAllString(m[1], -1) {
+						if d := prefix + "-" + dep; d != id && !contains(it.dependsOn, d) {
+							it.dependsOn = append(it.dependsOn, d)
+						}
+					}
+				}
 				if parallel {
-					if barrier != "" {
-						it.dependsOn = []string{barrier}
+					if barrier != "" && !contains(it.dependsOn, barrier) {
+						it.dependsOn = append(it.dependsOn, barrier)
 					}
 					group = append(group, id)
 				} else {
-					if len(group) > 0 {
-						it.dependsOn = group
-					} else if barrier != "" {
-						it.dependsOn = []string{barrier}
+					seq := group
+					if len(seq) == 0 && barrier != "" {
+						seq = []string{barrier}
+					}
+					for _, d := range seq {
+						if !contains(it.dependsOn, d) {
+							it.dependsOn = append(it.dependsOn, d)
+						}
 					}
 					barrier, group = id, nil
 				}

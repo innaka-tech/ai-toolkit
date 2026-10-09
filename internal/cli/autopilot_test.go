@@ -21,6 +21,7 @@ const specKitTasks = `# Tasks: Checkout
 ## Phase 2: User Story 1
 - [ ] T004 [US1] Add cart model in src/cart.py
 - [x] T005 [P] [US1] Write cart docs
+- [ ] T006 [US1] Wire checkout (depends on T001, T004)
 `
 
 func specKitRepo(t *testing.T) string {
@@ -54,6 +55,11 @@ func TestSpecKitPhasesMarkersAndNext(t *testing.T) {
 	}
 	if tags := show["tags"].([]any); len(tags) != 1 || tags[0] != "us1" {
 		t.Fatalf("story marker must become a tag, got %v", tags)
+	}
+	t6 := data(aitk(t, dir, "task", "show", "CHECKOUT-T006"))["task"].(map[string]any)
+	// Explicit "depends on" plus the phase rule (the parallel task right before it).
+	if deps := t6["depends_on"].([]any); len(deps) != 3 || deps[0] != "CHECKOUT-T001" || deps[1] != "CHECKOUT-T004" || deps[2] != "CHECKOUT-T005" {
+		t.Fatalf("explicit 'depends on' must be kept: %v", deps)
 	}
 	nx := data(aitk(t, dir, "task", "next"))
 	if got := ids(nx["ready"]); strings.Join(got, ",") != "CHECKOUT-T001" {
