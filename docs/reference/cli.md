@@ -410,7 +410,7 @@ aitk task update [id] [flags]
       --add-ac stringArray   add a criterion (repeatable)
       --note string          append a timestamped note
       --profile string       pin the risk profile
-      --status string        new status: todo, in_progress, implemented, in_review, done, blocked, cancelled
+      --status string        new status: todo, in_progress, blocked, or cancelled (done is set by close)
       --tag stringArray      add a tag (repeatable)
 ```
 

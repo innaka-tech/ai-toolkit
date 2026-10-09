@@ -42,7 +42,18 @@ func HooksDir(root string) (string, error) {
 	return gitx.Run(root, "rev-parse", "--path-format=absolute", "--git-path", "hooks")
 }
 
-// Install adds aitk's block to each hook, preserving existing hook content.
+// userSuffix holds a user's non-shell hook that aitk wraps.
+const userSuffix = ".aitk-user"
+
+var shellShebang = regexp.MustCompile(`^#!\s*(\S*/)?(env\s+)?(sh|bash|zsh|dash|ksh|ash)\b`)
+
+func wrapper(hook string) string {
+	return "#!/bin/sh\n" + block(hook) + `exec "$(dirname "$0")/` + hook + userSuffix + `" "$@"` + "\n"
+}
+
+// Install adds aitk's block to each hook. Shell hooks get the block after their shebang;
+// hooks in other languages are kept as <hook>.aitk-user and run by a small shell wrapper,
+// so existing hooks always keep working.
 func Install(root string) ([]string, error) {
 	dir, err := HooksDir(root)
 	if err != nil {
@@ -57,8 +68,17 @@ func Install(root string) ([]string, error) {
 		switch i, j := strings.Index(s, begin), strings.Index(s, end); {
 		case i >= 0 && j > i:
 			next = s[:i] + block(h) + strings.TrimPrefix(s[j+len(end):], "\n")
-		case s == "":
+		case strings.TrimSpace(s) == "":
 			next = "#!/bin/sh\n" + block(h)
+		case strings.HasPrefix(s, "#!") && !shellShebang.MatchString(s):
+			user := path + userSuffix
+			if fsx.Exists(user) {
+				return changed, fmt.Errorf("%s already exists; remove it or merge it into %s", user, path)
+			}
+			if err := os.Rename(path, user); err != nil {
+				return changed, err
+			}
+			next = wrapper(h)
 		case strings.HasPrefix(s, "#!"):
 			nl := strings.Index(s, "\n")
 			if nl < 0 {
@@ -72,15 +92,17 @@ func Install(root string) ([]string, error) {
 		if next == s {
 			continue
 		}
-		if err := fsx.WriteFile(path, []byte(next), 0o755); err != nil {
+		if err := fsx.WriteFileKeep(path, []byte(next), 0o755); err != nil {
 			return changed, err
 		}
+		os.Chmod(path, 0o755)
 		changed = append(changed, path)
 	}
 	return changed, nil
 }
 
-// Uninstall removes aitk's block; a hook left with only a shebang is deleted.
+// Uninstall removes aitk's block; a wrapped hook is restored, and a hook left with only a
+// shebang is deleted.
 func Uninstall(root string) ([]string, error) {
 	dir, err := HooksDir(root)
 	if err != nil {
@@ -94,6 +116,13 @@ func Uninstall(root string) ([]string, error) {
 			continue
 		}
 		s := string(b)
+		if s == wrapper(h) && fsx.Exists(path+userSuffix) {
+			if err := os.Rename(path+userSuffix, path); err != nil {
+				return changed, err
+			}
+			changed = append(changed, path)
+			continue
+		}
 		i, j := strings.Index(s, begin), strings.Index(s, end)
 		if i < 0 || j < i {
 			continue
@@ -101,7 +130,7 @@ func Uninstall(root string) ([]string, error) {
 		next := s[:i] + strings.TrimPrefix(s[j+len(end):], "\n")
 		if strings.TrimSpace(next) == "#!/bin/sh" || strings.TrimSpace(next) == "" {
 			os.Remove(path)
-		} else if err := fsx.WriteFile(path, []byte(next), 0o755); err != nil {
+		} else if err := fsx.WriteFileKeep(path, []byte(next), 0o755); err != nil {
 			return changed, err
 		}
 		changed = append(changed, path)

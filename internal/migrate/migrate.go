@@ -51,8 +51,8 @@ var (
 	envRE    = regexp.MustCompile(`^([A-Z_][A-Z0-9_]*)="?(.*?)"?$`)
 )
 
-// statusMap implements the status mapping table.
-func statusMap(raw string) string {
+// StatusMap implements the status mapping table.
+func StatusMap(raw string) string {
 	v := strings.ToLower(strings.TrimSpace(strings.NewReplacer("*", "", "`", "").Replace(raw)))
 	for _, m := range []struct{ re, out string }{
 		{`^(active|in[_ ]progress|eksekusi)`, task.InProgress},
@@ -189,7 +189,7 @@ func Run(dir string, dryRun bool) (*Report, error) {
 			updated = created
 		}
 		id := newID(used)
-		m := task.Meta{ID: id, Title: title, Status: statusMap(st[1]), Profile: "standard", Created: created, Updated: updated,
+		m := task.Meta{ID: id, Title: title, Status: StatusMap(st[1]), Profile: "standard", Created: created, Updated: updated,
 			Legacy: map[string]any{"v1_id": strings.TrimSpace(tid[1]), "status": strings.TrimSpace(st[1]), "source": src}}
 		if g := regexp.MustCompile(`(?m)^Goal ID: *(G-[A-Za-z0-9.-]{1,16})\s*$`).FindStringSubmatch(text); g != nil {
 			m.Goal = g[1]
@@ -205,6 +205,7 @@ func Run(dir string, dryRun bool) (*Report, error) {
 	if b, err := os.ReadFile(p.Path(project.DocsAI, "current-task.md")); err == nil {
 		rel := project.DocsAI + "/current-task.md"
 		r.keep(p, rel)
+		r.removals = append(r.removals, rel) // copied to _legacy; replaced by a generated index
 		if !addTemplate(string(b), rel) {
 			msg := "current-task.md is free-form: kept in docs/ai/_legacy/, shown by `aitk brief` until tasks exist"
 			if regexp.MustCompile(`(?mi)^(Task ID: *(none|n/a|-)\s*$|Status: *idle\s*$)`).MatchString(string(b)) {
@@ -289,7 +290,7 @@ func Run(dir string, dryRun bool) (*Report, error) {
 		if fm != nil {
 			legacy["frontmatter"] = fm
 		}
-		m := task.Meta{ID: id, Title: title, Status: statusMap(rawStatus), Profile: "standard", Created: ts, Updated: ts, Legacy: legacy}
+		m := task.Meta{ID: id, Title: title, Status: StatusMap(rawStatus), Profile: "standard", Created: ts, Updated: ts, Legacy: legacy}
 		if err := schema.Validate("task", m); err != nil {
 			unparsed++
 			r.plan(filepath.ToSlash(filepath.Join(project.LegacyDir, "tasks", e.Name())), b)
@@ -311,6 +312,7 @@ func Run(dir string, dryRun bool) (*Report, error) {
 	if b, err := os.ReadFile(p.Path(project.DocsAI, "handoff.md")); err == nil {
 		rel := project.DocsAI + "/handoff.md"
 		r.keep(p, rel)
+		r.removals = append(r.removals, rel) // copied to _legacy; replaced by a generated index
 		_, secs := splitSections(string(b))
 		prev := commitTS(p, rel)
 		seen := map[string]int{}
@@ -340,6 +342,7 @@ func Run(dir string, dryRun bool) (*Report, error) {
 	if b, err := os.ReadFile(p.Path(project.DocsAI, "knowledge.md")); err == nil {
 		rel := project.DocsAI + "/knowledge.md"
 		r.keep(p, rel)
+		r.removals = append(r.removals, rel) // copied to _legacy; replaced by a generated index
 		fallback := commitTS(p, rel)[:10]
 		var lines []string
 		cur := fallback
@@ -372,6 +375,7 @@ func Run(dir string, dryRun bool) (*Report, error) {
 	if b, err := os.ReadFile(p.Path(project.DocsAI, "decisions.md")); err == nil {
 		rel := project.DocsAI + "/decisions.md"
 		r.keep(p, rel)
+		r.removals = append(r.removals, rel) // copied to _legacy; replaced by a generated index
 		_, secs := splitSections(string(b))
 		n := 0
 		existing, _ := os.ReadDir(p.Path(project.ADRDir))

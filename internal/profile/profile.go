@@ -38,28 +38,41 @@ type Change struct {
 }
 
 // Diff lists files changed between the merge base with the default branch and the
-// working tree (including untracked files), excluding aitk-managed files.
+// working tree (including untracked files), excluding aitk metadata. Paths come from
+// NUL-separated git output, so non-ASCII names are exact.
 func Diff(p *project.Project) []Change {
-	base := mergeBase(p)
 	byPath := map[string]int{}
-	if base != "" {
-		out, _ := gitx.Run(p.Root, "diff", "--numstat", base)
-		for _, l := range strings.Split(out, "\n") {
-			f := strings.SplitN(l, "\t", 3)
+	if base := mergeBase(p); base != "" {
+		out, _ := gitx.RunRaw(p.Root, "diff", "--numstat", "-z", base)
+		toks := strings.Split(string(out), "\x00")
+		for i := 0; i < len(toks); i++ {
+			f := strings.SplitN(toks[i], "\t", 3)
 			if len(f) != 3 {
 				continue
 			}
 			a, _ := strconv.Atoi(f[0]) // "-" for binary -> 0
 			d, _ := strconv.Atoi(f[1])
-			byPath[renamed(f[2])] += a + d
+			path := f[2]
+			if path == "" && i+2 < len(toks) { // rename: "A\tD\t" NUL old NUL new
+				path = toks[i+2]
+				i += 2
+			}
+			byPath[path] += a + d
+		}
+	} else {
+		// No commits yet: everything staged is new.
+		out, _ := gitx.RunRaw(p.Root, "ls-files", "-z", "--cached")
+		for _, rel := range strings.Split(string(out), "\x00") {
+			if rel != "" {
+				byPath[rel] += countLines(p.Path(rel))
+			}
 		}
 	}
-	untracked, _ := gitx.Run(p.Root, "ls-files", "--others", "--exclude-standard")
-	for _, rel := range strings.Split(untracked, "\n") {
-		if rel == "" {
-			continue
+	untracked, _ := gitx.RunRaw(p.Root, "ls-files", "-z", "--others", "--exclude-standard")
+	for _, rel := range strings.Split(string(untracked), "\x00") {
+		if rel != "" {
+			byPath[rel] += countLines(p.Path(rel))
 		}
-		byPath[rel] += countLines(p.Path(rel))
 	}
 	var out []Change
 	for path, n := range byPath {
@@ -69,23 +82,6 @@ func Diff(p *project.Project) []Change {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
-}
-
-func renamed(s string) string {
-	// numstat shows renames as "old => new" or "dir/{old => new}/f"
-	if i := strings.Index(s, "{"); i >= 0 {
-		j := strings.Index(s, "}")
-		if j > i {
-			inner := s[i+1 : j]
-			if k := strings.Index(inner, " => "); k >= 0 {
-				return s[:i] + inner[k+4:] + s[j+1:]
-			}
-		}
-	}
-	if k := strings.Index(s, " => "); k >= 0 {
-		return s[k+4:]
-	}
-	return s
 }
 
 func mergeBase(p *project.Project) string {
@@ -133,31 +129,32 @@ func Compute(p *project.Project, changes []Change) string {
 	return "standard"
 }
 
-// Fingerprint hashes HEAD, the tracked diff, and untracked file contents, excluding
-// aitk-managed files. Equal fingerprints mean the code has not changed.
+// Fingerprint identifies the state of the code: HEAD plus the path and current content of
+// every changed, staged, or untracked file (aitk metadata excluded). Any edit to code after
+// a check changes it, with or without commits, whatever the file names are.
 func Fingerprint(p *project.Project) string {
 	h := sha256.New()
 	h.Write([]byte(gitx.Head(p.Root)))
-	excl := []string{"--", "."}
-	for _, x := range []string{project.DocsAI, project.ADRDir, project.LocalStateDir, project.StateFile, project.ConfigFile, project.AgentsFile, "CLAUDE.md", ".gitattributes"} {
-		excl = append(excl, ":(exclude)"+x)
-	}
-	diff, _ := gitx.RunRaw(p.Root, append([]string{"diff", "HEAD", "--binary"}, excl...)...)
-	if gitx.Head(p.Root) == "" {
-		diff, _ = gitx.RunRaw(p.Root, "diff", "--cached", "--binary")
-	}
-	h.Write(diff)
-	untracked, _ := gitx.Run(p.Root, "ls-files", "--others", "--exclude-standard")
-	files := strings.Split(untracked, "\n")
-	sort.Strings(files)
-	for _, rel := range files {
-		if rel == "" || Managed(rel) {
-			continue
+	h.Write([]byte{0})
+	out, _ := gitx.RunRaw(p.Root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames")
+	var paths []string
+	for _, rec := range strings.Split(string(out), "\x00") {
+		if len(rec) > 3 {
+			if rel := rec[3:]; !Managed(rel) {
+				paths = append(paths, rel)
+			}
 		}
-		b, _ := os.ReadFile(p.Path(rel))
+	}
+	sort.Strings(paths)
+	for _, rel := range paths {
 		h.Write([]byte(rel))
 		h.Write([]byte{0})
-		h.Write(b)
+		if b, err := os.ReadFile(p.Path(rel)); err == nil {
+			h.Write(b)
+		} else {
+			h.Write([]byte("<missing>"))
+		}
+		h.Write([]byte{0})
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

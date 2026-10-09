@@ -177,3 +177,24 @@ func TestStdioBinary(t *testing.T) {
 		t.Fatalf("stdio task_new: %v %s", isErr, out)
 	}
 }
+
+// Review #13: free text that looks like a flag is passed as text, never parsed as a flag.
+func TestFreeTextIsNeverParsedAsFlags(t *testing.T) {
+	os.Unsetenv("AITK_TOOL")
+	dir := gitRepo(t)
+	other := gitRepo(t)
+	cs := connect(t, dir, "claude-code")
+	if out, isErr := callText(t, cs, "knowledge_add", map[string]any{"text": "-race flag must be used in CI"}); isErr {
+		t.Fatalf("text starting with '-' rejected: %s", out)
+	}
+	if out, _ := callText(t, cs, "knowledge_search", map[string]any{"query": "-race"}); !strings.Contains(out, "-race flag must be used") {
+		t.Fatalf("search with leading '-': %s", out)
+	}
+	out, isErr := callText(t, cs, "task_update", map[string]any{"id": "--path=" + other, "note": "x"})
+	if !isErr || !strings.Contains(out, "E_TASK_NOT_FOUND") {
+		t.Fatalf("an id that looks like a flag must be treated as an id: %v %s", isErr, out)
+	}
+	if out, isErr := callText(t, cs, "task_new", map[string]any{"title": "--help me please"}); isErr || !strings.Contains(out, "--help me please") {
+		t.Fatalf("title starting with '--': %v %s", isErr, out)
+	}
+}

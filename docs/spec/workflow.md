@@ -107,7 +107,7 @@ todo → in_progress → implemented → in_review → done
 
 ## 5. Risk profiles and Definition of Done
 
-The profile is computed from the diff between the merge base with `default_branch` and the working tree. A task's stored `profile` only takes precedence when it is pinned (`profile_pinned: true`, set by `--profile`):
+The profile is computed from the diff between the merge base with `default_branch` and the working tree. A task's stored `profile` takes precedence when it is pinned (`profile_pinned: true`, set by `--profile`), except that a diff touching `risk.sensitive_paths` is always strict:
 
 | Profile | Condition |
 |---|---|
@@ -125,7 +125,7 @@ The profile is computed from the diff between the merge base with `default_branc
 | Every acceptance criterion written on the task is checked | ✔ | ✔ | ✔ |
 | At least one acceptance criterion exists | | ✔ | ✔ |
 | Risk section filled (no placeholder text) | | | ✔ |
-| ≥ 2 review passes, last pass 0 findings, ≥ 1 pass by a different tool or session than the implementer | | | ✔ for `done`; otherwise status stays `in_review` |
+| ≥ 2 review passes, last pass 0 findings, ≥ 1 pass by a tool that did not work on the task (`workers`, the creator, and the closing tool) | | | ✔ for `done`; otherwise status stays `in_review` |
 
 "Latest check passed on the current tree" means `evidence.check.exit_code == 0` and it was recorded after the last modification of any tracked file.
 
@@ -162,3 +162,32 @@ On disk, an entry is one Markdown bullet with trailing metadata:
   3. Unpinned entries older than `knowledge.archive_after_days` move to `_archive/<YYYY>-Q<n>.md`.
   Compaction MUST NOT delete text. Rewording by a model is out of scope for the core; a plugin may propose it as a diff.
 - `aitk knowledge search <query>` ranks by term overlap and recency, then merges `knowledge.search` plugin results.
+
+## 9. Self-control
+
+aitk restrains agents where prompts alone do not:
+
+| Guard | Behavior |
+|---|---|
+| Failing-check streak | `evidence.check_failures` counts consecutive failing checks (reset by a pass). From the second failure, `aitk check` and the brief tell the agent to stop and ask the user or hand over with `aitk close --status blocked`. |
+| Credentials | Summaries, knowledge, criteria, notes, ADR titles, and switch notes are scanned with the pre-commit secret rules; a match is refused (`E_SECRET`, exit 3) before anything is written. |
+| Status shortcuts | `task update` cannot set `done`, `implemented`, or `in_review`; only `close` can, after the Definition of Done. |
+| Sensitive paths | A diff touching `risk.sensitive_paths` is strict even when the task pins a lower profile. |
+| Independent review | Review passes count as independent only when made by a tool outside `workers` (tools that started or closed the task), the creator, and the closing tool. |
+| Large changes | `close` warns above 40 files or 2,000 changed lines. |
+
+## 10. Self-healing
+
+aitk repairs its own files instead of failing on them. Every repair is reported (as a `self-healed:` warning on the command, or in `aitk doctor --fix`), and no content is discarded: anything that cannot stay in place is moved to `docs/ai/_legacy/quarantine/`.
+
+| Damage | Repair | When |
+|---|---|---|
+| Hand-edited task frontmatter (v1 statuses like `DONE`, date-only or offset timestamps, missing fields, unknown fields) | Normalized; unknown fields kept under `legacy.unknown_fields`; body untouched | Before every writing command, and `doctor --fix` |
+| Task frontmatter that is not valid YAML | Restored from the last committed version when that one is valid; the broken copy is quarantined | Same |
+| Merge-conflict markers in a task file | The more recently updated side (then the one further along) is kept; the other is quarantined | Same |
+| Merge-conflict markers in knowledge, handoff, or index files | Both sides' lines are kept | Same |
+| Adapter files whose aitk entries drifted | Re-synced (aitk-owned entries only) | `doctor --fix` |
+| Missing check command that can be detected | Added to `aitk.toml` | `doctor --fix` |
+| AGENTS.md block missing or edited, generated indexes, overfull inbox, missing `.gitattributes` rules | Restored / regenerated / compacted | `doctor --fix` |
+
+A damaged task file never makes aitk forget the session's active task.

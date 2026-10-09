@@ -85,5 +85,5 @@ func Sync(path string) (bool, error) {
 	if next == string(b) {
 		return false, nil
 	}
-	return true, fsx.WriteFile(path, []byte(next), 0o644)
+	return true, fsx.WriteFileKeep(path, []byte(next), 0o644)
 }

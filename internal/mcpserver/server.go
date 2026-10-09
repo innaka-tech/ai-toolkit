@@ -43,7 +43,7 @@ func New(root, version string, exec Exec) *mcp.Server {
 		})
 	add(s, h, "task_new", "Create a task. Give at least one acceptance criterion (Given/when/then) unless the change is trivial.",
 		func(in taskNewIn) []string {
-			a := []string{"task", "new", in.Title}
+			a := []string{"task", "new"}
 			a = opt(a, "--id", in.ID)
 			a = opt(a, "--goal", in.Goal)
 			a = opt(a, "--profile", in.Profile)
@@ -53,16 +53,13 @@ func New(root, version string, exec Exec) *mcp.Server {
 			if in.Start {
 				a = append(a, "--start")
 			}
-			return a
+			return append(a, "--", in.Title)
 		})
 	add(s, h, "task_start", "Make a task active in this worktree (status in_progress).",
-		func(in idIn) []string { return []string{"task", "start", in.ID} })
+		func(in idIn) []string { return []string{"task", "start", "--", in.ID} })
 	add(s, h, "task_update", "Edit task fields: mark criteria done, add criteria, add a note, change status or tags. Defaults to the active task.",
 		func(in taskUpdateIn) []string {
 			a := []string{"task", "update"}
-			if in.ID != "" {
-				a = append(a, in.ID)
-			}
 			a = opt(a, "--status", in.Status)
 			a = opt(a, "--note", in.Note)
 			a = opt(a, "--profile", in.Profile)
@@ -75,6 +72,9 @@ func New(root, version string, exec Exec) *mcp.Server {
 			}
 			a = multi(a, "--add-ac", in.AddAC)
 			a = multi(a, "--tag", in.Tags)
+			if in.ID != "" {
+				a = append(a, "--", in.ID)
+			}
 			return a
 		})
 	add(s, h, "task_list", "List tasks (open ones unless all is true).",
@@ -86,7 +86,7 @@ func New(root, version string, exec Exec) *mcp.Server {
 			}
 			return a
 		})
-	add(s, h, "task_show", "Show one task with its criteria.", func(in idIn) []string { return []string{"task", "show", in.ID} })
+	add(s, h, "task_show", "Show one task with its criteria.", func(in idIn) []string { return []string{"task", "show", "--", in.ID} })
 	add(s, h, "check", "Run the project's check command; records evidence on the active task. Must pass before close.",
 		func(struct{}) []string { return []string{"check"} })
 	add(s, h, "close", "Finish the session. Applies the Definition of Done; on rejection the error says exactly what to do.",
@@ -101,31 +101,31 @@ func New(root, version string, exec Exec) *mcp.Server {
 		func(in reviewIn) []string { return []string{"review", "pass", "--findings", strconv.Itoa(in.Findings)} })
 	add(s, h, "knowledge_search", "Search project knowledge.",
 		func(in searchIn) []string {
-			a := []string{"knowledge", "search", in.Query}
+			a := []string{"knowledge", "search"}
 			if in.Limit > 0 {
 				a = append(a, "--limit", strconv.Itoa(in.Limit))
 			}
-			return a
+			return append(a, "--", in.Query)
 		})
 	add(s, h, "knowledge_add", "Record a lasting finding (one or two sentences).",
 		func(in knowledgeIn) []string {
-			a := multi([]string{"knowledge", "add", in.Text}, "--tag", in.Tags)
+			a := multi([]string{"knowledge", "add"}, "--tag", in.Tags)
 			if in.Pin {
 				a = append(a, "--pin")
 			}
-			return a
+			return append(a, "--", in.Text)
 		})
 	add(s, h, "switch_prepare", "Hand the work to another AI tool: writes a handoff and returns the prompt file and command that continue the work there.",
 		func(in switchIn) []string {
-			a := []string{"switch", in.Tool, "--print"}
-			return opt(a, "--note", in.Note)
+			a := opt([]string{"switch", "--print"}, "--note", in.Note)
+			return append(a, "--", in.Tool)
 		})
 	add(s, h, "report", "Activity report: done, in progress, in review, blocked tasks and handoffs per tool.",
 		func(in reportIn) []string {
 			a := []string{"report"}
 			return opt(a, "--since", in.Since)
 		})
-	add(s, h, "adr_new", "Create an architecture decision record (MADR).", func(in titleIn) []string { return []string{"adr", "new", in.Title} })
+	add(s, h, "adr_new", "Create an architecture decision record (MADR).", func(in titleIn) []string { return []string{"adr", "new", "--", in.Title} })
 	add(s, h, "doctor", "Validate the project; fix=true repairs what is safe.",
 		func(in doctorIn) []string {
 			if in.Fix {
@@ -285,7 +285,7 @@ type idIn struct {
 }
 type taskUpdateIn struct {
 	ID      string   `json:"id,omitempty" jsonschema:"task id (default: active task)"`
-	Status  string   `json:"status,omitempty" jsonschema:"todo, in_progress, implemented, in_review, done, blocked, or cancelled"`
+	Status  string   `json:"status,omitempty" jsonschema:"todo, in_progress, blocked, or cancelled (done is set by close)"`
 	ACDone  []int    `json:"ac_done,omitempty" jsonschema:"1-based numbers of criteria now satisfied"`
 	AddAC   []string `json:"add_ac,omitempty" jsonschema:"criteria to add"`
 	Note    string   `json:"note,omitempty" jsonschema:"note to append"`

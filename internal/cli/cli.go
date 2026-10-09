@@ -27,6 +27,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/doctor"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/gates"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/heal"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/knowledge"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/migrate"
@@ -56,6 +57,7 @@ type result struct {
 type runFn func(cmd *cobra.Command, args []string) (*result, error)
 
 type app struct {
+	healed []string // self-healing notes added to the result's warnings
 	json   bool
 	dir    string
 	stdout io.Writer
@@ -106,6 +108,7 @@ func (a *app) ok(name string, r *result) {
 	if r == nil {
 		r = &result{}
 	}
+	r.warnings = append(append([]string{}, a.healed...), r.warnings...)
 	if a.json {
 		a.emit(map[string]any{"schema": "aitk.result/v1", "ok": true, "command": name, "data": r.data, "warnings": nonNil(r.warnings)})
 		return
@@ -166,6 +169,24 @@ func nonNil(s []string) []string {
 	return s
 }
 
+// openWrite opens the project for a command that writes, first repairing damaged aitk
+// files (self-healing). Repairs are reported as warnings on the result, never hidden.
+func (a *app) openWrite() (*project.Project, error) {
+	p, err := a.open()
+	if err != nil {
+		return nil, err
+	}
+	if probs := heal.Problems(p); len(probs) > 0 {
+		ops.WithLock(p, func() error {
+			for _, act := range heal.Run(p) {
+				a.healed = append(a.healed, "self-healed: "+act.String())
+			}
+			return nil
+		})
+	}
+	return p, nil
+}
+
 func (a *app) open() (*project.Project, error) {
 	dir := a.dir
 	if dir == "" {
@@ -214,6 +235,9 @@ func (a *app) initCmd() *cobra.Command {
 		}
 		for _, f := range r.Updated {
 			b.WriteString("updated " + f + "\n")
+		}
+		for _, f := range r.Kept {
+			b.WriteString("kept " + f + " (hand-written; aitk will not overwrite it)\n")
 		}
 		if len(r.Created)+len(r.Updated) == 0 {
 			b.WriteString("already initialized; nothing to do\n")
@@ -346,7 +370,7 @@ func (a *app) taskNew() *cobra.Command {
 	c.Flags().StringVar(&in.Objective, "objective", "", "one-paragraph objective")
 	c.Flags().BoolVar(&start, "start", false, "start the task immediately")
 	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -376,7 +400,7 @@ func (a *app) taskNew() *cobra.Command {
 func (a *app) taskStart() *cobra.Command {
 	c := &cobra.Command{Use: "start <id>", Short: "Make a task active in this worktree (status in_progress)", Args: cobra.ExactArgs(1)}
 	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -456,14 +480,14 @@ func (a *app) taskUpdate() *cobra.Command {
 	var in ops.UpdateInput
 	var acDone string
 	c := &cobra.Command{Use: "update [id]", Short: "Edit structured task fields (default: the active task)", Args: cobra.MaximumNArgs(1)}
-	c.Flags().StringVar(&in.Status, "status", "", "new status: "+strings.Join(task.Statuses, ", "))
+	c.Flags().StringVar(&in.Status, "status", "", "new status: todo, in_progress, blocked, or cancelled (done is set by close)")
 	c.Flags().StringVar(&acDone, "ac-done", "", "mark criteria done, e.g. 1 or 1,3")
 	c.Flags().StringArrayVar(&in.AddAC, "add-ac", nil, "add a criterion (repeatable)")
 	c.Flags().StringVar(&in.Note, "note", "", "append a timestamped note")
 	c.Flags().StringArrayVar(&in.Tags, "tag", nil, "add a tag (repeatable)")
 	c.Flags().StringVar(&in.Profile, "profile", "", "pin the risk profile")
 	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -503,7 +527,7 @@ func (a *app) taskBlock() *cobra.Command {
 		if strings.TrimSpace(reason) == "" {
 			return nil, apperr.Usage("--reason is required")
 		}
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -522,7 +546,7 @@ func (a *app) taskBlock() *cobra.Command {
 func (a *app) checkCmd() *cobra.Command {
 	c := &cobra.Command{Use: "check", Short: "Run the project's check command and record evidence on the active task", Args: cobra.NoArgs}
 	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -548,7 +572,7 @@ func (a *app) closeCmd() *cobra.Command {
 	c.Flags().StringVar(&in.Status, "status", "", "hand over unfinished work: in_progress or blocked (skips the Definition of Done)")
 	c.Flags().StringArrayVar(&in.Tags, "tag", nil, "tag for the knowledge entry (repeatable)")
 	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -575,7 +599,7 @@ func (a *app) reviewCmd() *cobra.Command {
 		if findings < 0 {
 			return nil, apperr.Usage("--findings is required (0 when the pass found nothing)")
 		}
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -600,8 +624,11 @@ func (a *app) knowledgeCmd() *cobra.Command {
 	add.Flags().StringArrayVar(&tags, "tag", nil, "tag (repeatable); the first tag is the topic")
 	add.Flags().BoolVar(&pin, "pin", false, "always show in briefs")
 	add.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
+			return nil, err
+		}
+		if err := ops.GuardText("knowledge", args[0]); err != nil {
 			return nil, err
 		}
 		e := knowledge.Entry{Text: strings.TrimSpace(args[0]), Date: task.Now()[:10], Tags: tagSlugs(tags), Pinned: pin, Source: "manual", Topic: "general"}
@@ -666,7 +693,7 @@ func (a *app) knowledgeCmd() *cobra.Command {
 	compact := &cobra.Command{Use: "compact", Short: "File inbox entries by topic, merge duplicates, archive old entries", Args: cobra.NoArgs}
 	compact.Flags().BoolVar(&dry, "dry-run", false, "report only")
 	compact.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -683,15 +710,11 @@ func (a *app) knowledgeCmd() *cobra.Command {
 			return nil, err
 		}
 		h := fmt.Sprintf("moved %d, merged %d duplicates, archived %d, %d topics", r.Moved, r.Duplicates, r.Archived, len(r.Topics))
-		var warns []string
-		if len(r.Frozen) > 0 {
-			warns = append(warns, "left untouched (contain hand-written prose): "+strings.Join(r.Frozen, ", "))
-		}
-		return &result{data: r, human: h, warnings: warns}, nil
+		return &result{data: r, human: h}, nil
 	})
 	pinCmd := &cobra.Command{Use: `pin "<text match>"`, Short: "Pin entries containing the text", Args: cobra.ExactArgs(1)}
 	pinCmd.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -718,8 +741,11 @@ func (a *app) adrCmd() *cobra.Command {
 	c := &cobra.Command{Use: "adr", Short: "Architecture decision records (MADR 4)"}
 	n := &cobra.Command{Use: `new "<title>"`, Short: "Create the next ADR", Args: cobra.ExactArgs(1)}
 	n.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
+			return nil, err
+		}
+		if err := ops.GuardText("adr title", args[0]); err != nil {
 			return nil, err
 		}
 		var r *adr.Record
@@ -732,7 +758,7 @@ func (a *app) adrCmd() *cobra.Command {
 	})
 	l := &cobra.Command{Use: "list", Short: "List ADRs", Args: cobra.NoArgs}
 	l.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -1032,7 +1058,7 @@ func (a *app) taskClaim() *cobra.Command {
 	c := &cobra.Command{Use: "claim <id>", Short: "Claim a task for this worktree so other agents skip it", Args: cobra.ExactArgs(1)}
 	c.Flags().DurationVar(&ttl, "ttl", ops.DefaultClaimTTL, "how long the claim lasts")
 	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -1050,7 +1076,7 @@ func (a *app) taskRelease() *cobra.Command {
 	c := &cobra.Command{Use: "release <id>", Short: "Drop this worktree's claim on a task", Args: cobra.ExactArgs(1)}
 	c.Flags().BoolVar(&force, "force", false, "drop any worktree's claim (use when that worktree is gone)")
 	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -1070,7 +1096,7 @@ func (a *app) taskRelease() *cobra.Command {
 func (a *app) workCmd() *cobra.Command {
 	c := &cobra.Command{Use: "work <id>", Short: "Create a dedicated worktree and branch for a task, claim it, and start it there", Args: cobra.ExactArgs(1)}
 	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -1095,7 +1121,7 @@ func (a *app) switchCmd() *cobra.Command {
 	c.Flags().StringVar(&note, "note", "", "why you are switching / what the next tool should know")
 	c.Flags().BoolVar(&printOnly, "print", false, "print how to start the tool instead of starting it")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			a.fail("switch", err)
 			return nil
@@ -1267,7 +1293,7 @@ func (a *app) importCmd() *cobra.Command {
 	gh.Flags().IntVar(&limit, "limit", 100, "max issues")
 	gh.Flags().BoolVar(&dry, "dry-run", false, "show what would be imported")
 	gh.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
-		p, err := a.open()
+		p, err := a.openWrite()
 		if err != nil {
 			return nil, err
 		}
@@ -1287,7 +1313,7 @@ func (a *app) importCmd() *cobra.Command {
 		k := &cobra.Command{Use: kind + " [tasks.md ...]", Short: "Import a " + kind + " tasks checklist (default: discovered tasks.md files)"}
 		k.Flags().BoolVar(&dry, "dry-run", false, "show what would be imported")
 		k.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
-			p, err := a.open()
+			p, err := a.openWrite()
 			if err != nil {
 				return nil, err
 			}

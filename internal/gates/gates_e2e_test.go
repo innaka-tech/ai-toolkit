@@ -178,3 +178,34 @@ func TestCI(t *testing.T) {
 	must(t, dir, "git", "commit", "-q", "--amend", "-m", "feat: add a")
 	must(t, dir, bin, "ci", "--base", base)
 }
+
+// Review #9: a non-shell hook keeps working after install, and is restored by uninstall.
+func TestNonShellHookIsWrappedNotBroken(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX hook execution")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+	dir := t.TempDir()
+	must(t, dir, "git", "init", "-q", "-b", "main")
+	must(t, dir, "git", "config", "user.email", "t@example.com")
+	must(t, dir, "git", "config", "user.name", "t")
+	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	py := "#!/usr/bin/env python3\nopen('py-hook-ran', 'w').write('yes')\n"
+	write(t, dir, ".git/hooks/pre-commit", py)
+	os.Chmod(hook, 0o755)
+	must(t, dir, bin, "init")
+	must(t, dir, bin, "hooks", "install")
+	must(t, dir, "git", "add", "-A")
+	if out, err := sh(t, dir, "git", "commit", "-qm", "chore: init"); err != nil {
+		t.Fatalf("commit failed with a wrapped python hook:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "py-hook-ran")); err != nil {
+		t.Fatal("the user's python hook did not run")
+	}
+	must(t, dir, bin, "hooks", "uninstall")
+	if b, _ := os.ReadFile(hook); string(b) != py {
+		t.Fatalf("python hook not restored:\n%s", b)
+	}
+}

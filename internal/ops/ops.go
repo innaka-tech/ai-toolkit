@@ -24,6 +24,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/profile"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/schema"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/secrets"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/session"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/task"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/textx"
@@ -51,6 +52,23 @@ func Tool() string {
 	}
 	return "unknown"
 }
+
+// GuardText refuses text that would put a credential into the repository
+// (agents paste tokens into summaries and notes surprisingly often).
+func GuardText(what string, texts ...string) error {
+	for _, text := range texts {
+		for i, line := range strings.Split(text, "\n") {
+			if fs := secrets.ScanLine(what, i+1, line); len(fs) > 0 {
+				return apperr.New("E_SECRET", apperr.ExitGate, "remove the secret and refer to it by name (for example the environment variable that holds it)",
+					"%s contains what looks like a credential (%s: %s); it was not recorded", what, fs[0].Rule, fs[0].Match)
+			}
+		}
+	}
+	return nil
+}
+
+// StopAfterFailures is the consecutive failing-check count at which agents must stop.
+const StopAfterFailures = 2
 
 // DefaultClaimTTL is how long a task claim lasts without renewal (task start renews it).
 const DefaultClaimTTL = 4 * time.Hour
@@ -103,6 +121,7 @@ func WithLock(p *project.Project, fn func() error) error {
 type InitResult struct {
 	Created []string `json:"created"`
 	Updated []string `json:"updated"`
+	Kept    []string `json:"kept_hand_written,omitempty"` // existing docs aitk will not overwrite
 	Check   string   `json:"check,omitempty"`
 }
 
@@ -181,6 +200,7 @@ func Init(dir, name, check string, dryRun bool) (*InitResult, error) {
 	if !dryRun {
 		if q, err := project.Open(p.Root); err == nil {
 			handoff.WriteIndex(q)
+			res.Kept = compat.HandWritten(q)
 		}
 	}
 	return res, nil
@@ -208,6 +228,9 @@ func TaskNew(p *project.Project, in NewTaskInput) (*task.Task, error) {
 	in.Title = strings.TrimSpace(in.Title)
 	if len([]rune(in.Title)) < 3 {
 		return nil, apperr.Usage("task title must be at least 3 characters")
+	}
+	if err := GuardText("task", append([]string{in.Title, in.Objective}, in.Criteria...)...); err != nil {
+		return nil, err
 	}
 	var t *task.Task
 	err := WithLock(p, func() error {
@@ -268,6 +291,7 @@ func TaskStart(p *project.Project, id string) (*task.Task, error) {
 			t.Status = task.InProgress
 		}
 		t.Updated = now
+		t.AddWorker(Tool())
 		if b := branchOf(p); b != "" {
 			t.Branch = b
 		}
@@ -300,6 +324,9 @@ type UpdateInput struct {
 
 // TaskUpdate edits structured fields without hand-editing YAML.
 func TaskUpdate(p *project.Project, id string, in UpdateInput) (*task.Task, error) {
+	if err := GuardText("task update", append([]string{in.Note, in.Reason}, in.AddAC...)...); err != nil {
+		return nil, err
+	}
 	var t *task.Task
 	err := WithLock(p, func() error {
 		var err error
@@ -313,10 +340,15 @@ func TaskUpdate(p *project.Project, id string, in UpdateInput) (*task.Task, erro
 			return apperr.TaskNotFound(id)
 		}
 		if in.Status != "" {
-			if !contains(task.Statuses, in.Status) {
-				return apperr.Usage("invalid status %q (one of %s)", in.Status, strings.Join(task.Statuses, ", "))
+			switch in.Status {
+			case task.Todo, task.InProgress, task.Blocked, task.Cancelled:
+				t.Status = in.Status
+			case task.Done, task.Implemented, task.InReview:
+				return apperr.New("E_USAGE", apperr.ExitUsage, `aitk close --summary "…" --knowledge "…"`,
+					"status %s is set by close after the Definition of Done, not by update", in.Status)
+			default:
+				return apperr.Usage("invalid status %q (todo, in_progress, blocked, or cancelled)", in.Status)
 			}
-			t.Status = in.Status
 		}
 		if in.Profile != "" {
 			if !contains([]string{"lite", "standard", "strict"}, in.Profile) {
@@ -324,18 +356,9 @@ func TaskUpdate(p *project.Project, id string, in UpdateInput) (*task.Task, erro
 			}
 			t.Profile, t.ProfilePinned = in.Profile, true
 		}
-		cs := t.Criteria()
-		for _, c := range in.AddAC {
-			cs = append(cs, task.Criterion{Text: c})
-		}
-		for _, n := range in.ACDone {
-			if n < 1 || n > len(cs) {
-				return apperr.Usage("criterion %d does not exist (task has %d)", n, len(cs))
-			}
-			cs[n-1].Done = true
-		}
-		if len(in.AddAC) > 0 || len(in.ACDone) > 0 {
-			t.SetCriteria(cs)
+		t.AddCriteria(in.AddAC)
+		if err := t.MarkCriteria(in.ACDone); err != nil {
+			return apperr.Usage("%v", err)
 		}
 		if in.Note != "" || in.Reason != "" {
 			note := in.Note
@@ -373,6 +396,7 @@ type CheckResult struct {
 	task.Check
 	Task     string `json:"task,omitempty"`
 	TimedOut bool   `json:"timed_out,omitempty"`
+	Failures int    `json:"consecutive_failures,omitempty"`
 }
 
 // Check runs check.cmd and records evidence on the active task (if any).
@@ -409,7 +433,13 @@ func Check(p *project.Project, stream bool) (*CheckResult, error) {
 			}
 			c := res.Check
 			t.Evidence.Check = &c
-			t.Updated = task.Now()
+			if c.ExitCode != 0 {
+				t.Evidence.CheckFailures++
+			} else {
+				t.Evidence.CheckFailures = 0
+			}
+			res.Failures = t.Evidence.CheckFailures
+			t.Updated = task.Now() // check does not make a tool a worker: reviewers run it too
 			res.Task = t.ID
 			return task.Save(p, t)
 		})
@@ -421,6 +451,11 @@ func Check(p *project.Project, stream bool) (*CheckResult, error) {
 		msg := "check failed"
 		if r.TimedOut {
 			msg = "check timed out after " + p.Config.CheckTimeout()
+		}
+		if res.Failures >= StopAfterFailures {
+			return res, apperr.New("E_CHECK_FAILED", apperr.ExitRuntime,
+				fmt.Sprintf(`stop and ask the user, or hand over: aitk close --status blocked --summary "<what you tried>" --knowledge "<what you learned>"`),
+				"%s (exit %d); this is failure %d in a row for %s, so stop retrying", msg, r.ExitCode, res.Failures, res.Task)
 		}
 		return res, apperr.New("E_CHECK_FAILED", apperr.ExitRuntime, "fix the failures, then run: aitk check", "%s (exit %d)", msg, r.ExitCode)
 	}
@@ -459,6 +494,9 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 	if in.Knowledge == "" {
 		return nil, apperr.New("E_DOD_KNOWLEDGE", apperr.ExitGate, `add --knowledge "<lasting finding>" (or --knowledge none)`, "--knowledge is required (use \"none\" when there is no lasting finding)")
 	}
+	if err := GuardText("close", append([]string{in.Summary, in.Knowledge}, in.Next...)...); err != nil {
+		return nil, err
+	}
 	if in.Status != "" && in.Status != task.InProgress && in.Status != task.Blocked {
 		return nil, apperr.Usage("--status only accepts in_progress or blocked (to hand over unfinished work)")
 	}
@@ -496,10 +534,13 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 				t.Evidence = &task.Evidence{Check: &c}
 			}
 		}
-		prof := computed // the diff decides, unless the task pins a profile
-		if t.ProfilePinned {
+		// The diff decides; a pinned profile applies unless the diff touches sensitive paths,
+		// which always makes the task strict.
+		prof := computed
+		if t.ProfilePinned && computed != "strict" {
 			prof = t.Profile
 		}
+		t.AddWorker(Tool())
 		res = &CloseResult{Task: t.ID, Profile: prof}
 		// Validate every input before writing anything, so a rejected close changes nothing.
 		var entry *knowledge.Entry
@@ -570,6 +611,13 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			s.SetActive("", "", "")
 			claims.Release(p, t.ID, false)
 		}
+		total := 0
+		for _, c := range changes {
+			total += c.Lines
+		}
+		if len(changes) > 40 || total > 2000 {
+			res.Notes = append(res.Notes, fmt.Sprintf("large change (%d files, %d lines): smaller tasks are easier to review and safer to revert", len(changes), total))
+		}
 		if target == task.InReview {
 			res.Notes = append(res.Notes, "strict task needs ≥2 review passes (last with 0 findings, one by a different tool/session) before it can be done: aitk review pass --findings N")
 		}
@@ -635,13 +683,21 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 	return task.InReview, nil
 }
 
-// reviewDone: ≥2 passes, the last with 0 findings, at least one by a tool other than the implementer.
+// reviewDone: ≥2 passes, the last with 0 findings, and at least one pass by a tool that did
+// not work on the task (workers, the creator, and the tool closing it).
 func reviewDone(t *task.Task) bool {
 	if t.Review == nil || len(t.Review.Passes) < 2 || t.Review.Passes[len(t.Review.Passes)-1].Findings != 0 {
 		return false
 	}
+	implementers := map[string]bool{Tool(): true}
+	if t.CreatedBy != "" {
+		implementers[t.CreatedBy] = true
+	}
+	for _, w := range t.Workers {
+		implementers[w] = true
+	}
 	for _, pass := range t.Review.Passes {
-		if pass.By != t.CreatedBy {
+		if pass.By != "" && pass.By != "unknown" && !implementers[pass.By] {
 			return true
 		}
 	}

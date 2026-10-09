@@ -3,6 +3,23 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] - 2026-10-09
+
+### Added
+- **Self-control** (spec §9): consecutive failing checks tell agents to stop and ask or hand over; credentials in recorded text are refused (`E_SECRET`); large changes are flagged; `task update` cannot mark work done.
+- **Self-healing** (spec §10): damaged task frontmatter is normalized, unparseable files are restored from git, merge conflicts in aitk files are resolved, drifted adapters and a missing check command are repaired, before every writing command and by `aitk doctor --fix`. Nothing is discarded; leftovers go to `docs/ai/_legacy/quarantine/`.
+
+### Fixed (from an independent review; each has a regression test)
+- Knowledge compaction and pinning could delete hand-written prose, headings, comments, and the second paragraph of an entry; they now edit entry blocks only.
+- `init` and later commands could overwrite hand-written `handoff.md`, `knowledge.md`, `decisions.md`, `current-task.md`.
+- Ticking criteria rewrote the whole section; nested items were counted as criteria.
+- `hooks install` broke hooks written in other languages; they are now wrapped.
+- Adapter and hook writes replaced symlinks and widened permissions (a 0600 config became world-readable).
+- Stale checks passed for non-ASCII file names and in repositories without commits.
+- A pinned `lite` profile overrode sensitive paths; strict review independence ignored who implemented the task; `task update --status done` skipped the Definition of Done.
+- MCP free text starting with `-` was parsed as flags.
+- JSON configs with trailing content were silently truncated.
+
 ## [2.0.2] - 2026-10-09
 
 Findings from the first real-project pilot.

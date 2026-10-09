@@ -52,29 +52,52 @@ func (e Entry) Render() string {
 	return fmt.Sprintf("- %s <!-- aitk:k %s -->", text, strings.Join(meta, " "))
 }
 
+// block is one entry and its line range [start, end) in a file.
+type block struct {
+	start, end int
+	entry      Entry
+}
+
+// parseBlocks finds entries: a line starting with "- " plus following lines indented by two
+// spaces (an indented line with nothing else is a blank line inside the entry). Everything
+// else in the file (headings, comments, prose) is not an entry and is never touched.
+func parseBlocks(lines []string, topic, file, fallbackDate string) []block {
+	var out []block
+	for i := 0; i < len(lines); i++ {
+		if !strings.HasPrefix(lines[i], "- ") {
+			continue
+		}
+		j := i + 1
+		for j < len(lines) && strings.HasPrefix(lines[j], "  ") {
+			j++
+		}
+		// Trailing whitespace-only continuation lines belong to the gap, not the entry.
+		for j > i+1 && strings.TrimSpace(lines[j-1]) == "" {
+			j--
+		}
+		var b strings.Builder
+		b.WriteString(lines[i][2:])
+		for _, l := range lines[i+1 : j] {
+			b.WriteString("\n" + strings.TrimPrefix(l, "  "))
+		}
+		e := Entry{Text: b.String(), Date: fallbackDate, Topic: topic, File: file}
+		finish(&e)
+		out = append(out, block{start: i, end: j, entry: e})
+		i = j - 1
+	}
+	return out
+}
+
+func splitLines(content string) []string {
+	return strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+}
+
 // Parse extracts entries from one knowledge file.
 func Parse(content, topic, file, fallbackDate string) []Entry {
 	var out []Entry
-	var cur *Entry
-	flush := func() {
-		if cur != nil {
-			finish(cur)
-			out = append(out, *cur)
-			cur = nil
-		}
+	for _, b := range parseBlocks(splitLines(content), topic, file, fallbackDate) {
+		out = append(out, b.entry)
 	}
-	for _, l := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
-		switch {
-		case strings.HasPrefix(l, "- "):
-			flush()
-			cur = &Entry{Text: l[2:], Date: fallbackDate, Topic: topic, File: file}
-		case cur != nil && len(l) > 2 && strings.HasPrefix(l, "  ") && strings.TrimSpace(l) != "":
-			cur.Text += "\n" + strings.TrimPrefix(l, "  ")
-		default:
-			flush()
-		}
-	}
-	flush()
 	return out
 }
 
@@ -171,151 +194,167 @@ type CompactResult struct {
 	Duplicates int            `json:"duplicates"`
 	Archived   int            `json:"archived"`
 	Topics     map[string]int `json:"topics"`
-	Frozen     []string       `json:"frozen,omitempty"` // files with hand-written prose, left untouched
 }
 
 type kfile struct {
-	name    string // e.g. general.md
-	topic   string
-	entries []Entry
-	pure    bool // only headings, comments, blank lines, and entries
+	name          string // e.g. general.md
+	topic         string
+	lines         []string
+	blocks        []block
+	remove        map[int]bool   // block indexes to remove
+	repl          map[int]string // block index -> replacement rendering
+	appendEntries []Entry
+	exists        bool
 }
 
-func loadFiles(p *project.Project) []kfile {
-	dir := p.Path(project.KnowDir)
-	files, _ := os.ReadDir(dir)
-	var out []kfile
-	for _, f := range files {
-		if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+func (f *kfile) render() string {
+	var out []string
+	bi := 0
+	for i := 0; i < len(f.lines); {
+		if bi < len(f.blocks) && f.blocks[bi].start == i {
+			b := f.blocks[bi]
+			switch {
+			case f.remove[bi]:
+			case f.repl[bi] != "":
+				out = append(out, strings.Split(f.repl[bi], "\n")...)
+			default:
+				out = append(out, f.lines[b.start:b.end]...)
+			}
+			i = b.end
+			bi++
 			continue
 		}
-		rel := filepath.ToSlash(filepath.Join(project.KnowDir, f.Name()))
+		out = append(out, f.lines[i])
+		i++
+	}
+	s := strings.Join(out, "\n")
+	if len(f.appendEntries) > 0 {
+		s = strings.TrimRight(s, "\n") + "\n"
+		if strings.TrimSpace(s) == "" {
+			s = "# Knowledge: " + f.topic + "\n\n"
+		}
+		for _, e := range f.appendEntries {
+			s += e.Render() + "\n"
+		}
+	}
+	return s
+}
+
+// Compact files inbox entries by topic, drops exact (normalized) duplicates arriving in the
+// inbox, and archives old unpinned entries (docs/spec/workflow.md §8). It edits entry blocks
+// only: headings, comments, and prose in any file are kept byte for byte, and no entry text
+// is deleted (a duplicate is only dropped when the same text already exists).
+func Compact(p *project.Project, archiveAfterDays int, dryRun bool) (*CompactResult, error) {
+	res := &CompactResult{Topics: map[string]int{}}
+	cutoff := time.Now().UTC().AddDate(0, 0, -archiveAfterDays).Format("2006-01-02")
+	dir := p.Path(project.KnowDir)
+	entries, _ := os.ReadDir(dir)
+	files := map[string]*kfile{}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		rel := filepath.ToSlash(filepath.Join(project.KnowDir, e.Name()))
 		b, err := os.ReadFile(p.Path(rel))
 		if err != nil {
 			continue
 		}
-		topic := strings.TrimSuffix(f.Name(), ".md")
-		out = append(out, kfile{name: f.Name(), topic: topic, entries: Parse(string(b), topic, rel, fileDate(p, rel)), pure: isPure(string(b))})
+		topic := strings.TrimSuffix(e.Name(), ".md")
+		lines := splitLines(string(b))
+		files[topic] = &kfile{name: e.Name(), topic: topic, lines: lines, exists: true,
+			blocks: parseBlocks(lines, topic, rel, fileDate(p, rel)), remove: map[int]bool{}, repl: map[int]string{}}
+		names = append(names, topic)
 	}
-	return out
-}
-
-// isPure reports whether content has nothing but headings, HTML comments, blank lines, and entries.
-func isPure(content string) bool {
-	inEntry, inComment := false, false
-	for _, l := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
-		tl := strings.TrimSpace(l)
-		switch {
-		case inComment:
-			if strings.Contains(l, "-->") {
-				inComment = false
-			}
-		case strings.HasPrefix(l, "- "):
-			inEntry = true
-		case inEntry && strings.HasPrefix(l, "  ") && tl != "":
-		case tl == "" || strings.HasPrefix(tl, "#"):
-			inEntry = false
-		case strings.HasPrefix(tl, "<!--"):
-			inEntry = false
-			inComment = !strings.Contains(tl, "-->")
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// Compact runs the deterministic compaction (docs/spec/workflow.md §8). It never deletes
-// text: exact duplicates are merged into the first occurrence, and files containing
-// hand-written prose are left untouched.
-func Compact(p *project.Project, archiveAfterDays int, dryRun bool) (*CompactResult, error) {
-	res := &CompactResult{Topics: map[string]int{}}
-	cutoff := time.Now().UTC().AddDate(0, 0, -archiveAfterDays).Format("2006-01-02")
-	files := loadFiles(p)
-
+	sort.Strings(names)
 	type ref struct {
-		topic string
-		idx   int
+		topic    string
+		idx      int // block index, or index into appendEntries when appended
+		appended bool
 	}
-	topics := map[string][]Entry{}
+	seen := map[string]ref{}
 	archive := map[string][]Entry{}
-	seen := map[string]*ref{}
-	frozenKeys := map[string]bool{}
-	rewrite := map[string]bool{} // topic files compaction owns
-
-	// Frozen files first, so their text wins duplicate checks.
-	for _, f := range files {
-		if f.topic != inbox && !f.pure {
-			res.Frozen = append(res.Frozen, f.name)
-			for _, e := range f.entries {
-				frozenKeys[Normalize(e.Text)] = true
-			}
+	file := func(topic string) *kfile {
+		if f, ok := files[topic]; ok {
+			return f
 		}
+		f := &kfile{name: topic + ".md", topic: topic, remove: map[int]bool{}, repl: map[int]string{}}
+		files[topic] = f
+		return f
 	}
-	// Pure topic files before the inbox, so existing entries keep precedence.
-	sort.SliceStable(files, func(i, j int) bool { return files[i].topic != inbox && files[j].topic == inbox })
-	for _, f := range files {
-		if f.topic != inbox && !f.pure {
-			continue
-		}
-		if f.topic != inbox {
-			rewrite[f.topic] = true
-		}
-		for _, e := range f.entries {
-			topic := f.topic
-			if topic == inbox {
-				topic = topicFor(e)
-				res.Moved++
-			}
+	// Topic files first (existing text wins duplicate checks), then the inbox.
+	order := append([]string{}, names...)
+	sort.SliceStable(order, func(i, j int) bool { return order[i] != inbox && order[j] == inbox })
+	for _, topic := range order {
+		f := files[topic]
+		for i, b := range f.blocks {
+			e := b.entry
 			key := Normalize(e.Text)
-			if key != "" && frozenKeys[key] {
-				res.Duplicates++
-				continue
-			}
-			if r, dup := seen[key]; dup && key != "" {
-				first := &topics[r.topic][r.idx]
-				first.Tags = union(first.Tags, e.Tags)
-				first.Pinned = first.Pinned || e.Pinned
-				res.Duplicates++
+			if topic == inbox {
+				if r, dup := seen[key]; dup && key != "" {
+					// Same text already recorded: merge tags/pin into it and drop the copy.
+					first := files[r.topic]
+					if r.appended {
+						fe := &first.appendEntries[r.idx]
+						fe.Tags, fe.Pinned = union(fe.Tags, e.Tags), fe.Pinned || e.Pinned
+					} else {
+						fe := first.blocks[r.idx].entry
+						merged := fe
+						merged.Tags, merged.Pinned = union(fe.Tags, e.Tags), fe.Pinned || e.Pinned
+						if strings.Join(merged.Tags, ",") != strings.Join(fe.Tags, ",") || merged.Pinned != fe.Pinned {
+							first.repl[r.idx] = merged.Render()
+							first.blocks[r.idx].entry = merged
+						}
+					}
+					f.remove[i] = true
+					res.Duplicates++
+					continue
+				}
+				f.remove[i] = true
+				res.Moved++
+				if !e.Pinned && e.Date < cutoff {
+					archive[quarter(e.Date)] = append(archive[quarter(e.Date)], e)
+					res.Archived++
+					continue
+				}
+				t := file(topicFor(e))
+				t.appendEntries = append(t.appendEntries, e)
+				if key != "" {
+					seen[key] = ref{t.topic, len(t.appendEntries) - 1, true}
+				}
 				continue
 			}
 			if !e.Pinned && e.Date < cutoff {
-				q := quarter(e.Date)
-				archive[q] = append(archive[q], e)
+				f.remove[i] = true
+				archive[quarter(e.Date)] = append(archive[quarter(e.Date)], e)
 				res.Archived++
 				continue
 			}
-			topics[topic] = append(topics[topic], e)
-			seen[key] = &ref{topic, len(topics[topic]) - 1}
-			rewrite[topic] = true
+			if _, dup := seen[key]; !dup && key != "" {
+				seen[key] = ref{topic, i, false}
+			}
 		}
 	}
-	for t, es := range topics {
-		res.Topics[t] = len(es)
+	for _, f := range files {
+		n := len(f.appendEntries)
+		for i := range f.blocks {
+			if !f.remove[i] {
+				n++
+			}
+		}
+		if f.topic != inbox && n > 0 {
+			res.Topics[f.topic] = n
+		}
 	}
 	if dryRun {
 		return res, nil
 	}
-	dir := p.Path(project.KnowDir)
-	for t := range rewrite {
-		es := topics[t]
-		path := filepath.Join(dir, t+".md")
-		if len(es) == 0 {
-			os.Remove(path)
+	for _, f := range files {
+		changed := len(f.remove) > 0 || len(f.repl) > 0 || len(f.appendEntries) > 0
+		if !changed {
 			continue
 		}
-		sort.SliceStable(es, func(i, j int) bool {
-			if es[i].Pinned != es[j].Pinned {
-				return es[i].Pinned
-			}
-			return es[i].Date > es[j].Date
-		})
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "# Knowledge: %s\n\n", t)
-		for _, e := range es {
-			sb.WriteString(e.Render() + "\n")
-		}
-		if err := fsx.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
+		if err := fsx.WriteFile(filepath.Join(dir, f.name), []byte(f.render()), 0o644); err != nil {
 			return nil, err
 		}
 	}
@@ -326,15 +365,15 @@ func Compact(p *project.Project, archiveAfterDays int, dryRun bool) (*CompactRes
 		if content == "" {
 			content = "# Knowledge archive " + q + "\n\n"
 		}
+		if !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
 		for _, e := range es {
 			content += e.Render() + "\n"
 		}
 		if err := fsx.WriteFile(path, []byte(content), 0o644); err != nil {
 			return nil, err
 		}
-	}
-	if err := fsx.WriteFile(filepath.Join(dir, inbox+".md"), []byte(inboxHeader), 0o644); err != nil {
-		return nil, err
 	}
 	return res, nil
 }
@@ -450,7 +489,8 @@ func words(s string) map[string]bool {
 	return out
 }
 
-// Pin sets the pin flag on entries whose text contains query (case-insensitive).
+// Pin sets the pin flag on entries whose text contains query (case-insensitive), editing
+// only those entry blocks.
 func Pin(p *project.Project, query string) (int, error) {
 	q := strings.ToLower(query)
 	files, _ := os.ReadDir(p.Path(project.KnowDir))
@@ -459,34 +499,20 @@ func Pin(p *project.Project, query string) (int, error) {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
 			continue
 		}
-		path := p.Path(project.KnowDir, f.Name())
-		b, _ := os.ReadFile(path)
-		lines := strings.Split(string(b), "\n")
-		var out []string
-		changed := false
-		for i := 0; i < len(lines); i++ {
-			if !strings.HasPrefix(lines[i], "- ") {
-				out = append(out, lines[i])
-				continue
-			}
-			j := i + 1
-			for j < len(lines) && strings.HasPrefix(lines[j], "  ") && strings.TrimSpace(lines[j]) != "" {
-				j++
-			}
-			block := strings.Join(lines[i:j], "\n")
-			es := Parse(block, "", "", fileDate(p, filepath.ToSlash(filepath.Join(project.KnowDir, f.Name()))))
-			if len(es) == 1 && !es[0].Pinned && strings.Contains(strings.ToLower(es[0].Text), q) {
-				es[0].Pinned = true
-				out = append(out, strings.Split(es[0].Render(), "\n")...)
-				changed = true
+		rel := filepath.ToSlash(filepath.Join(project.KnowDir, f.Name()))
+		b, _ := os.ReadFile(p.Path(rel))
+		lines := splitLines(string(b))
+		kf := &kfile{name: f.Name(), lines: lines, blocks: parseBlocks(lines, "", rel, fileDate(p, rel)), remove: map[int]bool{}, repl: map[int]string{}}
+		for i, bl := range kf.blocks {
+			if !bl.entry.Pinned && strings.Contains(strings.ToLower(bl.entry.Text), q) {
+				e := bl.entry
+				e.Pinned = true
+				kf.repl[i] = e.Render()
 				n++
-			} else {
-				out = append(out, lines[i:j]...)
 			}
-			i = j - 1
 		}
-		if changed {
-			if err := fsx.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644); err != nil {
+		if len(kf.repl) > 0 {
+			if err := fsx.WriteFile(p.Path(rel), []byte(kf.render()), 0o644); err != nil {
 				return n, err
 			}
 		}

@@ -161,11 +161,29 @@ func Apply(cs []Change, backupDir string) error {
 				return fmt.Errorf("backup %s: %w", c.Rel, err)
 			}
 		}
-		if err := fsx.WriteFile(c.Path, c.after, 0o644); err != nil {
+		if err := fsx.WriteFileKeep(c.Path, c.after, 0o644); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Configured lists tools whose project files already contain aitk entries.
+func Configured(e Env) []string {
+	var out []string
+	for _, a := range all() {
+		cs, err := a.project(e)
+		if err != nil {
+			continue
+		}
+		for _, c := range cs {
+			if bytes.Contains(c.before, []byte("aitk")) {
+				out = append(out, a.name)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // Doctor reports per-tool state without writing.

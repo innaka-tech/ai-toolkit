@@ -176,12 +176,26 @@
               "minimum": 0
             }
           }
+        },
+        "check_failures": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Consecutive failing checks; reset by a passing check. At 2 or more, agents must stop and ask the user or hand over."
         }
       }
     },
     "legacy": {
       "type": "object",
       "description": "Fields preserved verbatim from v1 by migration"
+    },
+    "workers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$"
+      },
+      "uniqueItems": true,
+      "description": "Tools that started, checked, or closed the task; review passes by these tools are not independent"
     }
   },
   "$defs": {

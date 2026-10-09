@@ -37,6 +37,20 @@ func WriteFile(path string, data []byte, perm os.FileMode) error {
 	return rename(name, path)
 }
 
+// WriteFileKeep writes data atomically to an existing user-owned file without changing how it
+// is set up: a symlink is followed and its target updated, and the file keeps its permissions.
+// New files get perm.
+func WriteFileKeep(path string, data []byte, perm os.FileMode) error {
+	target := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		target = resolved
+	}
+	if info, err := os.Stat(target); err == nil {
+		perm = info.Mode().Perm()
+	}
+	return WriteFile(target, data, perm)
+}
+
 // Exists reports whether path exists.
 func Exists(path string) bool {
 	_, err := os.Stat(path)
