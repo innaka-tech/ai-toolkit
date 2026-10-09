@@ -180,3 +180,17 @@ func TestReview12HandWrittenDocsAreNotOverwritten(t *testing.T) {
 		t.Fatal("doctor should mention the hand-written files")
 	}
 }
+
+// Brief keeps showing project knowledge while files are changed (relevance orders, never hides).
+func TestBriefShowsKnowledgeWhileWorking(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	for _, k := range []string{"payments use QRIS", "deploy with deploy.sh", "test accounts are excluded", "plans live in src/data/plans.ts", "notifications go through WAHA"} {
+		mustOK(t, aitk(t, dir, "knowledge", "add", k))
+	}
+	write(t, dir, "web/unrelated-component.tsx", "x\n")
+	b := aitk(t, dir, "brief")
+	if n := len(data(b)["knowledge"].([]any)); n != 5 {
+		t.Fatalf("brief shows %d of 5 knowledge entries while files are changed", n)
+	}
+}

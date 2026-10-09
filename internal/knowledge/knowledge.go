@@ -413,8 +413,19 @@ type Scored struct {
 	Score float64 `json:"score"`
 }
 
-// Search ranks entries by term overlap, pin, tag/topic match, and recency.
+// Search ranks entries by term overlap, pin, tag/topic match, and recency, dropping entries
+// that match nothing (for explicit searches).
 func Search(entries []Entry, query string, tags []string, limit int) []Scored {
+	return rank(entries, query, tags, limit, true)
+}
+
+// Rank orders every entry by relevance and then recency without dropping any, so the brief
+// fills its slots with the most relevant entries first and the newest ones after.
+func Rank(entries []Entry, query string, tags []string, limit int) []Scored {
+	return rank(entries, query, tags, limit, false)
+}
+
+func rank(entries []Entry, query string, tags []string, limit int, dropUnmatched bool) []Scored {
 	terms := words(query)
 	tagset := map[string]bool{}
 	for _, t := range tags {
@@ -443,7 +454,7 @@ func Search(entries []Entry, query string, tags []string, limit int) []Scored {
 		if tagset[e.Topic] {
 			s += 2
 		}
-		if len(terms) > 0 && len(tagset) == 0 && s == 0 && !e.Pinned {
+		if dropUnmatched && len(terms) > 0 && len(tagset) == 0 && s == 0 && !e.Pinned {
 			continue
 		}
 		if e.Pinned {
