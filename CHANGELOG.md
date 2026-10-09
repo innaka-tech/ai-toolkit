@@ -11,6 +11,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Lossless, idempotent v1 → v2 migration; validated on 24 real v1 projects (0 doctor errors, every brief ≤ 4k tokens, ~100 ms).
 - Go CI on Linux, macOS, Windows with `-race`; govulncheck.
 
+- `aitk mcp`: MCP server (official Go SDK) exposing 13 tools, the `aitk://brief` resource, and `start-session`/`close-session` prompts; every tool runs the CLI code path; the MCP client name becomes the recorded tool. Verified end-to-end with Claude Code and OpenCode.
+- `aitk adapters sync|doctor` for Claude Code, Codex, OpenCode, Gemini CLI, Kiro, and Cursor: MCP registration, instructions, and `SessionStart` → `aitk brief` hooks; order-preserving JSON edits, idempotent, global edits backed up.
+
 ### Changed
 - Spec: config is validated from TOML; knowledge entries may carry `file`; checks record a `tree` fingerprint; session keeps `last_check`; hand-written and v1-frontmatter task files migrate (ID collisions get a fresh ID with `legacy.v1_id`).
 

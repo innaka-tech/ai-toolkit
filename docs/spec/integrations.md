@@ -4,24 +4,26 @@
 
 `aitk adapters sync` detects installed AI tools and installs three things per tool, where supported: instructions, MCP registration, and session hooks.
 
-| Tool | Instructions | MCP registration | Session hooks |
+| Tool | Instructions | MCP registration | Session hook |
 |---|---|---|---|
-| Claude Code | `CLAUDE.md` containing `@AGENTS.md`; skill `~/.claude/skills/aitk/SKILL.md` | `.mcp.json` (project) or user scope | `SessionStart` → `aitk brief`; `Stop` → remind to `aitk close` when the tree has changes |
-| Codex CLI | `AGENTS.md` (native) | `~/.codex/config.toml` `[mcp_servers.aitk]` | when supported by the installed version |
-| OpenCode | `AGENTS.md` (native) | `opencode.json` `mcp.aitk` | plugin event on session start |
-| Gemini CLI | `.gemini/settings.json` `context.fileName` includes `AGENTS.md` | `.gemini/settings.json` `mcpServers.aitk` | when supported |
-| Kiro | `.kiro/steering/aitk.md` | `.kiro/settings/mcp.json` | agent hooks |
-| Cursor / Windsurf / GitHub Copilot | `AGENTS.md` or the tool's rules file | the tool's MCP config | — |
+| Claude Code | `CLAUDE.md` starting with `@AGENTS.md` | `.mcp.json` (project) | `.claude/settings.json`: `SessionStart` (`startup\|resume\|compact`) → `aitk brief` |
+| Codex CLI | `AGENTS.md` (native) | `~/.codex/config.toml` `[mcp_servers.aitk]`, only with `--global` (Codex has no project MCP config) | — |
+| OpenCode | `AGENTS.md` (native) | `opencode.json` `mcp.aitk` (`type: local`) | — |
+| Gemini CLI | `.gemini/settings.json` `context.fileName` includes `AGENTS.md` | `.gemini/settings.json` `mcpServers.aitk` | `SessionStart` (`startup`) → `aitk brief` |
+| Kiro | `.kiro/steering/aitk.md` (`inclusion: always`) | `.kiro/settings/mcp.json` | — |
+| Cursor | `.cursor/rules/aitk.mdc` (`alwaysApply: true`) | `.cursor/mcp.json` | — |
 | Aider and others | `AGENTS.md` via the tool's read/include option | — | git hooks only |
 
 Rules:
 
-- Text files: aitk writes only between `<!-- aitk:begin v=2 -->` and `<!-- aitk:end -->`.
-- JSON/TOML configs: aitk writes only keys it owns (the `aitk` server entry, the `aitk` hook entries) and preserves formatting where the format allows.
-- The first run on a machine defaults to `--dry-run` and prints the diff. Every write is preceded by a backup in `~/.local/state/aitk/backups/<timestamp>/`.
-- Re-running with no changes MUST be a no-op.
-- Each adapter has fixture tests: a recorded "before" config, the expected "after", and a re-run that produces no change.
+- Tools are detected by their executable on PATH or their project directory; `--tool` selects explicitly.
+- Project files are written in the repository (reviewable in `git diff`, shared with teammates on commit). User-level files change only with `--global` and are copied to `$XDG_STATE_HOME/aitk/backups/<timestamp>/` first.
+- JSON configs are edited key by key: other keys, their order, and their values are preserved; aitk only owns the `aitk` server entry and its own `aitk brief` hook. Files that are not plain JSON (e.g. JSONC with comments) are refused with an explanation, never rewritten.
+- Text files: aitk writes only between its markers (`<!-- aitk:begin v=2 -->`, `# aitk:begin`) or files it owns (`.kiro/steering/aitk.md`, `.cursor/rules/aitk.mdc`).
+- Re-running with no changes MUST be a no-op. `aitk adapters doctor` reports tools whose adapters are missing or outdated, and warns when `aitk` is not on PATH.
+- Each adapter has fixture tests: existing user config, expected result, and a no-op re-run.
 - Secrets are never written by adapters.
+- `aitk mcp` starts even outside an aitk project, so a global registration is safe: tools then return `E_NOT_A_PROJECT` with its fix.
 
 ## MCP server
 
