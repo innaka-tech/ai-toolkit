@@ -396,15 +396,23 @@ func TestConcurrentWritersDoNotCorrupt(t *testing.T) {
 	dir := repo(t)
 	initRepo(t, dir)
 	var wg sync.WaitGroup
+	codes := make([]string, 20)
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			var out, errb bytes.Buffer
-			Execute([]string{"--json", "-C", dir, "knowledge", "add", "entry number " + string(rune('A'+i))}, &out, &errb)
+			if c := Execute([]string{"--json", "-C", dir, "knowledge", "add", "entry number " + string(rune('A'+i))}, &out, &errb); c != 0 {
+				codes[i] = out.String()
+			}
 		}(i)
 	}
 	wg.Wait()
+	for i, c := range codes {
+		if c != "" {
+			t.Errorf("writer %d failed: %s", i, c)
+		}
+	}
 	inbox := read(t, dir, "docs/ai/knowledge/_inbox.md")
 	if n := strings.Count(inbox, "<!-- aitk:k"); n != 20 {
 		t.Fatalf("expected 20 entries after concurrent adds, got %d", n)

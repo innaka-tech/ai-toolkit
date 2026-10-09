@@ -36,7 +36,7 @@ func WriteFile(path string, data []byte, perm os.FileMode) error {
 	if err := os.Chmod(name, perm); err != nil {
 		return err
 	}
-	return os.Rename(name, path)
+	return rename(name, path)
 }
 
 // Exists reports whether path exists.
@@ -71,7 +71,7 @@ func Acquire(path string, timeout time.Duration) (*Lock, error) {
 			return nil, err
 		}
 		if stale(path) {
-			os.Remove(path)
+			remove(path)
 			continue
 		}
 		if time.Now().After(deadline) {
@@ -108,4 +108,4 @@ func trimNL(b []byte) []byte {
 }
 
 // Release drops the lock.
-func (l *Lock) Release() { os.Remove(l.path) }
+func (l *Lock) Release() { remove(l.path) }
