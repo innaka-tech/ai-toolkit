@@ -85,3 +85,17 @@ func TestHasManifest(t *testing.T) {
 		t.Fatal("go.mod is a manifest")
 	}
 }
+
+func TestInstallOSVKeepsBinaryAlreadyInDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake scanner is a shell script")
+	}
+	osvServer(t, nil, strings.Repeat("a", 64), asset()) // a download would fail the checksum
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "osv-scanner"), []byte("#!/bin/sh\necho 'osv-scanner version: 9.9.9'\n"), 0o755)
+	t.Setenv("PATH", "/bin:/usr/bin")
+	r, err := InstallOSV(dir, false, io.Discard)
+	if err != nil || r.Method != "present" || r.Version != "9.9.9" {
+		t.Fatalf("existing binary must be kept: %+v %v", r, err)
+	}
+}

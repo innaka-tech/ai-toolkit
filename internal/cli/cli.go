@@ -1532,6 +1532,9 @@ func (a *app) auditCmd() *cobra.Command {
 		if dir == "" {
 			dir = audit.DefaultBinDir()
 		}
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
 		r, err := audit.InstallOSV(dir, !noBrew, log)
 		if err != nil {
 			return nil, apperr.New("E_INSTALL", apperr.ExitRuntime, "install it yourself: https://google.github.io/osv-scanner/installation/", "%v", err)

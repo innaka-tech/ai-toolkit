@@ -35,32 +35,44 @@ func DefaultBinDir() string {
 	return filepath.Join(home, ".local", "bin")
 }
 
-// InstallOSV makes osv-scanner available: it keeps an installed one, uses Homebrew on macOS
-// when present, and otherwise downloads the official release binary into dir after verifying
-// its SHA-256 against the release's checksum file.
+// InstallOSV makes osv-scanner available: it keeps an installed one (on PATH or in dir), uses
+// Homebrew on macOS when present, and otherwise downloads the official release binary into dir
+// after verifying its SHA-256 against the same release's checksum file. The checksum guards
+// against corrupted or truncated downloads; it is not a signature.
 func InstallOSV(dir string, useBrew bool, log io.Writer) (*Install, error) {
+	name := "osv-scanner"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
 	if p, err := exec.LookPath("osv-scanner"); err == nil {
 		return &Install{Path: p, Method: "present", Version: osvVersion(p)}, nil
+	}
+	if d := filepath.Join(dir, name); fileExists(d) {
+		if v := osvVersion(d); v != "" {
+			return &Install{Path: d, Method: "present", Version: v}, nil
+		}
 	}
 	if useBrew && runtime.GOOS == "darwin" {
 		if brew, err := exec.LookPath("brew"); err == nil {
 			c := exec.Command(brew, "install", "osv-scanner")
+			c.Env = append(os.Environ(), "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_CLEANUP=1")
 			c.Stdout, c.Stderr = log, log
 			if err := c.Run(); err != nil {
-				return nil, fmt.Errorf("brew install osv-scanner: %w", err)
+				fmt.Fprintf(log, "brew install osv-scanner failed (%v); downloading the release binary instead\n", err)
+			} else if p, err := exec.LookPath("osv-scanner"); err == nil {
+				return &Install{Path: p, Method: "brew", Version: osvVersion(p)}, nil
 			}
-			p, err := exec.LookPath("osv-scanner")
-			if err != nil {
-				return nil, fmt.Errorf("brew installed osv-scanner but it is not on PATH")
-			}
-			return &Install{Path: p, Method: "brew", Version: osvVersion(p)}, nil
 		}
+	}
+	base, err := releaseBase()
+	if err != nil {
+		return nil, err
 	}
 	asset := "osv-scanner_" + runtime.GOOS + "_" + runtime.GOARCH
 	if runtime.GOOS == "windows" {
 		asset += ".exe"
 	}
-	sums, err := fetch(OSVReleaseURL + "/osv-scanner_SHA256SUMS")
+	sums, err := fetch(base + "/osv-scanner_SHA256SUMS")
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +87,7 @@ func InstallOSV(dir string, useBrew bool, log io.Writer) (*Install, error) {
 		return nil, fmt.Errorf("no osv-scanner release for %s/%s (%s is not in the checksum file)", runtime.GOOS, runtime.GOARCH, asset)
 	}
 	fmt.Fprintf(log, "downloading %s\n", asset)
-	bin, err := fetch(OSVReleaseURL + "/" + asset)
+	bin, err := fetch(base + "/" + asset)
 	if err != nil {
 		return nil, err
 	}
@@ -86,20 +98,52 @@ func InstallOSV(dir string, useBrew bool, log io.Writer) (*Install, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	name := "osv-scanner"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
 	dest := filepath.Join(dir, name)
-	tmp := dest + ".tmp"
-	if err := os.WriteFile(tmp, bin, 0o755); err != nil {
+	tmp, err := os.CreateTemp(dir, ".osv-scanner-*")
+	if err != nil {
 		return nil, err
 	}
-	if err := os.Rename(tmp, dest); err != nil {
-		os.Remove(tmp)
-		return nil, err
+	_, werr := tmp.Write(bin)
+	cerr := tmp.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp.Name(), 0o755)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), dest)
+	}
+	if werr != nil {
+		os.Remove(tmp.Name())
+		return nil, werr
 	}
 	return &Install{Path: dest, Method: "download", Version: osvVersion(dest)}, nil
+}
+
+// releaseBase pins ".../releases/latest/download" to one tag so the checksum file and the
+// binary always come from the same release.
+func releaseBase() (string, error) {
+	if !strings.HasSuffix(OSVReleaseURL, "/releases/latest/download") {
+		return OSVReleaseURL, nil
+	}
+	c := &http.Client{Timeout: time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := c.Head(strings.TrimSuffix(OSVReleaseURL, "/download"))
+	if err != nil {
+		return "", fmt.Errorf("find the latest osv-scanner release: %w", err)
+	}
+	resp.Body.Close()
+	loc := resp.Header.Get("Location")
+	i := strings.LastIndex(loc, "/tag/")
+	if i < 0 {
+		return "", fmt.Errorf("find the latest osv-scanner release: unexpected response (HTTP %d)", resp.StatusCode)
+	}
+	return strings.TrimSuffix(OSVReleaseURL, "/latest/download") + "/download/" + loc[i+len("/tag/"):], nil
+}
+
+func fileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
 }
 
 func fetch(url string) ([]byte, error) {

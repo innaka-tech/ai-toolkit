@@ -157,12 +157,21 @@ func TestAuditPassesWhenOSVFindsNoManifests(t *testing.T) {
 	bin := t.TempDir()
 	write(t, bin, "osv-scanner", "#!/bin/sh\necho 'No package sources found'\nexit 128\n")
 	os.Chmod(filepath.Join(bin, "osv-scanner"), 0o755)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tool := range []string{"git", "sh"} { // only these: no real scanners
+		if p, err := exec.LookPath(tool); err == nil {
+			os.Symlink(p, filepath.Join(bin, tool))
+		}
+	}
+	t.Setenv("PATH", bin)
 	r := aitk(t, dir, "audit")
 	mustOK(t, r)
-	if !strings.Contains(r.stdout, "no dependency manifests found") {
+	if !strings.Contains(r.stdout, "found no package sources") {
 		t.Fatalf("osv-scanner result missing:\n%s", r.stdout)
 	}
 	write(t, bin, "osv-scanner", "#!/bin/sh\necho 'GHSA-xxxx found'\nexit 1\n")
+	expect(t, aitk(t, dir, "audit"), 1, "E_AUDIT_FAILED")
+	// With a manifest present, exit 128 means osv-scanner could not read it: still a failure.
+	write(t, bin, "osv-scanner", "#!/bin/sh\necho 'No package sources found'\nexit 128\n")
+	write(t, dir, "build.gradle", "plugins {}\n")
 	expect(t, aitk(t, dir, "audit"), 1, "E_AUDIT_FAILED")
 }

@@ -74,7 +74,11 @@ func Run(p *project.Project, stream bool) (*task.Audit, []string) {
 		res := task.AuditResult{Name: s.Name, ExitCode: r.ExitCode, Summary: checkrun.Summary(strings.TrimSpace(r.Output), 1500)}
 		// osv-scanner exits 128 when the repository has no dependency manifests: nothing to scan is not a failure.
 		if r.ExitCode == osvNoPackages && strings.HasPrefix(strings.TrimSpace(s.Cmd), "osv-scanner") {
-			res.ExitCode, res.Summary = 0, "no dependency manifests found"
+			if HasManifest(p.Root) {
+				res.Summary = "osv-scanner could not read the dependency manifests in this repository:\n" + res.Summary
+			} else {
+				res.ExitCode, res.Summary = 0, "osv-scanner found no package sources"
+			}
 		}
 		a.Results = append(a.Results, res)
 		if res.ExitCode != 0 {
