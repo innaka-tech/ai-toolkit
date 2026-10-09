@@ -12,15 +12,21 @@ import (
 	"time"
 )
 
-// VulnPackage is one dependency with known vulnerabilities, as reported by osv-scanner.
+// VulnPackage is one dependency with known vulnerabilities, as reported by osv-scanner,
+// with every vulnerable version found in the repository.
 type VulnPackage struct {
-	Ecosystem   string   `json:"ecosystem"`
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	FixedIn     string   `json:"fixed_in,omitempty"` // lowest version that fixes every advisory, when known
-	Advisories  []string `json:"advisories"`
-	MaxSeverity float64  `json:"max_severity,omitempty"` // CVSS
-	Sources     []string `json:"sources"`
+	Ecosystem   string        `json:"ecosystem"`
+	Name        string        `json:"name"`
+	Versions    []VulnVersion `json:"versions"`
+	Advisories  []string      `json:"advisories"`
+	MaxSeverity float64       `json:"max_severity,omitempty"` // CVSS
+}
+
+// VulnVersion is one installed version of a vulnerable package.
+type VulnVersion struct {
+	Version string   `json:"version"`
+	FixedIn string   `json:"fixed_in,omitempty"` // lowest version that fixes every advisory, when known
+	Sources []string `json:"sources"`
 }
 
 type osvOutput struct {
@@ -71,9 +77,11 @@ func OSVPackages(root string) ([]VulnPackage, error) {
 	}
 	pkgs, err := ParseOSV(out)
 	for i := range pkgs {
-		for j, src := range pkgs[i].Sources {
-			if rel, err := filepath.Rel(root, src); err == nil && !strings.HasPrefix(rel, "..") {
-				pkgs[i].Sources[j] = filepath.ToSlash(rel)
+		for j := range pkgs[i].Versions {
+			for k, src := range pkgs[i].Versions[j].Sources {
+				if rel, err := filepath.Rel(root, src); err == nil && !strings.HasPrefix(rel, "..") {
+					pkgs[i].Versions[j].Sources[k] = filepath.ToSlash(rel)
+				}
 			}
 		}
 	}
@@ -96,15 +104,25 @@ func ParseOSV(out []byte) ([]VulnPackage, error) {
 			if len(pk.Vulnerabilities) == 0 {
 				continue
 			}
-			k := pk.Package.Ecosystem + "\x00" + pk.Package.Name + "\x00" + pk.Package.Version
+			k := pk.Package.Ecosystem + "\x00" + pk.Package.Name
 			vp := byKey[k]
 			if vp == nil {
-				vp = &VulnPackage{Ecosystem: pk.Package.Ecosystem, Name: pk.Package.Name, Version: pk.Package.Version}
+				vp = &VulnPackage{Ecosystem: pk.Package.Ecosystem, Name: pk.Package.Name}
 				byKey[k] = vp
 				keys = append(keys, k)
 			}
-			if !has(vp.Sources, r.Source.Path) {
-				vp.Sources = append(vp.Sources, r.Source.Path)
+			var vv *VulnVersion
+			for i := range vp.Versions {
+				if vp.Versions[i].Version == pk.Package.Version {
+					vv = &vp.Versions[i]
+				}
+			}
+			if vv == nil {
+				vp.Versions = append(vp.Versions, VulnVersion{Version: pk.Package.Version})
+				vv = &vp.Versions[len(vp.Versions)-1]
+			}
+			if !has(vv.Sources, r.Source.Path) {
+				vv.Sources = append(vv.Sources, r.Source.Path)
 			}
 			for _, g := range pk.Groups {
 				if s, err := strconv.ParseFloat(g.MaxSeverity, 64); err == nil && s > vp.MaxSeverity {
@@ -129,8 +147,8 @@ func ParseOSV(out []byte) ([]VulnPackage, error) {
 						}
 					}
 				}
-				if fix != "" && CompareVersions(fix, vp.FixedIn) > 0 {
-					vp.FixedIn = fix
+				if fix != "" && CompareVersions(fix, vv.FixedIn) > 0 {
+					vv.FixedIn = fix
 				}
 			}
 		}
@@ -139,7 +157,10 @@ func ParseOSV(out []byte) ([]VulnPackage, error) {
 	for _, k := range keys {
 		vp := byKey[k]
 		sort.Strings(vp.Advisories)
-		sort.Strings(vp.Sources)
+		sort.SliceStable(vp.Versions, func(i, j int) bool { return CompareVersions(vp.Versions[i].Version, vp.Versions[j].Version) > 0 })
+		for i := range vp.Versions {
+			sort.Strings(vp.Versions[i].Sources)
+		}
 		out2 = append(out2, *vp)
 	}
 	sort.SliceStable(out2, func(i, j int) bool { return out2[i].MaxSeverity > out2[j].MaxSeverity })

@@ -198,7 +198,7 @@ func TestAuditCreatesFixTasks(t *testing.T) {
 		t.Fatalf("one task per vulnerable package: %v", ft)
 	}
 	show := data(aitk(t, dir, "task", "show", "VULN-npm-axios"))["task"].(map[string]any)
-	if !strings.Contains(show["title"].(string), "to 1.20.0 or later (2 advisories)") || !strings.Contains(show["body"].(string), "package-lock.json") {
+	if !strings.Contains(show["title"].(string), "1.18.1 → 1.20.0 or later (2 advisories)") || !strings.Contains(show["body"].(string), "package-lock.json") {
 		t.Fatalf("task must name the fixed version and source: %v / %s", show["title"], show["body"])
 	}
 	r = aitk(t, dir, "audit", "--tasks")

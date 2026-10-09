@@ -53,8 +53,13 @@ func AuditTasks(p *project.Project, r *AuditResult) (*AuditTasksResult, error) {
 		})
 	}
 	tasks, _ := task.List(p)
+	seen := map[string]bool{}
 	for i, in := range items {
 		id := ids[i]
+		if seen[strings.ToLower(id)] {
+			continue
+		}
+		seen[strings.ToLower(id)] = true
 		open, n := false, 0
 		for _, t := range tasks {
 			if strings.EqualFold(t.ID, id) || strings.HasPrefix(strings.ToLower(t.ID), strings.ToLower(id)+"-") {
@@ -96,25 +101,42 @@ func auditID(prefix, name string) string {
 }
 
 func vulnTask(v audit.VulnPackage) NewTaskInput {
-	target := "a version without known vulnerabilities"
-	if v.FixedIn != "" {
-		target = v.FixedIn + " or later"
+	var upgrades, found []string
+	for _, vv := range v.Versions {
+		to := "no fixed version published yet"
+		if vv.FixedIn != "" {
+			to = vv.FixedIn + " or later"
+		}
+		upgrades = append(upgrades, vv.Version+" → "+to)
+		found = append(found, vv.Version+" in "+strings.Join(vv.Sources, ", "))
 	}
-	title := fmt.Sprintf("Upgrade %s from %s to %s (%d advisories)", v.Name, v.Version, target, len(v.Advisories))
+	n := len(v.Advisories)
+	adv := plural(n, "advisory", "advisories")
+	title := fmt.Sprintf("Upgrade %s %s (%s)", v.Name, strings.Join(upgrades, "; "), adv)
+	if len([]rune(title)) > 120 {
+		title = fmt.Sprintf("Upgrade %s past %s (%d versions)", v.Name, adv, len(v.Versions))
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s package %s %s has %d known vulnerabilities", v.Ecosystem, v.Name, v.Version, len(v.Advisories))
+	fmt.Fprintf(&b, "%s package %s has %s", v.Ecosystem, v.Name, adv)
 	if v.MaxSeverity > 0 {
 		fmt.Fprintf(&b, " (highest CVSS %.1f)", v.MaxSeverity)
 	}
-	fmt.Fprintf(&b, ". Found in: %s.\n\nAdvisories: %s.\n\nUpgrade it (directly, or the dependency that pulls it in), run the check to catch breaking changes, then run aitk audit.",
-		strings.Join(v.Sources, ", "), strings.Join(v.Advisories, ", "))
+	fmt.Fprintf(&b, ".\n\nFound: %s.\nUpgrade: %s.\nAdvisories: %s.\n\nUpgrade it (directly, or the dependency that pulls it in), run the check to catch breaking changes, then run aitk audit.",
+		strings.Join(found, "; "), strings.Join(upgrades, "; "), strings.Join(v.Advisories, ", "))
 	return NewTaskInput{
-		Title:     textx.Truncate(title, 120),
+		Title:     title,
 		Objective: b.String(),
 		Criteria: []string{
-			fmt.Sprintf("Given the lockfile, when aitk audit runs, then osv-scanner reports no advisory for %s", v.Name),
+			fmt.Sprintf("Given the lockfiles, when aitk audit runs, then osv-scanner reports no advisory for %s", v.Name),
 			"Given the upgrade, when aitk check runs, then it passes",
 		},
 		Tags: []string{"security", "dependencies"},
 	}
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
