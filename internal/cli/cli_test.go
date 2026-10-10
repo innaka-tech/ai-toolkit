@@ -357,7 +357,7 @@ func TestMigrateFixtureLosslessAndIdempotent(t *testing.T) {
 	r := aitk(t, dir, "migrate")
 	mustOK(t, r)
 	c := data(r)["counts"].(map[string]any)
-	for k, v := range map[string]float64{"tasks": 6, "handoffs": 3, "knowledge": 4, "adrs": 2} {
+	for k, v := range map[string]float64{"tasks": 5, "handoffs": 3, "knowledge": 4, "adrs": 2} {
 		if c[k] != v {
 			t.Fatalf("count %s = %v, want %v", k, c[k], v)
 		}

@@ -1,4 +1,10 @@
 #!/bin/sh
 # ai-commit: v1 command kept for compatibility; see scripts/_shim.sh.
 . "$(dirname "$0")/_shim.sh"
-shim_v1 ai-commit "$@"
+if shim_is_v1; then shim_v1 ai-commit "$@"; fi
+# ai-commit "<message>"  ->  git add -A && git commit -m "<message>" (aitk's git hooks check it)
+if [ $# -eq 0 ]; then
+  echo "usage: ai-commit \"<type>(<scope>): <summary>\"" >&2
+  exit 2
+fi
+git add -A && exec git commit -m "$*"

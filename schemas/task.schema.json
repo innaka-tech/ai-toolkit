@@ -277,6 +277,11 @@
       },
       "uniqueItems": true,
       "description": "Tools that started, checked, or closed the task; review passes by these tools are not independent"
+    },
+    "base": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,64}$",
+      "description": "Commit HEAD pointed to when the task was first started; its risk profile includes everything changed since"
     }
   },
   "$defs": {

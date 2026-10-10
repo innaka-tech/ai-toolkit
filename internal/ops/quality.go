@@ -237,7 +237,7 @@ func UATAccept(p *project.Project, id, by, note string) (*UATDecision, error) {
 		t.Evidence.UAT = &task.UAT{Status: "accepted", By: who, At: now, Note: note}
 		res = &UATDecision{Task: t.ID, Status: t.Status, UAT: "accepted"}
 		prof := t.Profile
-		if computed := profile.Compute(p, profile.Diff(p)); !t.ProfilePinned || computed == "strict" {
+		if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
 			prof = computed
 		}
 		target, derr := dod(p, t, prof, CloseInput{})
@@ -286,6 +286,9 @@ func UATReject(p *project.Project, id, by, reason string) (*UATDecision, error) 
 		t, err := findTask(p, id)
 		if err != nil {
 			return err
+		}
+		if t.Status != task.InReview && t.Status != task.Implemented {
+			return apperr.Usage("task %s is %s; only work waiting for acceptance (in_review) can be rejected", t.ID, t.Status)
 		}
 		if t.Evidence == nil {
 			t.Evidence = &task.Evidence{}

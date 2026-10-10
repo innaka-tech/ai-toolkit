@@ -23,7 +23,7 @@ type Version struct {
 	Pre                 string
 }
 
-var semverRe = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$`)
+var semverRe = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$`)
 
 // Parse reads "1.2.3" or "1.2.3-rc.1".
 func Parse(s string) (Version, error) {
@@ -58,8 +58,27 @@ type Commit struct {
 var headerRe = regexp.MustCompile(`^([a-z]+)(?:\(([^)]+)\))?(!)?: (.+)$`)
 var taskTrailer = regexp.MustCompile(`(?m)^AI-Task: *([A-Za-z][A-Za-z0-9-]{0,31})\s*$`)
 
+var quotedRe = regexp.MustCompile(`^(Revert|Reapply) "(.+)"$`)
+
 func parseCommit(hash, subject, body string) (Commit, bool) {
-	m := headerRe.FindStringSubmatch(strings.TrimSpace(subject))
+	subject = strings.TrimSpace(subject)
+	// git's default messages: Revert "<header>" undoes a change (a fix for the release notes);
+	// Reapply "<header>" brings it back (the original change again).
+	if q := quotedRe.FindStringSubmatch(subject); q != nil {
+		inner, ok := parseCommit(hash, q[2], "")
+		if q[1] == "Reapply" {
+			if ok {
+				inner.Task = taskOf(body)
+			}
+			return inner, ok
+		}
+		c := Commit{Hash: hash, Type: "revert", Subject: q[2], Task: taskOf(body)}
+		if ok {
+			c.Scope = inner.Scope
+		}
+		return c, true
+	}
+	m := headerRe.FindStringSubmatch(subject)
 	if m == nil {
 		return Commit{}, false
 	}
@@ -67,10 +86,15 @@ func parseCommit(hash, subject, body string) (Commit, bool) {
 	if strings.Contains(body, "BREAKING CHANGE:") || strings.Contains(body, "BREAKING-CHANGE:") {
 		c.Breaking = true
 	}
-	if t := taskTrailer.FindStringSubmatch(body); t != nil {
-		c.Task = t[1]
-	}
+	c.Task = taskOf(body)
 	return c, true
+}
+
+func taskOf(body string) string {
+	if t := taskTrailer.FindStringSubmatch(body); t != nil {
+		return t[1]
+	}
+	return ""
 }
 
 // Plan describes a release.
@@ -95,17 +119,63 @@ type Options struct {
 }
 
 // LastTag returns the latest release tag reachable from HEAD and its version.
+// Tags that are not SemVer (v2-beta, nightly) are ignored rather than ending the search.
 func LastTag(p *project.Project) (string, Version, bool) {
 	prefix := p.Config.TagPrefix()
-	tag, err := gitx.Run(p.Root, "describe", "--tags", "--abbrev=0", "--match", prefix+"[0-9]*")
-	if err != nil || tag == "" {
-		return "", Version{}, false
-	}
-	v, err := Parse(strings.TrimPrefix(tag, prefix))
+	out, err := gitx.Run(p.Root, "tag", "--merged", "HEAD", "--list", prefix+"[0-9]*")
 	if err != nil {
 		return "", Version{}, false
 	}
-	return tag, v, true
+	best, bestTag, found := Version{}, "", false
+	for _, tag := range strings.Fields(out) {
+		v, err := Parse(strings.TrimPrefix(tag, prefix))
+		if err != nil {
+			continue
+		}
+		if !found || Less(best, v) {
+			best, bestTag, found = v, tag, true
+		}
+	}
+	return bestTag, best, found
+}
+
+// Less orders versions by SemVer precedence (a pre-release comes before its release).
+func Less(a, b Version) bool {
+	if a.Major != b.Major {
+		return a.Major < b.Major
+	}
+	if a.Minor != b.Minor {
+		return a.Minor < b.Minor
+	}
+	if a.Patch != b.Patch {
+		return a.Patch < b.Patch
+	}
+	switch {
+	case a.Pre == b.Pre:
+		return false
+	case a.Pre == "":
+		return false
+	case b.Pre == "":
+		return true
+	}
+	ap, bp := strings.Split(a.Pre, "."), strings.Split(b.Pre, ".")
+	for i := 0; i < len(ap) && i < len(bp); i++ {
+		if ap[i] == bp[i] {
+			continue
+		}
+		ai, aerr := strconv.Atoi(ap[i])
+		bi, berr := strconv.Atoi(bp[i])
+		switch {
+		case aerr == nil && berr == nil:
+			return ai < bi
+		case aerr == nil:
+			return true // numeric identifiers sort before alphanumeric ones
+		case berr == nil:
+			return false
+		}
+		return ap[i] < bp[i]
+	}
+	return len(ap) < len(bp)
 }
 
 // Make computes the release plan.
@@ -144,8 +214,11 @@ func Make(p *project.Project, o Options) (*Plan, error) {
 	if bump == "" || bump == "auto" {
 		bump = autoBump(plan.Commits, prev, found)
 	}
-	if bump == "" {
+	if bump == "" && found {
 		return plan, fmt.Errorf("nothing to release: no feat, fix, perf, or breaking commits since %s", orStart(tag))
+	}
+	if !found && len(plan.Commits) == 0 && plan.Skipped == 0 {
+		return plan, fmt.Errorf("nothing to release: no commits yet")
 	}
 	next := prev
 	if !found {
@@ -318,7 +391,82 @@ func WriteChangelog(p *project.Project, pl *Plan) error {
 	return fsx.WriteFileKeep(path, []byte(s), 0o644)
 }
 
-var tomlVersion = regexp.MustCompile(`(?m)^version\s*=\s*"[^"]*"`)
+var tomlVersion = regexp.MustCompile(`^version\s*=\s*"[^"]*"`)
+
+// tomlSections are the tables whose version is the project's own: Cargo's [package], PEP 621's
+// [project], and Poetry's [tool.poetry]. Dependency tables also have "version" keys.
+var tomlSections = map[string][]string{"Cargo.toml": {"package"}, "pyproject.toml": {"project", "tool.poetry"}}
+
+// tomlVersionLine returns the index of the version line inside one of sections, or -1.
+func tomlVersionLine(lines []string, sections []string) int {
+	cur := ""
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "[") {
+			cur = strings.Trim(strings.TrimSpace(strings.SplitN(t, "#", 2)[0]), "[] ")
+			continue
+		}
+		for _, sec := range sections {
+			if cur == sec && tomlVersion.MatchString(t) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// jsonTopLevelVersion locates the "version" value at the top level of a JSON object, so a
+// package.json is edited in place without reformatting it.
+func jsonTopLevelVersion(b []byte) (start, end int, ok bool) {
+	depth, inStr, esc := 0, false, false
+	keyStart := -1
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+				if depth == 1 && keyStart >= 0 && string(b[keyStart:i]) == "version" {
+					j := i + 1
+					for j < len(b) && (b[j] == ' ' || b[j] == '\t' || b[j] == '\n' || b[j] == '\r') {
+						j++
+					}
+					if j < len(b) && b[j] == ':' {
+						j++
+						for j < len(b) && (b[j] == ' ' || b[j] == '\t' || b[j] == '\n' || b[j] == '\r') {
+							j++
+						}
+						if j < len(b) && b[j] == '"' {
+							k := j + 1
+							for k < len(b) && b[k] != '"' {
+								if b[k] == '\\' {
+									k++
+								}
+								k++
+							}
+							return j, k + 1, k < len(b)
+						}
+					}
+				}
+				keyStart = -1
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr, keyStart = true, i+1
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+		}
+	}
+	return 0, 0, false
+}
 
 // manifests lists files whose version field aitk updates.
 func manifests(p *project.Project) []string {
@@ -331,7 +479,7 @@ func manifests(p *project.Project) []string {
 		}
 	}
 	for _, f := range []string{"pyproject.toml", "Cargo.toml"} {
-		if b, err := os.ReadFile(p.Path(f)); err == nil && tomlVersion.Match(b) {
+		if b, err := os.ReadFile(p.Path(f)); err == nil && tomlVersionLine(strings.Split(string(b), "\n"), tomlSections[f]) >= 0 {
 			out = append(out, f)
 		}
 	}
@@ -347,21 +495,21 @@ func WriteManifests(p *project.Project, pl *Plan) error {
 		}
 		var next []byte
 		if f == "package.json" {
-			o, err := jsonedit.Parse(b)
-			if err != nil {
-				return err
+			i, j, ok := jsonTopLevelVersion(b)
+			if !ok {
+				return fmt.Errorf("package.json: no top-level version string")
 			}
-			o.Set("version", pl.Version)
-			next = o.Bytes()
+			next = append(append(append([]byte{}, b[:i]...), []byte(`"`+pl.Version+`"`)...), b[j:]...)
 		} else {
-			done := false
-			next = tomlVersion.ReplaceAllFunc(b, func(m []byte) []byte {
-				if done {
-					return m
-				}
-				done = true
-				return []byte(`version = "` + pl.Version + `"`)
-			})
+			lines := strings.Split(string(b), "\n")
+			i := tomlVersionLine(lines, tomlSections[f])
+			if i < 0 {
+				return fmt.Errorf("%s: no version in %s", f, strings.Join(tomlSections[f], " or "))
+			}
+			indent := lines[i][:len(lines[i])-len(strings.TrimLeft(lines[i], " \t"))]
+			rest := tomlVersion.ReplaceAllString(strings.TrimSpace(lines[i]), `version = "`+pl.Version+`"`)
+			lines[i] = indent + rest
+			next = []byte(strings.Join(lines, "\n"))
 		}
 		if err := fsx.WriteFileKeep(p.Path(f), next, 0o644); err != nil {
 			return err

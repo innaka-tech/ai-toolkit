@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -213,9 +212,13 @@ func Init(dir, name, check string, dryRun bool) (*InitResult, error) {
 
 func detectBranch(p *project.Project) string {
 	for _, b := range []string{"main", "master", "trunk"} {
-		if _, err := os.Stat(filepath.Join(p.CommonDir, "refs", "heads", b)); err == nil {
+		// rev-parse sees loose, packed, and reftable refs alike.
+		if _, err := gitx.Run(p.Root, "rev-parse", "--verify", "-q", "refs/heads/"+b); err == nil {
 			return b
 		}
+	}
+	if cur := branchOf(p); cur != "" && cur != "HEAD" && !strings.Contains(cur, "/") {
+		return cur // a repository whose only branch has another name
 	}
 	return "main"
 }
@@ -298,6 +301,9 @@ func TaskStart(p *project.Project, id string) (*task.Task, error) {
 		if t.Status == task.Todo || t.Status == task.Blocked {
 			t.Status = task.InProgress
 		}
+		if t.Base == "" { // where the task's work begins: its risk profile includes everything since
+			t.Base = gitx.Head(p.Root)
+		}
 		t.Updated = now
 		t.AddWorker(Tool())
 		if b := branchOf(p); b != "" {
@@ -351,6 +357,14 @@ func TaskUpdate(p *project.Project, id string, in UpdateInput) (*task.Task, erro
 			switch in.Status {
 			case task.Todo, task.InProgress, task.Blocked, task.Cancelled:
 				t.Status = in.Status
+				if in.Status == task.Cancelled || in.Status == task.Blocked {
+					if s := session.Load(p); strings.EqualFold(s.Active(), t.ID) {
+						s.LastTask, s.LastTaskAt = t.ID, task.Now()
+						s.SetActive("", "", "")
+						session.Save(p, s)
+					}
+					claims.Release(p, t.ID, false)
+				}
 			case task.Done, task.Implemented, task.InReview:
 				return apperr.New("E_USAGE", apperr.ExitUsage, `aitk close --summary "…" --knowledge "…"`,
 					"status %s is set by close after the Definition of Done, not by update", in.Status)
@@ -521,15 +535,20 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 	}()
 	err := WithLock(p, func() error {
 		s := session.Load(p)
-		changes := profile.Diff(p)
-		computed := profile.Compute(p, changes)
 		var t *task.Task
 		if id := s.Active(); id != "" {
 			var err error
 			if t, err = task.Find(p, id); err != nil {
-				return apperr.TaskNotFound(id)
+				return apperr.New("E_TASK_NOT_FOUND", apperr.ExitUsage, "aitk doctor --fix (clears it), then aitk task next",
+					"the active task %s does not exist on this branch (switched branches?)", id)
+			}
+			if t.Status == task.Cancelled || t.Status == task.Done {
+				return apperr.New("E_USAGE", apperr.ExitUsage, fmt.Sprintf("aitk task update %s --status todo (to reopen it), or aitk task next", t.ID),
+					"task %s is %s; it cannot be closed again", t.ID, t.Status)
 			}
 		}
+		changes := TaskChanges(p, t)
+		computed := profile.Compute(p, changes)
 		if t == nil {
 			if computed != "lite" || in.Status != "" {
 				return apperr.NoActiveTask()
@@ -587,7 +606,7 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			}
 			t.Evidence.Acceptance = &task.Acceptance{Total: len(cs), Done: n}
 		}
-		t.Evidence.Commits = mergeUnique(t.Evidence.Commits, profile.Commits(p, t.Created))
+		t.Evidence.Commits = mergeUnique(t.Evidence.Commits, profile.Commits(p, t.Created, t.ID))
 		for _, c := range changes {
 			t.Paths = mergeUnique(t.Paths, []string{c.Path})
 		}
@@ -871,31 +890,25 @@ func regressionTests(p *project.Project, t *task.Task) []string {
 	return tests
 }
 
-// taskCommits are the recent commits made at or after the task's creation that belong to it:
-// with its ID in an AI-Task trailer, or with no AI-Task trailer at all. Commit times are read
-// per commit, so one commit with a skewed date does not hide the others.
+// taskCommits are the task's own commits (see profile.CommitsFull).
 func taskCommits(p *project.Project, t *task.Task) []string {
-	created, err := time.Parse("2006-01-02T15:04:05Z", t.Created)
-	if err != nil || gitx.Head(p.Root) == "" {
-		return nil
+	return profile.CommitsFull(p, t.Created, t.ID)
+}
+
+// TaskChanges are the changes that make up t's risk profile: the branch's changes since the
+// default branch plus everything since the task started (on the default branch, the first
+// part is only uncommitted work). Without a task, the branch's changes.
+func TaskChanges(p *project.Project, t *task.Task) []profile.Change {
+	if t == nil {
+		return profile.Diff(p)
 	}
-	out, _ := gitx.RunRaw(p.Root, "log", "-n", "500", "--format=%H%x1f%ct%x1f%(trailers:key=AI-Task,valueonly,separator=%x2c)%x1e")
-	var cs []string
-	for _, rec := range strings.Split(string(out), "\x1e") {
-		f := strings.Split(strings.TrimSpace(rec), "\x1f")
-		if len(f) != 3 {
-			continue
+	base := t.Base
+	if base == "" { // started by an older aitk: the parent of its first commit
+		if cs := taskCommits(p, t); len(cs) > 0 {
+			base, _ = gitx.Run(p.Root, "rev-parse", "--verify", "-q", cs[len(cs)-1]+"^")
 		}
-		ct, _ := strconv.ParseInt(f[1], 10, 64)
-		if ct <= created.Unix() { // the second the task was created belongs to the past (second resolution)
-			continue
-		}
-		if ids := strings.TrimSpace(f[2]); ids != "" && !containsFold(strings.Split(ids, ","), t.ID) {
-			continue // another task's commit
-		}
-		cs = append(cs, f[0])
 	}
-	return cs
+	return profile.DiffSince(p, base)
 }
 
 func containsFold(xs []string, s string) bool {

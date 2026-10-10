@@ -15,6 +15,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/compat"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/conv"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/heal"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/knowledge"
@@ -79,12 +80,20 @@ func Run(p *project.Project, fix bool) *Report {
 		r.add("state", "error", "ai-state.json missing (run: aitk init)")
 	} else {
 		var v any
+		bad := ""
 		if err := json.Unmarshal(b, &v); err != nil {
-			r.add("state", "error", "ai-state.json is not valid JSON: "+err.Error())
+			bad = "ai-state.json is not valid JSON: " + err.Error()
 		} else if err := schema.Validate("state", v); err != nil {
-			r.add("state", "error", err.Error())
-		} else {
+			bad = "ai-state.json: " + err.Error()
+		}
+		switch {
+		case bad == "":
 			r.add("state", "ok", "")
+		case fix && restoreState(p):
+			c := r.add("state", "ok", bad+"; restored the last committed version (the broken copy is in "+project.LegacyDir+"/quarantine/)")
+			c.Fixed = true
+		default:
+			r.add("state", "error", bad+" (fix: git checkout -- ai-state.json, or repair it by hand; doctor --fix restores it only when a valid version is committed)")
 		}
 	}
 
@@ -291,4 +300,23 @@ func addCheck(p *project.Project, cmd string) error {
 func taskFileExists(p *project.Project, id string) bool {
 	m, _ := filepath.Glob(p.Path(project.TasksDir, id+"-*.md"))
 	return len(m) > 0
+}
+
+// restoreState puts back the committed ai-state.json when that version is valid, keeping the
+// broken copy in quarantine.
+func restoreState(p *project.Project) bool {
+	head, err := gitx.RunRaw(p.Root, "show", "HEAD:"+project.StateFile)
+	if err != nil {
+		return false
+	}
+	var v any
+	if json.Unmarshal(head, &v) != nil || schema.Validate("state", v) != nil {
+		return false
+	}
+	broken, _ := os.ReadFile(p.Path(project.StateFile))
+	q := p.Path(project.LegacyDir, "quarantine", "ai-state.json."+time.Now().UTC().Format("20060102T150405Z"))
+	if fsx.WriteFile(q, broken, 0o644) != nil {
+		return false
+	}
+	return fsx.WriteFile(p.Path(project.StateFile), head, 0o644) == nil
 }

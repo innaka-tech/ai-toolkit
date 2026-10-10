@@ -3,6 +3,60 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [2.5.1] - 2026-10-10
+
+Fixes from an independent bug hunt across the whole tool (28 reproduced defects).
+
+### Fixed
+- **Risk profile**:
+  - Work a task already committed on the default branch counts toward its profile. Tasks record the commit they started from (`base`).
+  - Moving a file out of a sensitive path makes the task strict.
+  - Before, both could close as `lite` without the strict gates.
+- **Check freshness**:
+  - The fingerprint is now the content of the code (a git tree), so committing the checked code no longer makes the check stale.
+  - Re-pointed symlinks and moved submodules do.
+  - Existing check evidence becomes stale once after upgrading: run `aitk check` again.
+- **Tasks**:
+  - `close` refuses cancelled and done tasks.
+  - Cancelling or blocking a task clears it as the active task and releases its claim.
+  - A missing active task points to `aitk doctor --fix` and is named in the brief.
+  - `uat reject` only applies to work waiting for acceptance.
+  - `aitk work <id>` run again reuses the task's worktree.
+- **Self-healing**: a Markdown setext heading (`=======`) is no longer treated as a merge conflict. Before, it was deleted, or the file was quarantined on every command.
+- **Knowledge**: findings that differ only in a number's punctuation ("1.5s" and "15s") are no longer merged as duplicates.
+- **Secret scan**:
+  - An added line starting with `++` can no longer pose as a file header, which skipped detection and printed a secret in clear.
+  - Newly detected: unquoted `.env` values, keys such as `SECRET_KEY` and `PASSWORD_PROD`, credentials in URLs, and SSH2 private keys.
+  - An Anthropic key is reported once.
+- **Commit hook**: an empty message aborts the commit again; before, a trailer became the subject. `git commit -v` and `Reapply "…"` messages are handled.
+- **Release**:
+  - Only `[package]` (Cargo), `[project]`, or `[tool.poetry]` versions are changed. Before, a dependency's version could be rewritten.
+  - package.json is edited in place.
+  - A non-SemVer tag (`v2-beta`, `+build` metadata) no longer resets the version to the initial one.
+  - `Revert "…"` commits are listed.
+  - A first release with only chores works.
+- **Timeouts**: `aitk check`, plugins, and `aitk run` end the whole process group on timeout and after finishing. A background process no longer hangs aitk or the MCP server.
+- **Imports**:
+  - Superpowers and BMAD plans with long names keep every task (IDs were truncated into one).
+  - Markdown and OpenSpec items are matched by text, so inserting an item no longer loses another.
+  - Checkboxes in code blocks and nested sub-steps are not tasks.
+  - GitHub issue criteria keep their checked state; CRLF is handled.
+- **Migration**:
+  - `project.env` values with `export`, single quotes, or trailing comments are read correctly.
+  - A v1 task in both `current-task.md` and a `.previous.md` snapshot becomes one task.
+  - `*`, `+`, and numbered items and paragraphs in knowledge.md become entries.
+- **MCP**:
+  - A malformed JSON line gets a JSON-RPC parse error instead of ending the server.
+  - The `aitk://task/{id}` resource exists, as documented.
+- **CLI**:
+  - Group commands (`aitk task`) and unknown subcommands answer with an envelope under `--json`, and with E_USAGE for typos.
+  - `--json` after `--` is an argument.
+  - `review pass --findings -3` says why it is refused.
+- **Adapters**: JSON config files with a UTF-8 byte order mark are edited.
+- **Default branch detection**: works with packed and reftable refs.
+- **v1 shims**: `ai-init <dir>`, `ai-commit "<msg>"`, and `ai-push` work in v2 projects.
+- **Spec**: documents only what exists (no `--no-color`, `--yes`, `AITK_LANG`, or user config file).
+
 ## [2.5.0] - 2026-10-10
 
 Every AI tool picks up aitk without being told.

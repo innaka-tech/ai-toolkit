@@ -177,11 +177,20 @@ func InboxCount(p *project.Project) int {
 	return len(Parse(string(b), inbox, "", ""))
 }
 
-// Normalize lowercases and strips punctuation and whitespace for duplicate detection.
+// Normalize prepares text for duplicate detection: lowercase letters and digits only, except
+// that punctuation between two letters or digits stays ("1.5s", "v2.4", "e-mail"), so findings
+// that differ only in that punctuation are not merged ("1.5s" vs "15s").
 func Normalize(s string) string {
+	rs := []rune(strings.ToLower(s))
+	alnum := func(i int) bool {
+		return i >= 0 && i < len(rs) && (unicode.IsLetter(rs[i]) || unicode.IsDigit(rs[i]))
+	}
 	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+	for i, r := range rs {
+		switch {
+		case alnum(i):
+			b.WriteRune(r)
+		case !unicode.IsSpace(r) && alnum(i-1) && alnum(i+1):
 			b.WriteRune(r)
 		}
 	}

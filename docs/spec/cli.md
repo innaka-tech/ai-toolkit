@@ -7,13 +7,13 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | Aspect | Rule |
 |---|---|
 | Project discovery | Walk up from the working directory to the git top level. Commands that need a project fail with `E_NOT_A_PROJECT` outside one. |
-| Config precedence | built-in defaults < `~/.config/aitk/config.toml` < `aitk.toml` < `AITK_*` environment variables < flags |
-| `--json` | Every command supports it and prints exactly one object matching `schemas/result.schema.json` to stdout. Human text then goes nowhere. |
+| Config precedence | built-in defaults < `aitk.toml` < flags (`AITK_TOOL` overrides tool detection) |
+| `--json` | Every command (including `aitk`, group commands such as `aitk task`, and unknown commands) prints exactly one object matching `schemas/result.schema.json` to stdout. Human text then goes nowhere. Arguments after `--` are never read as flags. |
 | Streams | Results to stdout; progress, warnings, and errors to stderr. |
-| Color | Only on a TTY; disabled by `NO_COLOR` or `--no-color`. |
-| Prompts | Never prompt when stdin is not a TTY; `--yes` accepts defaults. Agents never see interactive prompts. |
+| Color | aitk prints no color codes. |
+| Prompts | aitk never prompts; every input is a flag or argument, so agents and scripts never block. |
 | Errors | Every error states what failed and the exact command that fixes it (`error.fix` in JSON). |
-| Language | English; `AITK_LANG=id` for Indonesian. |
+| Language | English. |
 
 ### Exit codes
 

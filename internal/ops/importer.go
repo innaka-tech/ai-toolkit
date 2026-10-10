@@ -35,6 +35,7 @@ type importItem struct {
 	done                 bool
 	status, profile      string // optional: explicit status; pinned profile
 	criteria, tags       []string
+	doneAC               []int // 1-based criteria already checked in the source
 	dependsOn            []string
 	legacy               map[string]any
 }
@@ -42,7 +43,31 @@ type importItem struct {
 func importItems(p *project.Project, source string, items []importItem, dry bool) (*ImportResult, error) {
 	res := &ImportResult{Source: source, Imported: []string{}, Skipped: []string{}, DryRun: dry}
 	err := WithLock(p, func() error {
+		all, _ := task.List(p)
+		byItem := map[string]*task.Task{} // tasks imported earlier, by source file and item text
+		ids := map[string]bool{}
+		for _, t := range all {
+			ids[strings.ToLower(t.ID)] = true
+			f, _ := t.Legacy["file"].(string)
+			if item, _ := t.Legacy["item"].(string); f != "" && item != "" {
+				byItem[f+"\x00"+item] = t
+			}
+		}
+		batch := map[string]bool{}
 		for _, it := range items {
+			file, _ := it.legacy["file"].(string)
+			item, _ := it.legacy["item"].(string)
+			if prev := byItem[file+"\x00"+item]; file != "" && item != "" && prev != nil {
+				it.id = prev.ID // the same item, wherever it moved in the file
+			} else if t, err := task.Find(p, it.id); err == nil && file != "" && item != "" {
+				if other, _ := t.Legacy["item"].(string); other != "" && other != item {
+					it.id = freeID(it.id, ids, batch) // a new item at a position another item had
+				}
+			}
+			if batch[strings.ToLower(it.id)] { // two items with one ID in this import
+				it.id = freeID(it.id, ids, batch)
+			}
+			batch[strings.ToLower(it.id)] = true
 			if t, err := task.Find(p, it.id); err == nil {
 				res.Skipped = append(res.Skipped, it.id)
 				switch {
@@ -85,6 +110,9 @@ func importItems(p *project.Project, source string, items []importItem, dry bool
 			}
 			t := &task.Task{Meta: task.Meta{ID: it.id, Title: title, Status: st, Profile: prof, ProfilePinned: pinned, Tags: slugs(it.tags),
 				Created: now, Updated: now, CreatedBy: Tool(), Legacy: it.legacy, DependsOn: it.dependsOn}, Body: task.NewBody(it.objective, it.criteria)}
+			if len(it.doneAC) > 0 {
+				t.MarkCriteria(it.doneAC)
+			}
 			if st == task.Done {
 				t.Closed = now
 			}
@@ -95,6 +123,23 @@ func importItems(p *project.Project, source string, items []importItem, dry bool
 		return nil
 	})
 	return res, err
+}
+
+// freeID returns id with the first free "-N" suffix.
+func freeID(id string, taken ...map[string]bool) string {
+	for n := 2; ; n++ {
+		c := fmt.Sprintf("%s-%d", id, n)
+		if len(c) > 32 {
+			c = fmt.Sprintf("%s-%d", strings.TrimRight(id[:32-len(fmt.Sprint(n))-1], "-"), n)
+		}
+		free := true
+		for _, m := range taken {
+			free = free && !m[strings.ToLower(c)]
+		}
+		if free {
+			return c
+		}
+	}
 }
 
 // ImportGitHub imports issues through the GitHub CLI (`gh`). Checkbox lines in the issue body
@@ -138,9 +183,16 @@ func ImportGitHub(p *project.Project, repo, label, state string, limit int, dry 
 		it := importItem{id: fmt.Sprintf("GH-%d", is.Number), title: is.Title, done: strings.EqualFold(is.State, "closed"),
 			legacy: map[string]any{"source": "github", "url": is.URL}}
 		var rest []string
-		for _, l := range strings.Split(is.Body, "\n") {
-			if m := checkbox.FindStringSubmatch(l); m != nil {
+		fence := false
+		for _, l := range strings.Split(strings.ReplaceAll(is.Body, "\r\n", "\n"), "\n") {
+			if t := strings.TrimSpace(l); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+				fence = !fence
+			}
+			if m := checkbox.FindStringSubmatch(l); m != nil && !fence && !strings.HasPrefix(l, "    ") && !strings.HasPrefix(l, "\t") {
 				it.criteria = append(it.criteria, strings.TrimSpace(m[2]))
+				if m[1] != " " {
+					it.doneAC = append(it.doneAC, len(it.criteria))
+				}
 			} else {
 				rest = append(rest, l)
 			}
@@ -211,15 +263,24 @@ func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) 
 		}
 		batchPrefixes[prefix] = filepath.ToSlash(rel)
 		barriers, group := []string(nil), []string(nil)
-		for _, l := range strings.Split(string(b), "\n") {
+		lines := strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n")
+		fence := false
+		for _, l := range lines {
+			if t := strings.TrimSpace(l); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+				fence = !fence
+				continue
+			}
+			if fence {
+				continue
+			}
 			if kind == "spec-kit" && strings.HasPrefix(strings.TrimSpace(l), "## ") && len(group) > 0 {
 				// A new phase waits for the whole parallel group that ended the previous one.
 				barriers, group = group, nil
 				continue
 			}
 			m := checkbox.FindStringSubmatch(l)
-			if m == nil {
-				continue
+			if m == nil || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") {
+				continue // not a top-level item: nested sub-steps belong to their parent
 			}
 			n++
 			item := strings.TrimSpace(m[2])

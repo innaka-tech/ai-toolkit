@@ -15,19 +15,33 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/textx"
 )
 
+// shortID builds an ID from a prefix and name parts. The last part (the task or story number)
+// is always kept whole; earlier parts are shortened to fit 32 characters, so tasks of one plan
+// never collapse into the same ID.
 func shortID(prefix string, parts ...string) string {
-	id := prefix
+	var segs []string
 	for _, p := range parts {
 		s := strings.ToUpper(project.Slug(p, 40))
 		if s == "UNTITLED" || s == "" {
 			continue
 		}
-		id += "-" + s
+		segs = append(segs, s)
 	}
-	if len(id) > 32 {
-		id = strings.TrimRight(id[:32], "-")
+	if len(segs) == 0 {
+		return prefix
 	}
-	return id
+	last := segs[len(segs)-1]
+	head := prefix
+	if len(segs) > 1 {
+		head += "-" + strings.Join(segs[:len(segs)-1], "-")
+	}
+	if len(last) > 20 {
+		last = strings.TrimRight(last[:20], "-")
+	}
+	if room := 32 - len(last) - 1; len(head) > room {
+		head = strings.TrimRight(head[:room], "-")
+	}
+	return head + "-" + last
 }
 
 // ---------- Superpowers (obra/superpowers writing-plans) ----------

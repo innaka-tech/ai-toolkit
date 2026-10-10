@@ -4,10 +4,12 @@
 package mcpserver
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -166,6 +168,18 @@ func New(root, version string, exec Exec) *mcp.Server {
 			text, _, _ := h.call(req.Session, []string{"brief"})
 			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "aitk://brief", MIMEType: "text/markdown", Text: text}}}, nil
 		})
+	s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "aitk://task/{id}", Name: "task", Title: "Task file", MIMEType: "text/markdown"},
+		func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			id := strings.TrimPrefix(req.Params.URI, "aitk://task/")
+			if id == "" || strings.ContainsAny(id, "/\\") {
+				return nil, mcp.ResourceNotFoundError(req.Params.URI)
+			}
+			text, _, ok := h.call(req.Session, []string{"task", "show", "--", id})
+			if !ok {
+				return nil, mcp.ResourceNotFoundError(req.Params.URI)
+			}
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "text/markdown", Text: text}}}, nil
+		})
 	for _, p := range []struct{ name, desc, text string }{
 		{"start-session", "Begin work in this repository", "Call the aitk `brief` tool and read it. Then continue the active task (or start/create one), do the work, and run `check` until it passes."},
 		{"close-session", "Finish work in this repository", "Run `check`. When it passes, call `close` with a one-paragraph summary of what changed and one lasting finding as knowledge (or \"none\"). If close is rejected, follow its fix."},
@@ -179,7 +193,50 @@ func New(root, version string, exec Exec) *mcp.Server {
 }
 
 // ServeStdio serves over stdin/stdout until the client disconnects.
-func ServeStdio(ctx context.Context, s *mcp.Server) error { return s.Run(ctx, &mcp.StdioTransport{}) }
+func ServeStdio(ctx context.Context, s *mcp.Server) error {
+	return s.Run(ctx, &mcp.IOTransport{Reader: tolerant(os.Stdin, out), Writer: out, MaxLineLength: 32 << 20})
+}
+
+// out serialises writes to stdout from the SDK and from tolerant's error replies.
+var out = &lockedWriter{w: os.Stdout}
+
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(b)
+}
+
+func (l *lockedWriter) Close() error { return nil }
+
+// tolerant passes valid JSON lines to the SDK and answers anything else with a JSON-RPC parse
+// error (-32700), so one malformed line from a client does not end the session.
+func tolerant(in io.Reader, reply io.Writer) io.ReadCloser {
+	pr, pw := io.Pipe()
+	go func() {
+		sc := bufio.NewScanner(in)
+		sc.Buffer(make([]byte, 64*1024), 32<<20)
+		for sc.Scan() {
+			line := bytes.TrimSpace(sc.Bytes())
+			if len(line) == 0 {
+				continue
+			}
+			if !json.Valid(line) {
+				reply.Write([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error: not valid JSON"}}` + "\n"))
+				continue
+			}
+			if _, err := pw.Write(append(append([]byte{}, line...), '\n')); err != nil {
+				return
+			}
+		}
+		pw.CloseWithError(sc.Err())
+	}()
+	return pr
+}
 
 // ServeHTTP serves streamable HTTP on addr.
 func ServeHTTP(addr string, s *mcp.Server) error {

@@ -1,4 +1,6 @@
 #!/bin/sh
 # ai-push: v1 command kept for compatibility; see scripts/_shim.sh.
 . "$(dirname "$0")/_shim.sh"
-shim_v1 ai-push "$@"
+if shim_is_v1; then shim_v1 ai-push "$@"; fi
+# aitk's pre-push hook runs the check.
+exec git push "$@"

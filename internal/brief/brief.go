@@ -154,7 +154,11 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 		}
 	}
 	// Knowledge ranking: task tags + topics of changed paths + title words.
-	b.Changed = profile.Diff(p)
+	base := ""
+	if t != nil {
+		base = t.Base
+	}
+	b.Changed = profile.DiffSince(p, base)
 	b.Profile = profile.Compute(p, b.Changed)
 	if t != nil && t.ProfilePinned && b.Profile != "strict" {
 		b.Profile = t.Profile
@@ -206,6 +210,9 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 		b.Goal = goalInfo(p, t.Goal, tasks)
 	}
 	b.Rules = rules(b.Profile, p.Config.Check.Cmd != "")
+	if active != "" && (t == nil || !strings.EqualFold(t.ID, active)) {
+		b.Rules = append([]string{"The active task " + active + " does not exist on this branch (switched branches?): run `aitk doctor --fix`, then `aitk task next`."}, b.Rules...)
+	}
 	b.Next = next(b, p)
 	// Fit the budget: drop knowledge from the lowest rank, then shorten handoff, then legacy.
 	for {

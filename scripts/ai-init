@@ -2,4 +2,10 @@
 # ai-init: v1 command kept for compatibility; see scripts/_shim.sh.
 . "$(dirname "$0")/_shim.sh"
 if shim_is_v1; then shim_v1 ai-init "$@"; fi
+# v1 took the project directory as an argument; aitk takes it as -C.
+if [ $# -gt 0 ] && [ -d "$1" ]; then
+  dir=$1
+  shift
+  shim_aitk -C "$dir" init "$@"
+fi
 shim_aitk init "$@"

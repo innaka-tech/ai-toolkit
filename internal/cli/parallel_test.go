@@ -27,7 +27,12 @@ func TestParallelWorktreesMergeWithoutConflicts(t *testing.T) {
 	}
 	// The main worktree cannot take a task another worktree has claimed.
 	expect(t, aitk(t, dir, "task", "start", ids[0]), 4, "E_TASK_CLAIMED")
-	expect(t, aitk(t, dir, "work", ids[1]), 4, "E_TASK_CLAIMED")
+	// Running aitk work again for a task reuses its worktree (the claim is that worktree's own).
+	again := aitk(t, dir, "work", ids[1])
+	mustOK(t, again)
+	if data(again)["path"] != paths[1] {
+		t.Fatalf("aitk work must reuse the task's worktree: %v", data(again))
+	}
 
 	for i, wt := range paths {
 		name := []string{"a", "b", "c"}[i]
