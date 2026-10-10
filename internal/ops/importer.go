@@ -50,14 +50,14 @@ func importItems(p *project.Project, source string, items []importItem, dry bool
 			ids[strings.ToLower(t.ID)] = true
 			f, _ := t.Legacy["file"].(string)
 			if item, _ := t.Legacy["item"].(string); f != "" && item != "" {
-				byItem[f+"\x00"+item] = t
+				byItem[itemKey(f, item, t.Legacy["occurrence"])] = t
 			}
 		}
 		batch := map[string]bool{}
 		for _, it := range items {
 			file, _ := it.legacy["file"].(string)
 			item, _ := it.legacy["item"].(string)
-			if prev := byItem[file+"\x00"+item]; file != "" && item != "" && prev != nil {
+			if prev := byItem[itemKey(file, item, it.legacy["occurrence"])]; file != "" && item != "" && prev != nil {
 				it.id = prev.ID // the same item, wherever it moved in the file
 			} else if t, err := task.Find(p, it.id); err == nil && file != "" && item != "" {
 				if other, _ := t.Legacy["item"].(string); other != "" && other != item {
@@ -123,6 +123,45 @@ func importItems(p *project.Project, source string, items []importItem, dry bool
 		return nil
 	})
 	return res, err
+}
+
+// repoRel is path relative to the repository root, with symlinks resolved on both sides (on
+// macOS /var is a link to /private/var, so a plain filepath.Rel could climb out of the repo).
+func repoRel(p *project.Project, path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	if r, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = r
+	}
+	root := p.Root
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		root = r
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
+}
+
+// itemKey identifies a checklist item: its file, its text, and which occurrence of that text it
+// is (items with the same text are told apart by order; older imports count as the first).
+func itemKey(file, item string, occurrence any) string {
+	n := 1
+	switch v := occurrence.(type) {
+	case int:
+		n = v
+	case float64:
+		n = int(v)
+	case uint64:
+		n = int(v)
+	}
+	if n < 1 {
+		n = 1
+	}
+	return fmt.Sprintf("%s\x00%s\x00%d", file, item, n)
 }
 
 // freeID returns id with the first free "-N" suffix.
@@ -246,7 +285,7 @@ func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) 
 		if feature == "" {
 			feature = "spec"
 		}
-		rel, _ := filepath.Rel(p.Root, path)
+		rel := repoRel(p, path)
 		var context []string
 		if kind == "spec-kit" {
 			for _, f := range []string{"spec.md", "plan.md", "data-model.md", "research.md", "quickstart.md"} {
@@ -265,6 +304,8 @@ func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) 
 		barriers, group := []string(nil), []string(nil)
 		lines := strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n")
 		fence := false
+		fileStart := len(items) // nested steps attach only to this file's items
+		seen := map[string]int{}
 		for _, l := range lines {
 			if t := strings.TrimSpace(l); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
 				fence = !fence
@@ -279,11 +320,23 @@ func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) 
 				continue
 			}
 			m := checkbox.FindStringSubmatch(l)
-			if m == nil || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") {
-				continue // not a top-level item: nested sub-steps belong to their parent
+			if m == nil {
+				continue
+			}
+			if strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") {
+				// A nested sub-step is a criterion of the item above it.
+				if len(items) > 0 && fileStart < len(items) {
+					parent := &items[len(items)-1]
+					parent.criteria = append(parent.criteria, strings.TrimSpace(m[2]))
+					if m[1] != " " {
+						parent.doneAC = append(parent.doneAC, len(parent.criteria))
+					}
+				}
+				continue
 			}
 			n++
 			item := strings.TrimSpace(m[2])
+			seen[item]++
 			text := item
 			id := fmt.Sprintf("%s-%d", prefix, n)
 			ref := ""
@@ -313,6 +366,9 @@ func ImportChecklist(p *project.Project, kind string, paths []string, dry bool) 
 			}
 			it := importItem{id: id, title: text, done: m[1] != " ", objective: text, tags: tags,
 				legacy: map[string]any{"source": kind, "file": filepath.ToSlash(rel), "item": item}}
+			if seen[item] > 1 {
+				it.legacy["occurrence"] = seen[item]
+			}
 			if ref != "" {
 				it.legacy["ref"] = ref
 			}
@@ -397,6 +453,10 @@ func syncSource(p *project.Project, t *task.Task) (bool, error) {
 			ref = m[1]
 		}
 	}
+	want, seenN := 1, 0
+	if k := itemKey("", item, t.Legacy["occurrence"]); !strings.HasSuffix(k, "\x001") {
+		fmt.Sscan(k[strings.LastIndex(k, "\x00")+1:], &want)
+	}
 	lines := strings.Split(string(b), "\n")
 	for i, l := range lines {
 		m := checkbox.FindStringSubmatch(strings.TrimRight(l, "\r"))
@@ -410,11 +470,20 @@ func syncSource(p *project.Project, t *task.Task) (bool, error) {
 			tm := taskIDToken.FindStringSubmatch(text)
 			match = tm != nil && tm[1] == ref
 		case item != "":
-			match = text == item
+			if text == item && !nestedLine(l) {
+				seenN++
+				match = seenN == want // the right one of several items with this text
+			}
 		default:
 			match = titleMatches(t.Title, text)
 		}
-		if !match || m[1] != " " {
+		if !match {
+			continue
+		}
+		if m[1] != " " {
+			if item != "" && ref == "" {
+				return false, nil // that occurrence is already checked
+			}
 			continue // keep looking: the same text may appear again, unchecked
 		}
 		lines[i] = strings.Replace(l, "[ ]", "[x]", 1)
@@ -424,6 +493,8 @@ func syncSource(p *project.Project, t *task.Task) (bool, error) {
 }
 
 var refInID = regexp.MustCompile(`-(T\d{3,})$`)
+
+func nestedLine(l string) bool { return strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") }
 
 // titleMatches compares a task title with a checklist item, allowing for Spec Kit markers in
 // the item and for titles truncated to 120 characters.

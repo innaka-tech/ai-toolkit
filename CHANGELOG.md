@@ -56,6 +56,27 @@ Fixes from an independent bug hunt across the whole tool (28 reproduced defects)
 - **Default branch detection**: works with packed and reftable refs.
 - **v1 shims**: `ai-init <dir>`, `ai-commit "<msg>"`, and `ai-push` work in v2 projects.
 - **Spec**: documents only what exists (no `--no-color`, `--yes`, `AITK_LANG`, or user config file).
+- **Second verification round (by the same hunters)**:
+  - **Risk profile:**
+    - A task's work stays in its profile after `git commit --amend` or a rebase.
+    - A close without a task covers what was committed since the last close.
+  - **Fingerprint:**
+    - Objects go to a throwaway directory, so a check writes nothing into `.git` and works when `.git` is read-only.
+    - Either fingerprint kind is accepted at close.
+    - Uncommitted work inside submodules counts.
+  - **Secret scan:** unquoted values are flagged only on `.env`-style `UPPER_KEY=value` lines, and identifiers, URLs, paths, URNs, and test database URLs are not secrets. On 1,149 files of real Go code, findings went from 135 to 0.
+  - **MCP:** JSON that is not a JSON-RPC 2.0 message (`123`, `[]`, batches, `{}`) gets -32600 without ending the session. Lines over 32 MiB are skipped with an error. Requests read just before stdin closes are still answered.
+  - **Imports:**
+    - Items with the same text are told apart by order.
+    - Nested sub-steps become the parent task's criteria, with their checked state.
+    - Closing a task checks off the right occurrence.
+    - Import paths are resolved through symlinks (macOS `/var`), which had broken write-back.
+  - **Commands and help:**
+    - A check whose detached child keeps the output open reports the check's own exit status.
+    - `--json --help` prints an envelope.
+    - Doctor's fix line no longer suggests `--fix` after it already ran.
+  - **Release:** `[workspace.package]` versions are bumped, and reverts are labelled "Revert" in the changelog.
+  - **v1 shims:** `ai-commit` keeps `--push` and `--deploy` as options, and `ai-push [path]` sets the upstream on the first push.
 
 ## [2.5.0] - 2026-10-10
 

@@ -647,6 +647,8 @@ func (r *runner) runAgent(prompt, id string) agentRun {
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		res.code, res.err = 124, fmt.Errorf("agent timed out after %s", r.timeout)
+	case errors.Is(err, exec.ErrWaitDelay) && c.ProcessState != nil:
+		res.code = c.ProcessState.ExitCode() // finished; a detached child held the output open
 	case errors.As(err, &ee):
 		res.code = ee.ExitCode()
 	default:

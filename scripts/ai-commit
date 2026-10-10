@@ -2,9 +2,32 @@
 # ai-commit: v1 command kept for compatibility; see scripts/_shim.sh.
 . "$(dirname "$0")/_shim.sh"
 if shim_is_v1; then shim_v1 ai-commit "$@"; fi
-# ai-commit "<message>"  ->  git add -A && git commit -m "<message>" (aitk's git hooks check it)
-if [ $# -eq 0 ]; then
-  echo "usage: ai-commit \"<type>(<scope>): <summary>\"" >&2
+# ai-commit "<message>" [path] [--push] [--deploy target]
+#   -> git add -A && git commit -m "<message>" (aitk's hooks check it), then optionally push / deploy.
+msg=${1:-}
+if [ -z "$msg" ]; then
+  echo 'usage: ai-commit "<type>(<scope>): <summary>" [path] [--push] [--deploy target]' >&2
   exit 2
 fi
-git add -A && exec git commit -m "$*"
+shift
+dir=.
+if [ $# -gt 0 ] && [ -d "$1" ]; then
+  dir=$1
+  shift
+fi
+push=false
+target=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --push) push=true; shift ;;
+    --deploy) target=${2:-default}; shift; [ $# -gt 0 ] && shift ;;
+    *) echo "ai-commit: unknown option $1" >&2; exit 2 ;;
+  esac
+done
+git -C "$dir" add -A && git -C "$dir" commit -m "$msg" || exit $?
+if [ "$push" = true ]; then
+  "$(dirname "$0")/ai-push" "$dir" || exit $?
+fi
+if [ -n "$target" ]; then
+  cd "$dir" && shim_aitk deploy "$target"
+fi

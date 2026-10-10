@@ -213,6 +213,21 @@ func (a *app) root() *cobra.Command {
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
 		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd(), a.runCmd(), a.impactCmd(), a.setupCmd())
 	a.groupsAnswer(root)
+	// Under --json, help is an envelope too (stdout must hold exactly one JSON object).
+	defHelp := root.HelpFunc()
+	root.SetHelpFunc(func(c *cobra.Command, args []string) {
+		if !a.json {
+			defHelp(c, args)
+			return
+		}
+		var subs []string
+		for _, sc := range c.Commands() {
+			if sc.IsAvailableCommand() {
+				subs = append(subs, sc.Name())
+			}
+		}
+		a.ok(strings.TrimPrefix(c.CommandPath(), "aitk "), &result{data: map[string]any{"usage": c.UseLine(), "short": c.Short, "long": c.Long, "subcommands": subs, "flags": c.LocalFlags().FlagUsages()}})
+	})
 	return root
 }
 
@@ -351,7 +366,11 @@ func (a *app) doctorCmd() *cobra.Command {
 		fmt.Fprintf(&b, "%d errors, %d warnings", r.Errors, r.Warns)
 		res := &result{data: r, human: b.String()}
 		if r.Errors > 0 {
-			return res, apperr.New("E_SCHEMA", apperr.ExitGate, "aitk doctor --fix (or fix the files listed above)", "%d problem(s) found", r.Errors)
+			next := "aitk doctor --fix (or fix the files listed above)"
+			if fix { // --fix already ran: what is left needs a person
+				next = "follow the fix in each error above; doctor --fix cannot repair them"
+			}
+			return res, apperr.New("E_SCHEMA", apperr.ExitGate, next, "%d problem(s) found", r.Errors)
 		}
 		return res, nil
 	})

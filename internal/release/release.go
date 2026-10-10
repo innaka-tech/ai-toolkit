@@ -313,6 +313,9 @@ func notes(pl *Plan) string {
 	order := []string{"⚠ Breaking", "Added", "Changed", "Fixed", "Security"}
 	for _, c := range pl.Commits {
 		line := c.Subject
+		if c.Type == "revert" && !strings.HasPrefix(strings.ToLower(line), "revert") {
+			line = "Revert " + line // the subject is the reverted header: say so
+		}
 		if c.Scope != "" {
 			line = "**" + c.Scope + ":** " + line
 		}
@@ -395,7 +398,7 @@ var tomlVersion = regexp.MustCompile(`^version\s*=\s*"[^"]*"`)
 
 // tomlSections are the tables whose version is the project's own: Cargo's [package], PEP 621's
 // [project], and Poetry's [tool.poetry]. Dependency tables also have "version" keys.
-var tomlSections = map[string][]string{"Cargo.toml": {"package"}, "pyproject.toml": {"project", "tool.poetry"}}
+var tomlSections = map[string][]string{"Cargo.toml": {"package", "workspace.package"}, "pyproject.toml": {"project", "tool.poetry"}}
 
 // tomlVersionLine returns the index of the version line inside one of sections, or -1.
 func tomlVersionLine(lines []string, sections []string) int {

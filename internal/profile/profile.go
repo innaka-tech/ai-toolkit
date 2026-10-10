@@ -62,8 +62,15 @@ func DiffSince(p *project.Project, base string) []Change {
 		}
 	} else {
 		diffInto(p, mb, byPath)
-		if base != "" && base != mb {
-			if _, err := gitx.Run(p.Root, "merge-base", "--is-ancestor", base, "HEAD"); err == nil {
+		if base != "" && base != mb && base == EmptyTree(p) {
+			diffInto(p, base, byPath) // everything since the first commit
+		} else if base != "" && base != mb {
+			// After an amend or a rebase the base is no longer an ancestor of HEAD: diff from the
+			// point where the two histories meet, which still covers the task's work.
+			if _, err := gitx.Run(p.Root, "merge-base", "--is-ancestor", base, "HEAD"); err != nil {
+				base, _ = gitx.Run(p.Root, "merge-base", base, "HEAD")
+			}
+			if base != "" && base != mb {
 				diffInto(p, base, byPath)
 			}
 		}
@@ -82,6 +89,19 @@ func DiffSince(p *project.Project, base string) []Change {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// EmptyTree is git's empty tree object (for the object format of this repository): the base
+// to diff from when the work starts with the very first commit.
+func EmptyTree(p *project.Project) string {
+	c := exec.Command("git", "hash-object", "-t", "tree", "--stdin")
+	c.Dir = p.Root
+	c.Stdin = strings.NewReader("")
+	out, err := c.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // diffInto adds the changes from base to the working tree, keeping the larger line count when a
@@ -164,6 +184,19 @@ func Compute(p *project.Project, changes []Change) string {
 	return "standard"
 }
 
+// Fresh reports whether a fingerprint recorded earlier still describes the code. Both kinds are
+// accepted, so a check recorded where .git could not be written (or the other way round) still
+// matches.
+func Fresh(p *project.Project, recorded string) bool {
+	if recorded == "" {
+		return false
+	}
+	if fp := treeFingerprint(p); fp != "" && fp == recorded {
+		return true
+	}
+	return statusFingerprint(p) == recorded
+}
+
 // Fingerprint identifies the content of the code, aitk metadata excluded: the git tree the
 // working tree would commit to. It changes with any edit and stays the same when the same
 // content is committed, so committing after a passing check does not make the check stale.
@@ -195,7 +228,23 @@ func treeFingerprint(p *project.Project) string {
 	} else {
 		os.Remove(tmp.Name()) // no index yet: git creates the temporary one
 	}
-	env := append(os.Environ(), "GIT_INDEX_FILE="+tmp.Name(), "GIT_LITERAL_PATHSPECS=1")
+	// New objects go to a throwaway directory (the repository's own objects stay readable as an
+	// alternate), so a check writes nothing into .git and works when .git is read-only.
+	objDir, err := os.MkdirTemp("", "aitk-objects-*")
+	if err != nil {
+		return ""
+	}
+	defer os.RemoveAll(objDir)
+	realObjects, err := gitx.Run(p.Root, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+	if err != nil {
+		return ""
+	}
+	alternates := realObjects
+	if prev := os.Getenv("GIT_ALTERNATE_OBJECT_DIRECTORIES"); prev != "" {
+		alternates += string(os.PathListSeparator) + prev
+	}
+	env := append(os.Environ(), "GIT_INDEX_FILE="+tmp.Name(), "GIT_LITERAL_PATHSPECS=1",
+		"GIT_OBJECT_DIRECTORY="+objDir, "GIT_ALTERNATE_OBJECT_DIRECTORIES="+alternates)
 	run := func(args ...string) (string, error) {
 		c := exec.Command("git", args...)
 		c.Dir, c.Env = p.Root, env
@@ -216,8 +265,14 @@ func treeFingerprint(p *project.Project) string {
 	if err != nil || tree == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte("tree:" + tree))
-	return hex.EncodeToString(sum[:])
+	h := sha256.New()
+	h.Write([]byte("tree:" + tree))
+	if _, err := os.Stat(p.Path(".gitmodules")); err == nil {
+		// Uncommitted work inside submodules is not in the tree (only their commits are).
+		dirt, _ := gitx.RunRaw(p.Root, "submodule", "foreach", "--recursive", "--quiet", "git status --porcelain=v1 --untracked-files=all; git diff HEAD")
+		h.Write(dirt)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func statusFingerprint(p *project.Project) string {

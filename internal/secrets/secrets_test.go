@@ -69,6 +69,21 @@ func TestMoreRules(t *testing.T) {
 		"token = config.api.token",
 		"password: os.environ.get(\"DB_PASSWORD\")",
 		"https://user:password@example.com",
+		// Bug hunt round 2: ordinary code must not be flagged.
+		`TokenEndpoint: authServerURL + "/token",`,
+		`ClientSecret: *idpClientSecret,`,
+		`metadata.TokenEndpointAuthMethod = "client_secret_basic"`,
+		`const tokenEndpoint = "https://auth.example.org/oauth/token"`,
+		`token_url: https://auth.example.org/token`,
+		`SECRET_KEY_FILE=/run/secrets/app_key`,
+		`secretName: my-app-tls-certificate`,
+		`tokenizer: PreTrainedTokenizerFast`,
+		`password_reset_timeout_days=PASSWORD_RESET_DAYS`,
+		`api_key_header = "X-Api-Key-Header"`,
+		`DATABASE_URL=postgres://postgres:postgres@localhost:5432/test`,
+		`// JSON Web Tokens: http://self-issued.info/docs/draft-ietf-oauth-json-web-token.html`,
+		`errExpiredToken = "expired_token_received"`,
+		`TokenTypeIDToken = "urn:ietf:params:oauth:token-type:id_token"`,
 	} {
 		if fs := ScanLine("f", 1, line); len(fs) > 0 {
 			t.Errorf("false positive in %q: %v", line, fs)

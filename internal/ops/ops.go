@@ -696,7 +696,7 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 			return "", apperr.New("E_DOD_CHECK_STALE", apperr.ExitGate, "aitk check", "no check has been recorded for this task")
 		case c.ExitCode != 0:
 			return "", apperr.New("E_DOD_CHECK_STALE", apperr.ExitGate, "fix the failures, then run: aitk check", "the last check failed (exit %d)", c.ExitCode)
-		case c.Tree != tree:
+		case c.Tree != tree && !profile.Fresh(p, c.Tree):
 			return "", apperr.New("E_DOD_CHECK_STALE", apperr.ExitGate, "aitk check", "files changed after the last passing check")
 		}
 	}
@@ -743,7 +743,7 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 			return "", apperr.New("E_DOD_AUDIT", apperr.ExitGate, "aitk audit", "a %s task needs a security audit (dependencies, static analysis, secrets)", prof)
 		case !a.Passed:
 			return "", apperr.New("E_DOD_AUDIT", apperr.ExitGate, "fix what the scanners report, then run: aitk audit", "the last security audit found problems")
-		case a.Tree != tree:
+		case a.Tree != tree && !profile.Fresh(p, a.Tree):
 			return "", apperr.New("E_DOD_AUDIT", apperr.ExitGate, "aitk audit", "files changed after the last passing audit")
 		}
 	}
@@ -895,17 +895,35 @@ func taskCommits(p *project.Project, t *task.Task) []string {
 	return profile.CommitsFull(p, t.Created, t.ID)
 }
 
+// parentOf is the commit before c, or the empty tree when c is the first commit.
+func parentOf(p *project.Project, c string) string {
+	if parent, err := gitx.Run(p.Root, "rev-parse", "--verify", "-q", c+"^"); err == nil && parent != "" {
+		return parent
+	}
+	return profile.EmptyTree(p)
+}
+
 // TaskChanges are the changes that make up t's risk profile: the branch's changes since the
 // default branch plus everything since the task started (on the default branch, the first
 // part is only uncommitted work). Without a task, the branch's changes.
 func TaskChanges(p *project.Project, t *task.Task) []profile.Change {
 	if t == nil {
+		// A close without a task covers the work since the last close (its handoff).
+		if hs := handoff.List(p); len(hs) > 0 {
+			// Commits from the second of the last close on count too: when unsure, include.
+			if at, err := time.Parse("2006-01-02T15:04:05Z", hs[0].At); err == nil {
+				since := at.Add(-time.Second).UTC().Format("2006-01-02T15:04:05Z")
+				if cs := profile.CommitsFull(p, since, ""); len(cs) > 0 {
+					return profile.DiffSince(p, parentOf(p, cs[len(cs)-1]))
+				}
+			}
+		}
 		return profile.Diff(p)
 	}
 	base := t.Base
 	if base == "" { // started by an older aitk: the parent of its first commit
 		if cs := taskCommits(p, t); len(cs) > 0 {
-			base, _ = gitx.Run(p.Root, "rev-parse", "--verify", "-q", cs[len(cs)-1]+"^")
+			base = parentOf(p, cs[len(cs)-1])
 		}
 	}
 	return profile.DiffSince(p, base)

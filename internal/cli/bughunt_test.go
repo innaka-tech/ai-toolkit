@@ -237,3 +237,116 @@ func TestBOMAndNegativeFindings(t *testing.T) {
 		t.Fatalf("negative findings need their own message: %s", r.stdout)
 	}
 }
+
+// Bug hunt round 2: items with the same text, and nested steps.
+func TestImportDuplicateTextsAndNestedSteps(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	md := "- [ ] Write tests\n- [ ] Write tests\n- [ ] Ship it\n  - [x] build passes\n  - [ ] notes written\n"
+	write(t, dir, "dup.md", md)
+	mustOK(t, aitk(t, dir, "import", "markdown", "dup.md"))
+	for i := 0; i < 2; i++ {
+		if imp := data(aitk(t, dir, "import", "markdown", "dup.md"))["imported"].([]any); len(imp) != 0 {
+			t.Fatalf("re-importing must not create tasks: %v", imp)
+		}
+	}
+	ship := data(aitk(t, dir, "task", "show", "DUP-3"))
+	crit, _ := ship["criteria"].([]any)
+	if len(crit) != 2 || !crit[0].(map[string]any)["done"].(bool) {
+		t.Fatalf("nested steps must become the parent's criteria (checked state kept): %v", ship["criteria"])
+	}
+	// Closing the second "Write tests" checks off the second line, not the first.
+	mustOK(t, aitk(t, dir, "task", "start", "DUP-2"))
+	mustOK(t, aitk(t, dir, "task", "update", "--add-ac", "done"))
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "x", "--knowledge", "none"))
+	if got := read(t, dir, "dup.md"); !strings.HasPrefix(got, "- [ ] Write tests\n- [x] Write tests\n") {
+		t.Fatalf("the second occurrence must be checked off:\n%s", got)
+	}
+}
+
+// Round 2: an amended commit keeps the task's work in its profile.
+func TestAmendKeepsSensitiveWorkStrict(t *testing.T) {
+	dir := sensitiveRepo(t)
+	newStarted(t, dir, "Amend auth", "--ac", "ok")
+	write(t, dir, "auth/x.go", "package auth\n")
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-q", "--amend", "--no-edit")
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	if r := aitk(t, dir, "close", "--summary", "x", "--knowledge", "none"); r.code == 0 && data(r)["status"] == "done" {
+		t.Fatalf("an amended auth change must stay strict: %v", data(r))
+	}
+}
+
+// Round 2: a close without a task covers what was committed since the last close.
+func TestImplicitCloseSeesCommittedSensitiveWork(t *testing.T) {
+	dir := sensitiveRepo(t)
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "first", "--knowledge", "none")) // a handoff to count from
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "chore: aitk")
+	write(t, dir, "auth/l.go", "package auth\n")
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "feat: l")
+	aitk(t, dir, "check")
+	if r := aitk(t, dir, "close", "--summary", "x", "--knowledge", "none"); r.code == 0 {
+		t.Fatalf("committed auth work must not close as an implicit lite task: %v", data(r))
+	}
+}
+
+// Round 2: a check recorded while .git/objects is read-only still matches at close.
+func TestReadOnlyObjectsDoNotBreakFreshness(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions")
+	}
+	dir := repo(t)
+	initRepo(t, dir)
+	newStarted(t, dir, "Read-only objects", "--ac", "ok")
+	write(t, dir, "f.txt", "x")
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	objects := filepath.Join(dir, ".git", "objects")
+	run(t, dir, "chmod", "-R", "a-w", objects)
+	defer run(t, dir, "chmod", "-R", "u+w", objects)
+	mustOK(t, aitk(t, dir, "check"))
+	run(t, dir, "chmod", "-R", "u+w", objects)
+	mustOK(t, aitk(t, dir, "close", "--summary", "x", "--knowledge", "none"))
+}
+
+func TestBriefNamesMissingActiveTask(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "chore: aitk")
+	run(t, dir, "git", "checkout", "-qb", "feat")
+	mustOK(t, aitk(t, dir, "task", "new", "Branch task", "--id", "T-br", "--start"))
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "chore: task")
+	run(t, dir, "git", "checkout", "-q", "main")
+	if b := data(aitk(t, dir, "brief")); b["missing_active_task"] != "T-br" || !strings.Contains(b["markdown"].(string), "T-br does not exist") {
+		t.Fatalf("the brief must name the missing active task: %v", b["markdown"])
+	}
+}
+
+func TestReleaseBumpsCargoWorkspaceAndLabelsReverts(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "ok.txt", "1")
+	write(t, dir, "Cargo.toml", "[workspace]\nmembers = [\"a\"]\n\n[workspace.package]\nversion = \"0.3.0\"\n")
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "chore: setup")
+	run(t, dir, "git", "tag", "v0.3.0")
+	commit(t, dir, "a.txt", "feat: a")
+	run(t, dir, "git", "revert", "--no-edit", "HEAD")
+	commit(t, dir, "b.txt", "fix: b")
+	mustOK(t, aitk(t, dir, "release"))
+	if !strings.Contains(read(t, dir, "Cargo.toml"), `version = "0.4.0"`) {
+		t.Fatalf("workspace version not bumped:\n%s", read(t, dir, "Cargo.toml"))
+	}
+	if !strings.Contains(read(t, dir, "CHANGELOG.md"), "Revert feat: a") {
+		t.Fatalf("a revert must say so in the changelog:\n%s", read(t, dir, "CHANGELOG.md"))
+	}
+}

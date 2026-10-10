@@ -91,6 +91,9 @@ func run(ctx context.Context, path string, stdin []byte, args ...string) ([]byte
 	cmd.WaitDelay = 2 * time.Second // never wait on a pipe held open by a leftover process
 	err := cmd.Run()
 	proc.EndTree(cmd)
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		err = nil // finished; a detached child held the output open
+	}
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("timed out")
 	}

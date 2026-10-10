@@ -37,6 +37,7 @@ type Brief struct {
 	Conventions         []string           `json:"conventions,omitempty"`
 	ConventionsUnfilled bool               `json:"conventions_unfilled,omitempty"`
 	Goal                *GoalInfo          `json:"goal,omitempty"`
+	MissingActive       string             `json:"missing_active_task,omitempty"` // active task not found on this branch
 	Plugins             []PluginSection    `json:"plugin_sections,omitempty"`
 	PluginErr           []string           `json:"plugin_errors,omitempty"`
 	Markdown            string             `json:"markdown"`
@@ -211,6 +212,7 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 	}
 	b.Rules = rules(b.Profile, p.Config.Check.Cmd != "")
 	if active != "" && (t == nil || !strings.EqualFold(t.ID, active)) {
+		b.MissingActive = active
 		b.Rules = append([]string{"The active task " + active + " does not exist on this branch (switched branches?): run `aitk doctor --fix`, then `aitk task next`."}, b.Rules...)
 	}
 	b.Next = next(b, p)
@@ -357,7 +359,12 @@ func render(b *Brief) string {
 		if b.Task.Failures >= 2 {
 			fmt.Fprintf(&s, "⚠ The check has failed %d times in a row. Do not keep retrying: ask the user, or hand over with aitk close --status blocked.\n", b.Task.Failures)
 		}
+	case b.MissingActive != "" && len(b.Open) == 0:
+		fmt.Fprintf(&s, "The active task %s does not exist on this branch: run `aitk doctor --fix`, then `aitk task next`.\n", b.MissingActive)
 	case len(b.Open) > 0:
+		if b.MissingActive != "" {
+			fmt.Fprintf(&s, "The active task %s does not exist on this branch (`aitk doctor --fix` clears it).\n", b.MissingActive)
+		}
 		s.WriteString("No active task. Open tasks:\n")
 		for _, t := range b.Open {
 			fmt.Fprintf(&s, "- %s [%s] %s\n", t.ID, t.Status, t.Title)

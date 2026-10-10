@@ -20,3 +20,16 @@ func TestTolerantTransport(t *testing.T) {
 		t.Fatalf("a malformed line must get a parse error: %q", replies.String())
 	}
 }
+
+func TestOnlyJSONRPCMessagesPass(t *testing.T) {
+	for _, bad := range []string{`123`, `null`, `"x"`, `[]`, `[{"jsonrpc":"2.0","id":1,"method":"ping"}]`, `{}`, `{"jsonrpc":"1.0","id":1,"method":"ping"}`, `{"jsonrpc":"2.0","id":{},"method":"ping"}`} {
+		if isMessage([]byte(bad)) {
+			t.Errorf("%s must be rejected", bad)
+		}
+	}
+	for _, good := range []string{`{"jsonrpc":"2.0","id":1,"method":"ping"}`, `{"jsonrpc":"2.0","method":"notifications/initialized"}`, `{"jsonrpc":"2.0","id":"a","result":{}}`} {
+		if !isMessage([]byte(good)) {
+			t.Errorf("%s must pass", good)
+		}
+	}
+}

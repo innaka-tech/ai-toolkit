@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -168,7 +169,7 @@ func New(root, version string, exec Exec) *mcp.Server {
 			text, _, _ := h.call(req.Session, []string{"brief"})
 			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "aitk://brief", MIMEType: "text/markdown", Text: text}}}, nil
 		})
-	s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "aitk://task/{id}", Name: "task", Title: "Task file", MIMEType: "text/markdown"},
+	s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "aitk://task/{id}", Name: "task", Title: "Task (aitk.result/v1 JSON)", MIMEType: "application/json"},
 		func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 			id := strings.TrimPrefix(req.Params.URI, "aitk://task/")
 			if id == "" || strings.ContainsAny(id, "/\\") {
@@ -178,7 +179,7 @@ func New(root, version string, exec Exec) *mcp.Server {
 			if !ok {
 				return nil, mcp.ResourceNotFoundError(req.Params.URI)
 			}
-			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "text/markdown", Text: text}}}, nil
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "application/json", Text: text}}}, nil
 		})
 	for _, p := range []struct{ name, desc, text string }{
 		{"start-session", "Begin work in this repository", "Call the aitk `brief` tool and read it. Then continue the active task (or start/create one), do the work, and run `check` until it passes."},
@@ -194,48 +195,129 @@ func New(root, version string, exec Exec) *mcp.Server {
 
 // ServeStdio serves over stdin/stdout until the client disconnects.
 func ServeStdio(ctx context.Context, s *mcp.Server) error {
-	return s.Run(ctx, &mcp.IOTransport{Reader: tolerant(os.Stdin, out), Writer: out, MaxLineLength: 32 << 20})
+	return s.Run(ctx, &mcp.IOTransport{Reader: tolerant(os.Stdin, out), Writer: out, MaxLineLength: maxLine + 1})
 }
 
 // out serialises writes to stdout from the SDK and from tolerant's error replies.
 var out = &lockedWriter{w: os.Stdout}
 
 type lockedWriter struct {
-	mu sync.Mutex
-	w  io.Writer
+	mu   sync.Mutex
+	w    io.Writer
+	last time.Time
 }
 
 func (l *lockedWriter) Write(b []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.last = time.Now()
 	return l.w.Write(b)
 }
 
 func (l *lockedWriter) Close() error { return nil }
 
-// tolerant passes valid JSON lines to the SDK and answers anything else with a JSON-RPC parse
-// error (-32700), so one malformed line from a client does not end the session.
+// tolerant passes valid JSON-RPC messages to the SDK and answers anything else itself (parse
+// error -32700 for invalid JSON, invalid request -32600 for JSON that is not a JSON-RPC message,
+// including batches), so one bad line from a client does not end the session. Lines above the
+// size limit are skipped with an error. At end of input it waits until replies have settled
+// before closing, so a client that writes its requests and closes stdin still gets answers.
 func tolerant(in io.Reader, reply io.Writer) io.ReadCloser {
 	pr, pw := io.Pipe()
+	errReply := func(code int, msg string) {
+		reply.Write([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":null,"error":{"code":%d,"message":%q}}`+"\n", code, msg)))
+	}
 	go func() {
-		sc := bufio.NewScanner(in)
-		sc.Buffer(make([]byte, 64*1024), 32<<20)
-		for sc.Scan() {
-			line := bytes.TrimSpace(sc.Bytes())
-			if len(line) == 0 {
-				continue
+		br := bufio.NewReaderSize(in, 64*1024)
+		for {
+			line, tooLong, err := readLine(br, maxLine)
+			if tooLong {
+				errReply(-32600, "Invalid Request: message larger than 32 MiB")
+			} else if t := bytes.TrimSpace(line); len(t) > 0 {
+				switch {
+				case !json.Valid(t):
+					errReply(-32700, "Parse error: not valid JSON")
+				case !isMessage(t):
+					errReply(-32600, "Invalid Request: not a JSON-RPC 2.0 message (batches are not supported)")
+				default:
+					if _, werr := pw.Write(append(append([]byte{}, t...), '\n')); werr != nil {
+						return
+					}
+				}
 			}
-			if !json.Valid(line) {
-				reply.Write([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error: not valid JSON"}}` + "\n"))
-				continue
-			}
-			if _, err := pw.Write(append(append([]byte{}, line...), '\n')); err != nil {
+			if err != nil {
+				settle(reply)
+				pw.CloseWithError(nil)
 				return
 			}
 		}
-		pw.CloseWithError(sc.Err())
 	}()
 	return pr
+}
+
+const maxLine = 32 << 20
+
+// readLine reads one line (without the newline) up to max bytes; longer lines are consumed and
+// reported as tooLong. err is set at end of input (the last line may still carry data).
+func readLine(br *bufio.Reader, max int) (line []byte, tooLong bool, err error) {
+	for {
+		chunk, isPrefix, e := br.ReadLine()
+		if len(line)+len(chunk) > max {
+			tooLong = true
+		} else if !tooLong {
+			line = append(line, chunk...)
+		}
+		if e != nil {
+			return line, tooLong, e
+		}
+		if !isPrefix {
+			return line, tooLong, nil
+		}
+	}
+}
+
+// isMessage reports whether b is one JSON-RPC 2.0 request, notification, or response object.
+func isMessage(b []byte) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(b, &m) != nil {
+		return false
+	}
+	var v string
+	if json.Unmarshal(m["jsonrpc"], &v) != nil || v != "2.0" {
+		return false
+	}
+	if id, ok := m["id"]; ok {
+		switch t := bytes.TrimSpace(id); {
+		case len(t) == 0, t[0] == '{', t[0] == '[', string(t) == "true", string(t) == "false":
+			return false
+		}
+	}
+	if method, ok := m["method"]; ok {
+		var name string
+		return json.Unmarshal(method, &name) == nil && name != ""
+	}
+	_, res := m["result"]
+	_, er := m["error"]
+	return res || er
+}
+
+// settle waits until no reply has been written for a moment (at most 10 s), so requests read
+// just before end of input are answered.
+func settle(w io.Writer) {
+	lw, ok := w.(*lockedWriter)
+	if !ok {
+		return
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	time.Sleep(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		lw.mu.Lock()
+		quiet := time.Since(lw.last) > 500*time.Millisecond
+		lw.mu.Unlock()
+		if quiet {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // ServeHTTP serves streamable HTTP on addr.

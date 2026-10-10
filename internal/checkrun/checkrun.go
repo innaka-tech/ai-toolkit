@@ -48,6 +48,10 @@ func Run(dir, cmd string, timeout time.Duration, stream bool) Result {
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		r.TimedOut, r.ExitCode = true, 124
+	case errors.Is(err, exec.ErrWaitDelay) && c.ProcessState != nil:
+		// The command finished; something it left running (detached with setsid) kept the
+		// output pipe open. The command's own exit status is the result.
+		r.ExitCode = c.ProcessState.ExitCode()
 	case errors.As(err, &ee):
 		r.ExitCode = ee.ExitCode()
 	case err != nil:

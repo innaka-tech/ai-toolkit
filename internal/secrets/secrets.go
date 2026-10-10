@@ -34,8 +34,12 @@ var rules = []rule{
 	{"openai-api-key", regexp.MustCompile(`\b(sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{40,})`), 3.5},
 	{"cloudflare-api-token", regexp.MustCompile(`\b(cfat_[A-Za-z0-9]{40,})\b`), 0},
 	{"jwt", regexp.MustCompile(`\b(eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b`), 0},
-	{"generic-secret-assignment", regexp.MustCompile(`(?i)\b[\w.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret)[\w.-]*["']?\s*[:=]\s*(?:["']([^"'\s$<>{}]{12,})["']|([^"'\s$<>{}#,;)]{12,}))`), 3.3},
-	{"url-credentials", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^/\s:@"']+:([^/\s:@"']{3,})@`), 0},
+	// key = "value": the key ends with a secret word (an environment suffix such as _KEY or _PROD
+	// may follow), and the quoted value is long and random enough.
+	{"generic-secret-assignment", regexp.MustCompile(`(?i)\b[\w.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret)(?:[_-](?:key|value|prod|production|live|staging|dev))?\b["']?\s*[:=]\s*["']([^"'\s$<>{}]{12,})["']`), 3.3},
+	// .env and shell lines: UPPER_CASE_KEY=value without quotes.
+	{"generic-secret-assignment", regexp.MustCompile(`^\s*(?:export\s+)?[A-Z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|CLIENT_?SECRET)(?:_(?:KEY|VALUE|PROD|PRODUCTION|LIVE|STAGING|DEV))?=([^"'\s$<>{}#]{12,})\s*(?:#.*)?$`), 3.3},
+	{"url-credentials", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://([^/\s:@"']+):([^/\s:@"']{3,})@`), 0},
 }
 
 // Allow markers: lines containing these are skipped.
@@ -56,6 +60,14 @@ func ScanLine(file string, n int, line string) []Finding {
 				if g != "" {
 					v = g
 					break
+				}
+			}
+			if r.name == "url-credentials" {
+				if user := m[1]; len(m) > 2 {
+					v = m[2]
+					if strings.EqualFold(user, v) || weakTestPassword(v) {
+						continue // postgres://postgres:postgres@localhost and friends
+					}
 				}
 			}
 			if r.entropy > 0 && Entropy(v) < r.entropy {
@@ -131,16 +143,32 @@ func Entropy(s string) float64 {
 	return h
 }
 
+var snakeWords = regexp.MustCompile(`^[a-z]+(?:[_-][a-z]+)+$`)
+
 var identPath = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$`)
 
 // codeReference reports values that are code, not secrets: os.environ.TOKEN, config.api_key,
 // getToken(, password words in URLs like "user:password@".
 func codeReference(v string) bool {
-	if identPath.MatchString(v) || strings.Contains(v, "(") {
+	if identPath.MatchString(v) || strings.ContainsAny(v, "(/+*&") || strings.HasPrefix(strings.ToLower(v), "http") {
 		return true
+	}
+	if !strings.ContainsAny(v, "0123456789") && strings.ToUpper(v) == v && strings.Contains(v, "_") {
+		return true // another variable: PASSWORD_RESET_DAYS
+	}
+	if snakeWords.MatchString(v) || strings.HasPrefix(strings.ToLower(v), "urn:") {
+		return true // an identifier or protocol constant: "expired_token", "urn:ietf:params:…"
 	}
 	switch strings.ToLower(v) {
 	case "password", "pass", "passwd", "secret", "token", "pwd":
+		return true
+	}
+	return false
+}
+
+func weakTestPassword(v string) bool {
+	switch strings.ToLower(v) {
+	case "postgres", "password", "pass", "root", "admin", "test", "secret", "user", "guest", "mysql", "redis", "changeme":
 		return true
 	}
 	return false

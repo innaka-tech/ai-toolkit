@@ -74,7 +74,7 @@ func ImportSuperpowers(p *project.Project, paths []string, dry bool) (*ImportRes
 		if m := h1.FindStringSubmatch(text); m != nil {
 			planTitle = strings.TrimSpace(strings.TrimSuffix(m[1], " Implementation Plan"))
 		}
-		rel, _ := filepath.Rel(p.Root, path)
+		rel := repoRel(p, path)
 		locs := spTask.FindAllStringSubmatchIndex(text, -1)
 		for i, loc := range locs {
 			end := len(text)
@@ -162,7 +162,7 @@ func ImportBMAD(p *project.Project, paths []string, dry bool) (*ImportResult, er
 				case ".git", "node_modules", "vendor", ".aitk":
 					return filepath.SkipDir
 				}
-				if rel, _ := filepath.Rel(p.Root, path); filepath.ToSlash(rel) == project.DocsAI {
+				if rel := repoRel(p, path); filepath.ToSlash(rel) == project.DocsAI {
 					return filepath.SkipDir
 				}
 				return nil
@@ -219,7 +219,7 @@ func ImportBMAD(p *project.Project, paths []string, dry bool) (*ImportResult, er
 				}
 			}
 		}
-		rel, _ := filepath.Rel(p.Root, path)
+		rel := repoRel(p, path)
 		it := importItem{id: id, title: title, tags: []string{"bmad", typ},
 			legacy: map[string]any{"source": "bmad", "file": filepath.ToSlash(rel), "type": typ, "parent": str(fm["parent"]), "bmad_id": bid, "bmad_status": status}}
 		it.status = bmadStatus(status)
