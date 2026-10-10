@@ -1,6 +1,9 @@
 package secrets
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // fake builds token-shaped test data at runtime so no literal secret lives in the source
 // (repository secret scanners would block the push otherwise).
@@ -43,6 +46,72 @@ func TestRules(t *testing.T) {
 		if fs := ScanLine("f", 1, line); len(fs) > 0 {
 			t.Errorf("false positive in %q: %v", line, fs)
 		}
+	}
+}
+
+// Bug hunt: unquoted .env values, keyword suffixes, URL credentials, SSH2 keys; code references
+// and duplicate reports are not findings.
+func TestMoreRules(t *testing.T) {
+	for line, rule := range map[string]string{
+		"DB_PASSWORD=Hj8kLm2nPq9rSt4v":                   "generic-secret-assignment", // gitleaks:allow aitk:allow-secret
+		"export API_TOKEN=Zq8xW2vY4uT6sR8pN0mL":          "generic-secret-assignment", // gitleaks:allow aitk:allow-secret
+		`SECRET_KEY = "Qw3rTy7uI9oP1aS5dF"`:              "generic-secret-assignment", // gitleaks:allow aitk:allow-secret
+		`PASSWORD_PROD="Mn4bV6cX8zL2kJ5h"`:               "generic-secret-assignment", // gitleaks:allow aitk:allow-secret
+		"postgres://admin:S3cr3tPw@db.internal:5432/app": "url-credentials",           // gitleaks:allow aitk:allow-secret
+		"-----BEGIN SSH2 ENCRYPTED PRIVATE KEY-----":     "private-key",               // gitleaks:allow aitk:allow-secret
+	} {
+		fs := ScanLine("f", 1, line)
+		if len(fs) != 1 || fs[0].Rule != rule {
+			t.Errorf("%q: want one %s finding, got %v", line, rule, fs)
+		}
+	}
+	for _, line := range []string{
+		"token = config.api.token",
+		"password: os.environ.get(\"DB_PASSWORD\")",
+		"https://user:password@example.com",
+		// Bug hunt round 2: ordinary code must not be flagged.
+		`TokenEndpoint: authServerURL + "/token",`,
+		`ClientSecret: *idpClientSecret,`,
+		`metadata.TokenEndpointAuthMethod = "client_secret_basic"`,
+		`const tokenEndpoint = "https://auth.example.org/oauth/token"`,
+		`token_url: https://auth.example.org/token`,
+		`SECRET_KEY_FILE=/run/secrets/app_key`,
+		`secretName: my-app-tls-certificate`,
+		`tokenizer: PreTrainedTokenizerFast`,
+		`password_reset_timeout_days=PASSWORD_RESET_DAYS`,
+		`api_key_header = "X-Api-Key-Header"`,
+		`DATABASE_URL=postgres://postgres:postgres@localhost:5432/test`,
+		`// JSON Web Tokens: http://self-issued.info/docs/draft-ietf-oauth-json-web-token.html`,
+		`errExpiredToken = "expired_token_received"`,
+		`TokenTypeIDToken = "urn:ietf:params:oauth:token-type:id_token"`,
+		`      DB_PASSWORD: ${DB_PASSWORD}`,
+		`ENV TOKEN_TTL=86400`,
+		`spring.datasource.password=${DB_PASSWORD}`,
+	} {
+		if fs := ScanLine("f", 1, line); len(fs) > 0 {
+			t.Errorf("false positive in %q: %v", line, fs)
+		}
+	}
+	if fs := ScanLine("f", 1, "K="+fake("sk-"+"ant-", "api03-Zq8xW2vY4uT6sR8pN0mL2kJ4hG6fD8sA0qW")); len(fs) != 1 {
+		t.Errorf("an anthropic key is one finding, got %v", fs)
+	}
+}
+
+// Bug hunt: a content line starting with "++" is not a file header, and nothing is printed in clear.
+func TestScanDiffIgnoresHeaderLookalikes(t *testing.T) {
+	tok := fake("gh"+"p_", "Zx8Qw3Er5Ty7Ui9Op1As2Df4Gh6Jk8Lz0Xc2V")
+	diff := "diff --git a/c.txt b/c.txt\n--- a/c.txt\n+++ b/c.txt\n@@ -0,0 +1,3 @@\n+x=1\n+++ " + tok + "\n+" + fake("AK"+"IA", "Z7Q2X4M8N3P5R6TW") + "\n"
+	fs := ScanDiff(diff)
+	if len(fs) != 2 {
+		t.Fatalf("both secrets must be found: %+v", fs)
+	}
+	for _, f := range fs {
+		if f.File != "c.txt" || strings.Contains(f.File+f.Match, tok) {
+			t.Fatalf("wrong file or secret in clear: %+v", f)
+		}
+	}
+	if fs[1].Line != 3 {
+		t.Fatalf("line numbers must count every added line: %+v", fs)
 	}
 }
 

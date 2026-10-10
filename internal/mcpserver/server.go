@@ -4,15 +4,20 @@
 package mcpserver
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -166,6 +171,18 @@ func New(root, version string, exec Exec) *mcp.Server {
 			text, _, _ := h.call(req.Session, []string{"brief"})
 			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "aitk://brief", MIMEType: "text/markdown", Text: text}}}, nil
 		})
+	s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "aitk://task/{id}", Name: "task", Title: "Task (aitk.result/v1 JSON)", MIMEType: "application/json"},
+		func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			id := strings.TrimPrefix(req.Params.URI, "aitk://task/")
+			if id == "" || strings.ContainsAny(id, "/\\") {
+				return nil, mcp.ResourceNotFoundError(req.Params.URI)
+			}
+			text, _, ok := h.call(req.Session, []string{"task", "show", "--", id})
+			if !ok {
+				return nil, mcp.ResourceNotFoundError(req.Params.URI)
+			}
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "application/json", Text: text}}}, nil
+		})
 	for _, p := range []struct{ name, desc, text string }{
 		{"start-session", "Begin work in this repository", "Call the aitk `brief` tool and read it. Then continue the active task (or start/create one), do the work, and run `check` until it passes."},
 		{"close-session", "Finish work in this repository", "Run `check`. When it passes, call `close` with a one-paragraph summary of what changed and one lasting finding as knowledge (or \"none\"). If close is rejected, follow its fix."},
@@ -179,7 +196,166 @@ func New(root, version string, exec Exec) *mcp.Server {
 }
 
 // ServeStdio serves over stdin/stdout until the client disconnects.
-func ServeStdio(ctx context.Context, s *mcp.Server) error { return s.Run(ctx, &mcp.StdioTransport{}) }
+func ServeStdio(ctx context.Context, s *mcp.Server) error {
+	return s.Run(ctx, &mcp.IOTransport{Reader: tolerant(os.Stdin, out), Writer: out, MaxLineLength: maxLine + 1})
+}
+
+// out serialises writes to stdout from the SDK and from tolerant's error replies.
+var out = &lockedWriter{w: os.Stdout}
+
+type lockedWriter struct {
+	mu   sync.Mutex
+	w    io.Writer
+	last time.Time
+}
+
+func (l *lockedWriter) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.last = time.Now()
+	if isResponse(b) {
+		inflight.Add(-1)
+	}
+	return l.w.Write(b)
+}
+
+// isResponse reports whether b is the SDK's answer to a request (an id that is not null).
+func isResponse(b []byte) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(bytes.TrimSpace(b), &m) != nil {
+		return false
+	}
+	_, res := m["result"]
+	_, er := m["error"]
+	id, ok := m["id"]
+	return (res || er) && ok && string(bytes.TrimSpace(id)) != "null"
+}
+
+func (l *lockedWriter) Close() error { return nil }
+
+// tolerant passes valid JSON-RPC messages to the SDK and answers anything else itself (parse
+// error -32700 for invalid JSON, invalid request -32600 for JSON that is not a JSON-RPC message,
+// including batches), so one bad line from a client does not end the session. Lines above the
+// size limit are skipped with an error. At end of input it waits until replies have settled
+// before closing, so a client that writes its requests and closes stdin still gets answers.
+func tolerant(in io.Reader, reply io.Writer) io.ReadCloser {
+	pr, pw := io.Pipe()
+	errReply := func(code int, msg string) {
+		reply.Write([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":null,"error":{"code":%d,"message":%q}}`+"\n", code, msg)))
+	}
+	go func() {
+		br := bufio.NewReaderSize(in, 64*1024)
+		for {
+			line, tooLong, err := readLine(br, maxLine)
+			if tooLong {
+				errReply(-32600, "Invalid Request: message larger than 32 MiB")
+			} else if t := bytes.TrimSpace(line); len(t) > 0 {
+				switch {
+				case !json.Valid(t):
+					errReply(-32700, "Parse error: not valid JSON")
+				case !isMessage(t):
+					errReply(-32600, "Invalid Request: not a JSON-RPC 2.0 request or notification (batches and responses are not accepted)")
+				default:
+					if hasID(t) {
+						inflight.Add(1)
+					}
+					if _, werr := pw.Write(append(append([]byte{}, t...), '\n')); werr != nil {
+						return
+					}
+				}
+			}
+			if err != nil {
+				settle(reply)
+				pw.CloseWithError(nil)
+				return
+			}
+		}
+	}()
+	return pr
+}
+
+const maxLine = 32 << 20
+
+// readLine reads one line (without the newline) up to max bytes; longer lines are consumed and
+// reported as tooLong. err is set at end of input (the last line may still carry data).
+func readLine(br *bufio.Reader, max int) (line []byte, tooLong bool, err error) {
+	for {
+		chunk, isPrefix, e := br.ReadLine()
+		if len(line)+len(chunk) > max {
+			tooLong = true
+		} else if !tooLong {
+			line = append(line, chunk...)
+		}
+		if e != nil {
+			return line, tooLong, e
+		}
+		if !isPrefix {
+			return line, tooLong, nil
+		}
+	}
+}
+
+// isMessage reports whether b is one JSON-RPC 2.0 request, notification, or response object.
+func isMessage(b []byte) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(b, &m) != nil {
+		return false
+	}
+	var v string
+	if json.Unmarshal(m["jsonrpc"], &v) != nil || v != "2.0" {
+		return false
+	}
+	if id, ok := m["id"]; ok {
+		switch t := bytes.TrimSpace(id); {
+		case len(t) == 0, t[0] == '{', t[0] == '[', string(t) == "true", string(t) == "false":
+			return false
+		}
+	}
+	if id, ok := m["id"]; ok {
+		var f float64
+		if json.Unmarshal(id, &f) == nil && f != float64(int64(f)) {
+			return false // fractional ids would be truncated
+		}
+	}
+	// aitk never sends requests to the client, so a client message must be a request or a
+	// notification: a stray response would only end the session.
+	method, ok := m["method"]
+	if !ok {
+		return false
+	}
+	var name string
+	if json.Unmarshal(method, &name) != nil || name == "" {
+		return false
+	}
+	_, err := jsonrpc.DecodeMessage(b)
+	return err == nil
+}
+
+// inflight counts requests passed to the SDK that have not been answered yet.
+var inflight atomic.Int64
+
+func hasID(b []byte) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(b, &m) != nil {
+		return false
+	}
+	id, ok := m["id"]
+	return ok && string(bytes.TrimSpace(id)) != "null"
+}
+
+// settle waits, at end of input, until every request read has been answered (at most 15
+// minutes, longer than the default check timeout), so a client that writes its requests and
+// closes stdin still gets every answer.
+func settle(w io.Writer) {
+	if w != io.Writer(out) {
+		return // only the real stdio transport has an SDK answering behind it
+	}
+	deadline := time.Now().Add(15 * time.Minute)
+	for inflight.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond) // let the last write finish
+}
 
 // ServeHTTP serves streamable HTTP on addr.
 func ServeHTTP(addr string, s *mcp.Server) error {

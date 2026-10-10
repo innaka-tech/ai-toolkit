@@ -71,6 +71,9 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 	a := &app{stdout: stdout, stderr: stderr}
 	root := a.root()
 	for _, arg := range args {
+		if arg == "--" {
+			break // everything after -- is an argument, even "--json"
+		}
 		if arg == "--json" {
 			a.json = true // so parse errors are reported as JSON too
 		}
@@ -209,7 +212,48 @@ func (a *app) root() *cobra.Command {
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
 		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd(), a.runCmd(), a.impactCmd(), a.setupCmd())
+	a.groupsAnswer(root)
+	// Under --json, help is an envelope too (stdout must hold exactly one JSON object).
+	defHelp := root.HelpFunc()
+	root.SetHelpFunc(func(c *cobra.Command, args []string) {
+		if !a.json {
+			defHelp(c, args)
+			return
+		}
+		var subs []string
+		for _, sc := range c.Commands() {
+			if sc.IsAvailableCommand() {
+				subs = append(subs, sc.Name())
+			}
+		}
+		a.ok(strings.TrimPrefix(c.CommandPath(), "aitk "), &result{data: map[string]any{"usage": c.UseLine(), "short": c.Short, "long": c.Long, "subcommands": subs, "flags": c.LocalFlags().FlagUsages()}})
+	})
 	return root
+}
+
+// groupsAnswer gives commands that only group subcommands (aitk, aitk task, …) a result of
+// their own: their usage, as an aitk.result/v1 envelope under --json, and E_USAGE (exit 2)
+// for an unknown subcommand instead of help text with exit 0.
+func (a *app) groupsAnswer(c *cobra.Command) {
+	for _, sub := range c.Commands() {
+		a.groupsAnswer(sub)
+	}
+	if !c.HasSubCommands() || c.RunE != nil || c.Run != nil {
+		return
+	}
+	c.Args = cobra.ArbitraryArgs
+	c.RunE = a.wrap(func(cmd *cobra.Command, args []string) (*result, error) {
+		if len(args) > 0 {
+			return nil, apperr.Usage("unknown command %q for %q", args[0], cmd.CommandPath())
+		}
+		var subs []string
+		for _, sc := range cmd.Commands() {
+			if sc.IsAvailableCommand() {
+				subs = append(subs, sc.Name())
+			}
+		}
+		return &result{data: map[string]any{"usage": cmd.UseLine(), "subcommands": subs}, human: strings.TrimRight(cmd.UsageString(), "\n")}, nil
+	})
 }
 
 // ---------- project ----------
@@ -322,7 +366,11 @@ func (a *app) doctorCmd() *cobra.Command {
 		fmt.Fprintf(&b, "%d errors, %d warnings", r.Errors, r.Warns)
 		res := &result{data: r, human: b.String()}
 		if r.Errors > 0 {
-			return res, apperr.New("E_SCHEMA", apperr.ExitGate, "aitk doctor --fix (or fix the files listed above)", "%d problem(s) found", r.Errors)
+			next := "aitk doctor --fix (or fix the files listed above)"
+			if fix { // --fix already ran: what is left needs a person
+				next = "follow the fix in each error above; doctor --fix cannot repair them"
+			}
+			return res, apperr.New("E_SCHEMA", apperr.ExitGate, next, "%d problem(s) found", r.Errors)
 		}
 		return res, nil
 	})
@@ -750,8 +798,11 @@ func (a *app) reviewCmd() *cobra.Command {
 	pass := &cobra.Command{Use: "pass", Short: "Record one review pass on the active task", Args: cobra.NoArgs}
 	pass.Flags().IntVar(&findings, "findings", -1, "number of problems found in this pass (required)")
 	pass.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
-		if findings < 0 {
+		if !pass.Flags().Changed("findings") {
 			return nil, apperr.Usage("--findings is required (0 when the pass found nothing)")
+		}
+		if findings < 0 {
+			return nil, apperr.Usage("--findings cannot be negative (got %d)", findings)
 		}
 		p, err := a.openWrite()
 		if err != nil {
@@ -1202,7 +1253,8 @@ func (a *app) hookCmd() *cobra.Command {
 			if v := gates.CheckMessage(string(b)); v != nil {
 				return &result{data: []gates.Violation{*v}}, gateErr([]gates.Violation{*v}, `git commit -m "feat(scope): summary"`)
 			}
-			if perr == nil {
+			// An empty message must stay empty, so git aborts the commit as usual.
+			if perr == nil && gates.MessageHeader(string(b)) != "" {
 				if err := gates.AddTrailers(r.Root, args[1], session.Load(p).CommitTask(time.Now()), ops.Tool()); err != nil {
 					return nil, err
 				}

@@ -18,6 +18,7 @@ type Object struct {
 // Parse decodes an object. Empty input yields an empty object. JSONC line comments are rejected.
 func Parse(b []byte) (*Object, error) {
 	o := &Object{vals: map[string]json.RawMessage{}}
+	b = bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")) // a UTF-8 byte order mark (some Windows editors add one)
 	if len(bytes.TrimSpace(b)) == 0 {
 		return o, nil
 	}

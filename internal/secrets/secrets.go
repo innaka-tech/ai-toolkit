@@ -22,7 +22,7 @@ type rule struct {
 }
 
 var rules = []rule{
-	{"private-key", regexp.MustCompile(`-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----`), 0},
+	{"private-key", regexp.MustCompile(`-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |SSH2 |ENCRYPTED )*PRIVATE KEY(?: BLOCK)?-----`), 0},
 	{"aws-access-key", regexp.MustCompile(`\b((?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16})\b`), 0},
 	{"github-token", regexp.MustCompile(`\b((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,})\b`), 0},
 	{"github-fine-grained-token", regexp.MustCompile(`\b(github_pat_[A-Za-z0-9_]{60,})\b`), 0},
@@ -34,7 +34,18 @@ var rules = []rule{
 	{"openai-api-key", regexp.MustCompile(`\b(sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{40,})`), 3.5},
 	{"cloudflare-api-token", regexp.MustCompile(`\b(cfat_[A-Za-z0-9]{40,})\b`), 0},
 	{"jwt", regexp.MustCompile(`\b(eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b`), 0},
-	{"generic-secret-assignment", regexp.MustCompile(`(?i)\b[\w.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret)\b["']?\s*[:=]\s*["']([^"'\s$<>{}]{12,})["']`), 3.3},
+	// key = "value": the key ends with a secret word (an environment suffix such as _KEY or _PROD
+	// may follow), and the quoted value is long and random enough.
+	{"generic-secret-assignment", regexp.MustCompile(`(?i)\b[\w.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret)(?:[_-](?:key|value|prod|production|live|staging|dev))?\b["']?\s*[:=]\s*["']([^"'\s$<>{}]{12,})["']`), 3.3},
+	// .env and shell lines: UPPER_CASE_KEY=value without quotes.
+	{"generic-secret-assignment", regexp.MustCompile(`^\s*(?:export\s+)?[A-Z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|CLIENT_?SECRET)(?:_(?:KEY|VALUE|PROD|PRODUCTION|LIVE|STAGING|DEV))?=([^"'\s$<>{}#]{12,})\s*(?:#.*)?$`), 3.3},
+	// Config formats that write values without quotes: docker-compose ("KEY: v", "- KEY=v"),
+	// Dockerfile ENV, docker run -e, AWS credentials files, .npmrc, and .properties files.
+	{"generic-secret-assignment", regexp.MustCompile(`(?:^\s*-?\s*|\bENV\s+|\s-e\s+)[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|CLIENT_?SECRET)(?:_(?:KEY|VALUE|PROD|PRODUCTION|LIVE|STAGING|DEV))?\s*[=:]\s*([^"'\s$<>{}#]{12,})`), 3.3},
+	{"aws-secret-key", regexp.MustCompile(`(?i)\baws_secret_access_key\s*[=:]\s*["']?([A-Za-z0-9/+=]{40})\b`), 3.5},
+	{"npm-auth-token", regexp.MustCompile(`:_authToken\s*=\s*([^"'\s$<>{}]{20,})`), 3.0},
+	{"generic-secret-assignment", regexp.MustCompile(`^\s*[a-z0-9_.-]+\.(?:password|passwd|secret|token|api[_-]?key)\s*[=:]\s*([^"'\s$<>{}#]{12,})\s*$`), 3.3},
+	{"url-credentials", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://([^/\s:@"']+):([^/\s:@"']{3,})@`), 0},
 }
 
 // Allow markers: lines containing these are skipped.
@@ -48,11 +59,23 @@ func ScanLine(file string, n int, line string) []Finding {
 		}
 	}
 	var out []Finding
+	seen := map[string]bool{} // one finding per value, even when several rules match it
 	for _, r := range rules {
 		for _, m := range r.re.FindAllStringSubmatch(line, -1) {
 			v := m[0]
-			if len(m) > 1 && m[1] != "" {
-				v = m[1]
+			for _, g := range m[1:] { // the first group that matched is the secret
+				if g != "" {
+					v = g
+					break
+				}
+			}
+			if r.name == "url-credentials" {
+				if user := m[1]; len(m) > 2 {
+					v = m[2]
+					if strings.EqualFold(user, v) || weakTestPassword(v) {
+						continue // postgres://postgres:postgres@localhost and friends
+					}
+				}
 			}
 			if r.entropy > 0 && Entropy(v) < r.entropy {
 				continue
@@ -60,6 +83,16 @@ func ScanLine(file string, n int, line string) []Finding {
 			if placeholder(v) {
 				continue
 			}
+			if r.name == "openai-api-key" && strings.HasPrefix(v, "sk-ant-") {
+				continue // the anthropic rule reports it
+			}
+			if (r.name == "generic-secret-assignment" || r.name == "url-credentials") && codeReference(v) {
+				continue
+			}
+			if seen[v] {
+				continue
+			}
+			seen[v] = true
 			out = append(out, Finding{File: file, Line: n, Rule: r.name, Match: redact(v)})
 		}
 	}
@@ -70,12 +103,18 @@ func ScanLine(file string, n int, line string) []Finding {
 func ScanDiff(diff string) []Finding {
 	var out []Finding
 	file, n := "", 0
+	header := false // between "diff --git" and the first "@@": file names live here, not in hunks
 	hunk := regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)`)
 	for _, l := range strings.Split(diff, "\n") {
 		switch {
-		case strings.HasPrefix(l, "+++ "):
+		case strings.HasPrefix(l, "diff --git "):
+			header, file = true, ""
+		case header && strings.HasPrefix(l, "+++ "):
 			file = strings.TrimPrefix(strings.TrimPrefix(l, "+++ "), "b/")
+		case header && !strings.HasPrefix(l, "@@"):
+			// ---, index, mode, rename lines
 		case strings.HasPrefix(l, "@@"):
+			header = false
 			if m := hunk.FindStringSubmatch(l); m != nil {
 				n = atoi(m[1])
 			}
@@ -113,6 +152,37 @@ func Entropy(s string) float64 {
 		h -= p * math.Log2(p)
 	}
 	return h
+}
+
+var snakeWords = regexp.MustCompile(`^[a-z]+(?:[_-][a-z]+)+$`)
+
+var identPath = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$`)
+
+// codeReference reports values that are code, not secrets: os.environ.TOKEN, config.api_key,
+// getToken(, password words in URLs like "user:password@".
+func codeReference(v string) bool {
+	if identPath.MatchString(v) || strings.ContainsAny(v, "(/+*&") || strings.HasPrefix(strings.ToLower(v), "http") {
+		return true
+	}
+	if !strings.ContainsAny(v, "0123456789") && strings.ToUpper(v) == v && strings.Contains(v, "_") {
+		return true // another variable: PASSWORD_RESET_DAYS
+	}
+	if snakeWords.MatchString(v) || strings.HasPrefix(strings.ToLower(v), "urn:") {
+		return true // an identifier or protocol constant: "expired_token", "urn:ietf:params:…"
+	}
+	switch strings.ToLower(v) {
+	case "password", "pass", "passwd", "secret", "token", "pwd":
+		return true
+	}
+	return false
+}
+
+func weakTestPassword(v string) bool {
+	switch strings.ToLower(v) {
+	case "postgres", "password", "pass", "root", "admin", "test", "secret", "user", "guest", "mysql", "redis", "changeme":
+		return true
+	}
+	return false
 }
 
 func placeholder(v string) bool {

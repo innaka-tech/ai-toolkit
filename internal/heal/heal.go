@@ -46,19 +46,29 @@ func run(p *project.Project, dry bool) []Action {
 	return out
 }
 
-var markerRe = regexp.MustCompile(`(?m)^(<{7}|={7}|>{7})( |$)`)
+var openRe = regexp.MustCompile(`^<{7}( |$)`)
 
-// conflictSides returns the file with every conflict hunk replaced by "ours" and by "theirs".
+// hasConflict reports whether s contains a git conflict hunk: a "<<<<<<<" line, then "=======",
+// then ">>>>>>>", outside fenced code. A Markdown setext underline ("=======") alone is not one.
+func hasConflict(s string) bool {
+	_, _, ok := conflictSides(s)
+	return ok
+}
+
+func hasConflictBytes(b []byte) bool { return hasConflict(string(b)) }
+
+// conflictSides returns the file with every conflict hunk replaced by "ours" and by "theirs";
+// ok is false when there is no complete hunk.
 func conflictSides(s string) (ours, theirs string, ok bool) {
-	if !markerRe.MatchString(s) {
-		return "", "", false
-	}
 	var o, t strings.Builder
-	state := 0 // 0 common, 1 ours, 2 theirs
+	state, hunks, fence := 0, 0, false // state: 0 common, 1 ours, 2 theirs, 3 diff3 base
 	for _, line := range strings.SplitAfter(s, "\n") {
 		trim := strings.TrimRight(line, "\r\n")
+		if state == 0 && strings.HasPrefix(strings.TrimSpace(trim), "```") {
+			fence = !fence
+		}
 		switch {
-		case strings.HasPrefix(trim, "<<<<<<<") && state == 0:
+		case !fence && openRe.MatchString(trim) && state == 0:
 			state = 1
 		case strings.HasPrefix(trim, "|||||||") && state == 1:
 			state = 3 // diff3 base: skip
@@ -66,6 +76,7 @@ func conflictSides(s string) (ours, theirs string, ok bool) {
 			state = 2
 		case strings.HasPrefix(trim, ">>>>>>>") && state == 2:
 			state = 0
+			hunks++
 		default:
 			switch state {
 			case 0:
@@ -78,7 +89,7 @@ func conflictSides(s string) (ours, theirs string, ok bool) {
 			}
 		}
 	}
-	return o.String(), t.String(), state == 0
+	return o.String(), t.String(), state == 0 && hunks > 0
 }
 
 // union keeps every line from both sides (for append-only lists such as knowledge).
@@ -111,7 +122,7 @@ func resolveConflicts(p *project.Project, dry bool) []Action {
 			return nil
 		}
 		b, err := os.ReadFile(path)
-		if err != nil || !markerRe.Match(b) {
+		if err != nil || !hasConflictBytes(b) {
 			return nil
 		}
 		rel, _ := filepath.Rel(p.Root, path)
@@ -193,7 +204,7 @@ func repairTasks(p *project.Project, dry bool) []Action {
 		}
 		rel := filepath.ToSlash(filepath.Join(project.TasksDir, e.Name()))
 		raw, err := os.ReadFile(p.Path(rel))
-		if err != nil || markerRe.Match(raw) {
+		if err != nil || hasConflictBytes(raw) {
 			continue // conflicts are handled first; unreadable files are reported by doctor
 		}
 		if t, err := task.Load(p, rel); err == nil && schema.Validate("task", t.Meta) == nil {

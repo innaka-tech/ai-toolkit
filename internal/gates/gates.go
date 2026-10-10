@@ -264,23 +264,11 @@ var ConventionalRe = regexp.MustCompile(`^(feat|fix|docs|style|refactor|perf|tes
 
 // CheckMessage validates a commit message header. Merge, revert, fixup, and squash commits pass.
 func CheckMessage(msg string) *Violation {
-	var lines []string
-	for _, l := range strings.Split(msg, "\n") {
-		if !strings.HasPrefix(l, "#") {
-			lines = append(lines, l)
-		}
-	}
-	header := ""
-	for _, l := range lines {
-		if strings.TrimSpace(l) != "" {
-			header = strings.TrimSpace(l)
-			break
-		}
-	}
+	header := MessageHeader(msg)
 	switch {
 	case header == "":
 		return nil // git aborts empty messages itself
-	case strings.HasPrefix(header, "Merge "), strings.HasPrefix(header, "Revert \""), strings.HasPrefix(header, "fixup! "), strings.HasPrefix(header, "squash! "), strings.HasPrefix(header, "amend! "):
+	case strings.HasPrefix(header, "Merge "), strings.HasPrefix(header, "Revert \""), strings.HasPrefix(header, "Reapply \""), strings.HasPrefix(header, "fixup! "), strings.HasPrefix(header, "squash! "), strings.HasPrefix(header, "amend! "):
 		return nil
 	case !ConventionalRe.MatchString(header):
 		return &Violation{Gate: "commit-message", Detail: fmt.Sprintf("%q is not a Conventional Commit; use `<type>(<scope>): <summary>` with type feat, fix, docs, style, refactor, perf, test, build, ci, chore, or revert", header)}
@@ -288,6 +276,23 @@ func CheckMessage(msg string) *Violation {
 		return &Violation{Gate: "commit-message", Detail: "header longer than 100 characters"}
 	}
 	return nil
+}
+
+// MessageHeader is the first non-empty line of a commit message as git will record it: comment
+// lines dropped, and nothing below the scissors line of ` + "`git commit -v`" + `.
+func MessageHeader(msg string) string {
+	for _, l := range strings.Split(strings.ReplaceAll(msg, "\r\n", "\n"), "\n") {
+		if strings.HasPrefix(l, "# ------------------------ >8 ------------------------") {
+			break
+		}
+		if strings.HasPrefix(l, "#") {
+			continue
+		}
+		if h := strings.TrimSpace(l); h != "" {
+			return h
+		}
+	}
+	return ""
 }
 
 // AddTrailers appends AI-Task / AI-Tool trailers to the message file when not already present.

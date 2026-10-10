@@ -1,4 +1,11 @@
 #!/bin/sh
 # ai-push: v1 command kept for compatibility; see scripts/_shim.sh.
 . "$(dirname "$0")/_shim.sh"
-shim_v1 ai-push "$@"
+if shim_is_v1; then shim_v1 ai-push "$@"; fi
+# ai-push [path]: push the current branch, setting its upstream on the first push like v1 did.
+# aitk's pre-push hook runs the check.
+dir=${1:-.}
+if git -C "$dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  exec git -C "$dir" push
+fi
+exec git -C "$dir" push -u origin "$(git -C "$dir" rev-parse --abbrev-ref HEAD)"

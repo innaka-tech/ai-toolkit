@@ -5,6 +5,14 @@
 Global flags: `--json` prints one `aitk.result/v1` object; `-C, --path <dir>` runs as if started in `<dir>`.
 Exit codes: 0 success · 1 runtime failure · 2 usage error · 3 gate rejected · 4 conflict.
 
+## `aitk adapters`
+
+Install aitk into AI tools: instructions, MCP server, session hooks
+
+```
+aitk adapters
+```
+
 ## `aitk adapters doctor`
 
 Report which tools are installed and whether their adapters are current
@@ -29,6 +37,14 @@ aitk adapters sync [flags]
       --dry-run            show what would change
       --global             also edit user-level config (e.g. ~/.codex/config.toml); backed up first
       --tool stringArray   only this tool (repeatable): claude-code, codex, opencode, gemini-cli, kiro, cursor, copilot, windsurf, cline, roo, aider, junie, qwen-code
+```
+
+## `aitk adr`
+
+Architecture decision records (MADR 4)
+
+```
+aitk adr
 ```
 
 ## `aitk adr list`
@@ -141,6 +157,14 @@ aitk doctor [flags]
       --fix   repair generated files, the AGENTS.md block, and an overfull inbox
 ```
 
+## `aitk goal`
+
+Goals: the outcomes tasks deliver toward (aitk task new --goal G-1)
+
+```
+aitk goal
+```
+
 ## `aitk goal add`
 
 Add a goal (status planned)
@@ -170,6 +194,14 @@ Change a goal's status
 aitk goal status <id> <planned|active|achieved|dropped>
 ```
 
+## `aitk hooks`
+
+Install or remove aitk's git hooks (pre-commit, commit-msg, pre-push)
+
+```
+aitk hooks
+```
+
 ## `aitk hooks install`
 
 Add aitk to the git hooks (existing hooks are kept)
@@ -192,6 +224,14 @@ Blast radius of the current change: what references each changed file, and which
 
 ```
 aitk impact
+```
+
+## `aitk import`
+
+Import tasks from GitHub Issues, BMAD, Superpowers, Spec Kit, OpenSpec, or a markdown checklist
+
+```
+aitk import
 ```
 
 ## `aitk import bmad`
@@ -284,6 +324,14 @@ aitk init [flags]
       --name string    project name (default: directory name)
 ```
 
+## `aitk knowledge`
+
+Add, search, compact, and pin project knowledge
+
+```
+aitk knowledge
+```
+
 ## `aitk knowledge add`
 
 Add an entry to the inbox
@@ -366,6 +414,14 @@ aitk migrate [flags]
       --dry-run   write nothing; print the report
 ```
 
+## `aitk plugin`
+
+Plugins: aitk-<name> executables on PATH, enabled in aitk.toml [plugins] enabled
+
+```
+aitk plugin
+```
+
 ## `aitk plugin list`
 
 List discovered plugins, their hooks, and whether they are enabled
@@ -403,6 +459,14 @@ aitk report [flags]
       --since string    period: e.g. 24h, 7d, 30d, or a date (2026-10-01) (default "7d")
 ```
 
+## `aitk review`
+
+Record bug-hunt review passes (strict tasks)
+
+```
+aitk review
+```
+
 ## `aitk review pass`
 
 Record one review pass on the active task
@@ -433,6 +497,14 @@ aitk run [flags]
       --max-tasks int      stop after this many tasks (default 10)
       --tag string         only tasks with this tag
       --timeout int        minutes per agent run (default 60)
+```
+
+## `aitk security`
+
+Security standards for tasks (OWASP ASVS 4.0.3)
+
+```
+aitk security
 ```
 
 ## `aitk security checklist`
@@ -468,6 +540,14 @@ aitk switch <tool> [flags]
 ```
       --note string   why you are switching / what the next tool should know
       --print         print how to start the tool instead of starting it
+```
+
+## `aitk task`
+
+Create, start, list, show, and update tasks
+
+```
+aitk task
 ```
 
 ## `aitk task block`
@@ -582,6 +662,14 @@ aitk task update [id] [flags]
       --profile string       pin the risk profile
       --status string        new status: todo, in_progress, blocked, or cancelled (done is set by close)
       --tag stringArray      add a tag (repeatable)
+```
+
+## `aitk uat`
+
+User acceptance: a script for the tester, and the person's accept/reject decision
+
+```
+aitk uat
 ```
 
 ## `aitk uat accept`

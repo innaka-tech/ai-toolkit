@@ -48,8 +48,39 @@ var (
 	idRE     = task.IDPattern
 	dateRE   = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?)Z?)?`)
 	statusRE = regexp.MustCompile(`(?mi)^\**status:?\**:? *(.+)$`)
-	envRE    = regexp.MustCompile(`^([A-Z_][A-Z0-9_]*)="?(.*?)"?$`)
+	envRE    = regexp.MustCompile(`^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$`)
 )
+
+// envValue reads a shell assignment's value the way sh would for the simple cases v1 wrote:
+// "double quoted" (with \" and \\ escapes), 'single quoted', or bare up to a # comment.
+func envValue(v string) string {
+	v = strings.TrimSpace(v)
+	switch {
+	case strings.HasPrefix(v, `"`):
+		var b strings.Builder
+		for i := 1; i < len(v); i++ {
+			switch c := v[i]; {
+			case c == '\\' && i+1 < len(v) && strings.ContainsRune(`"\$`+"`", rune(v[i+1])):
+				b.WriteByte(v[i+1])
+				i++
+			case c == '"':
+				return b.String()
+			default:
+				b.WriteByte(c)
+			}
+		}
+		return b.String()
+	case strings.HasPrefix(v, "'"):
+		if j := strings.Index(v[1:], "'"); j >= 0 {
+			return v[1 : j+1]
+		}
+		return v[1:]
+	}
+	if i := strings.Index(v, " #"); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
+}
 
 // StatusMap implements the status mapping table.
 func StatusMap(raw string) string {
@@ -91,7 +122,7 @@ func Run(dir string, dryRun bool) (*Report, error) {
 	if b, err := os.ReadFile(p.Path(".ai-toolkit", "project.env")); err == nil {
 		for _, l := range strings.Split(string(b), "\n") {
 			if m := envRE.FindStringSubmatch(strings.TrimSpace(l)); m != nil {
-				env[m[1]] = m[2]
+				env[m[1]] = envValue(m[2])
 			}
 		}
 	}
@@ -160,6 +191,7 @@ func Run(dir string, dryRun bool) (*Report, error) {
 	r.plan(project.StateFile, append(sb, '\n'))
 
 	// tasks
+	seenV1 := map[string]string{} // v1 task ID → the file it was migrated from
 	addTemplate := func(text, src string) bool {
 		st := regexp.MustCompile(`(?m)^Status: *(.+)$`).FindStringSubmatch(text)
 		tid := regexp.MustCompile(`(?m)^Task ID: *(.+)$`).FindStringSubmatch(text)
@@ -175,6 +207,13 @@ func Run(dir string, dryRun bool) (*Report, error) {
 		case "idle", "none":
 			return false
 		}
+		// current-task.md and its .previous.md snapshot can describe the same v1 task; the
+		// first one read (current-task.md) wins.
+		if first, dup := seenV1[strings.TrimSpace(tid[1])]; dup {
+			r.Warnings = append(r.Warnings, src+" describes v1 task "+strings.TrimSpace(tid[1])+" again (migrated from "+first+"); kept in docs/ai/_legacy/ only")
+			return true
+		}
+		seenV1[strings.TrimSpace(tid[1])] = src
 		obj, _ := doc.Section(text, "Objective")
 		title := textx.Truncate(textx.FirstLine(obj), 120)
 		if len([]rune(title)) < 3 {
@@ -546,27 +585,52 @@ func splitSections(text string) (string, []section) {
 type chunk struct{ heading, text string }
 
 // splitBullets yields headings and top-level bullets (with indented continuation lines).
+var itemRE = regexp.MustCompile(`^(?:[-*+]|\d{1,3}[.)]) +(.*)$`)
+
+// splitBullets turns v1 knowledge.md into entries: each list item (-, *, +, or numbered) with its
+// indented continuation lines, and each paragraph. Headings carry dates; fenced code stays with
+// the entry it belongs to.
 func splitBullets(text string) []chunk {
 	var out []chunk
 	var cur *chunk
+	para, fence := false, false
 	flush := func() {
 		if cur != nil {
 			out = append(out, *cur)
 			cur = nil
 		}
+		para = false
 	}
 	for _, l := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-		switch {
+		if strings.HasPrefix(strings.TrimSpace(l), "```") {
+			fence = !fence
+			if cur == nil {
+				cur, para = &chunk{text: strings.TrimSpace(l)}, true
+			} else {
+				cur.text += "\n" + strings.TrimPrefix(l, "  ")
+			}
+			continue
+		}
+		if fence {
+			if cur != nil {
+				cur.text += "\n" + strings.TrimPrefix(l, "  ")
+			}
+			continue
+		}
+		switch m := itemRE.FindStringSubmatch(l); {
 		case strings.HasPrefix(l, "#"):
 			flush()
 			out = append(out, chunk{heading: l})
-		case strings.HasPrefix(l, "- "):
+		case m != nil:
 			flush()
-			cur = &chunk{text: l[2:]}
-		case cur != nil && strings.HasPrefix(l, "  ") && strings.TrimSpace(l) != "":
+			cur = &chunk{text: m[1]}
+		case strings.TrimSpace(l) == "":
+			flush()
+		case cur != nil && (strings.HasPrefix(l, "  ") || para):
 			cur.text += "\n" + strings.TrimPrefix(l, "  ")
-		default:
+		default: // a paragraph line
 			flush()
+			cur, para = &chunk{text: strings.TrimSpace(l)}, true
 		}
 	}
 	flush()

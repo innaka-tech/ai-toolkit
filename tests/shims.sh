@@ -42,6 +42,17 @@ check "v2: ai-close maps --status COMPLETED to a normal close" "aitk task update
 check "v2: ai-toolkit doctor forwards" "has 'errors' ai-toolkit doctor"
 check "v2: v1-only command still runs v1 (ai-status)" "has 'Provider Status' ai-status"
 
+# v1 argument shapes in a v2 project
+git init -q --bare "$WORK/remote.git" && git remote add origin "$WORK/remote.git"
+echo more > more.txt
+check "v2: ai-commit takes the message, a path, and --push" "ai-commit 'docs: more' . --push && [ \"\$(git log -1 --format=%s)\" = 'docs: more' ] && git -C '$WORK/remote.git' log -1 --format=%s main | grep -q 'docs: more'"
+check "v2: ai-commit rejects unknown options instead of committing them" "echo x > y.txt && ! ai-commit 'docs: y' --nope && [ \"\$(git log -1 --format=%s)\" = 'docs: more' ]"
+check "v2: ai-commit with nothing to commit succeeds like v1" "git add -A && git commit -qm 'docs: wip' && out=\$(ai-commit 'docs: nothing') && grep -q 'Nothing to commit' <<<\"\$out\""
+repo "$WORK/v2b"
+echo hi > README.md && git add -A && git commit -qm "chore: init"
+cd "$WORK"
+check "v2: ai-init <dir> initialises that directory" "ai-init '$WORK/v2b' && [ -f '$WORK/v2b/aitk.toml' ]"
+
 echo
 echo "passed: $pass  failed: $fail  (workdir: $WORK)"
 [ "$fail" -eq 0 ]

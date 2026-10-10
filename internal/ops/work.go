@@ -34,11 +34,18 @@ func Work(p *project.Project, id string) (*WorkResult, error) {
 	if err != nil {
 		return nil, apperr.TaskNotFound(id)
 	}
-	if h := claims.Holder(p, t.ID); h != nil {
-		return nil, apperr.New("E_TASK_CLAIMED", apperr.ExitConflict, "pick another task (aitk task list)", "task %s is claimed by %s until %s", t.ID, h.By, h.Expires)
-	}
 	main := mainWorktree(p)
 	path := filepath.Join(filepath.Dir(main), filepath.Base(main)+".aitk", t.ID)
+	if h := claims.Holder(p, t.ID); h != nil {
+		// The task's own worktree holding the claim is the reuse case, not a conflict.
+		own := ""
+		if fsx.Exists(path) {
+			own, _ = gitx.Run(path, "rev-parse", "--absolute-git-dir")
+		}
+		if own == "" || filepath.Clean(own) != filepath.Clean(h.Worktree) {
+			return nil, apperr.New("E_TASK_CLAIMED", apperr.ExitConflict, "pick another task (aitk task list)", "task %s is claimed by %s until %s", t.ID, h.By, h.Expires)
+		}
+	}
 	branch := "aitk/" + t.ID + "-" + project.Slug(t.Title, 30)
 	res := &WorkResult{Task: t.ID, Path: path, Branch: branch}
 	if !fsx.Exists(path) {

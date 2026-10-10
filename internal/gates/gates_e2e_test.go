@@ -209,3 +209,18 @@ func TestNonShellHookIsWrappedNotBroken(t *testing.T) {
 		t.Fatalf("python hook not restored:\n%s", b)
 	}
 }
+
+// Bug hunt: an empty message still aborts the commit (no trailer-only commits).
+func TestEmptyCommitMessageAborts(t *testing.T) {
+	dir := project(t)
+	must(t, dir, bin, "task", "new", "Some work", "--start")
+	write(t, dir, "x.txt", "x")
+	must(t, dir, "git", "add", "x.txt")
+	before := must(t, dir, "git", "rev-parse", "HEAD")
+	if out, err := sh(t, dir, "git", "commit", "-q", "-m", ""); err == nil {
+		t.Fatalf("an empty message must abort the commit:\n%s", out)
+	}
+	if must(t, dir, "git", "rev-parse", "HEAD") != before {
+		t.Fatal("a commit was created")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/proc"
 	"os"
 	"os/exec"
 	"runtime"
@@ -29,6 +30,8 @@ func Run(dir, cmd string, timeout time.Duration, stream bool) Result {
 	} else {
 		c = exec.CommandContext(ctx, "sh", "-c", cmd)
 	}
+	proc.KillTree(c)              // a timeout ends the check and everything it started
+	c.WaitDelay = 5 * time.Second // never wait on a pipe held open by a leftover process
 	c.Dir = dir
 	var buf bytes.Buffer
 	if stream {
@@ -39,11 +42,16 @@ func Run(dir, cmd string, timeout time.Duration, stream bool) Result {
 	}
 	start := time.Now()
 	err := c.Run()
+	proc.EndTree(c) // test servers and watchers left behind end with the check
 	r := Result{DurationMs: time.Since(start).Milliseconds(), Output: buf.String()}
 	var ee *exec.ExitError
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		r.TimedOut, r.ExitCode = true, 124
+	case errors.Is(err, exec.ErrWaitDelay) && c.ProcessState != nil:
+		// The command finished; something it left running (detached with setsid) kept the
+		// output pipe open. The command's own exit status is the result.
+		r.ExitCode = c.ProcessState.ExitCode()
 	case errors.As(err, &ee):
 		r.ExitCode = ee.ExitCode()
 	case err != nil:

@@ -117,6 +117,7 @@ type Meta struct {
 	CreatedBy     string         `yaml:"created_by,omitempty" json:"created_by,omitempty"`
 	Workers       []string       `yaml:"workers,omitempty" json:"workers,omitempty"`
 	Branch        string         `yaml:"branch,omitempty" json:"branch,omitempty"`
+	Base          string         `yaml:"base,omitempty" json:"base,omitempty"`
 	Paths         []string       `yaml:"paths,omitempty" json:"paths,omitempty"`
 	Review        *Review        `yaml:"review,omitempty" json:"review,omitempty"`
 	Evidence      *Evidence      `yaml:"evidence,omitempty" json:"evidence,omitempty"`

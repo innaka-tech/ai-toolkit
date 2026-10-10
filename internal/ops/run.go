@@ -19,6 +19,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/gitx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/handoff"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/proc"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/profile"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/session"
@@ -373,7 +374,7 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 		t.Evidence.Check = &task.Check{Cmd: cmd, ExitCode: 0, DurationMs: res.DurationMs, Summary: checkrun.Summary(strings.TrimSpace(res.Output), 1500), At: task.Now(), Tree: tree}
 	}
 	prof := t.Profile
-	if computed := profile.Compute(p, profile.Diff(p)); !t.ProfilePinned || computed == "strict" {
+	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
 		prof = computed
 	}
 	if p.Config.AuditRequired(prof) {
@@ -624,7 +625,7 @@ func (r *runner) runAgent(prompt, id string) agentRun {
 	defer cancel()
 	var c *exec.Cmd
 	if r.cmd != "" {
-		c = shellCommand(ctx, r.cmd)
+		c = proc.Shell(ctx, r.cmd)
 		c.Stdin = strings.NewReader(prompt)
 	} else {
 		pointer := "Read the file " + pf + " and follow its instructions exactly. It describes the one aitk task to finish in this repository."
@@ -632,7 +633,7 @@ func (r *runner) runAgent(prompt, id string) agentRun {
 		c = exec.CommandContext(ctx, argv[0], argv[1:]...)
 		c.Stdin = strings.NewReader("") // tools like codex exec read stdin to EOF when it is not a terminal
 	}
-	killTree(c) // a timeout ends the agent and everything it started
+	proc.KillTree(c) // a timeout ends the agent and everything it started
 	c.Dir = p.Root
 	c.Env = append(os.Environ(), RunEnv+"=1", "AITK_TOOL="+r.agentName, "AITK_RUN_TASK="+id, "AITK_RUN_PROMPT_FILE="+pf)
 	tail := &tailBuffer{max: 2000}
@@ -640,12 +641,14 @@ func (r *runner) runAgent(prompt, id string) agentRun {
 	c.WaitDelay = 10 * time.Second
 	start := time.Now()
 	err := c.Run()
-	endTree(c) // background processes the agent left behind (servers, watchers) end with it
+	proc.EndTree(c) // background processes the agent left behind (servers, watchers) end with it
 	res := agentRun{duration: time.Since(start), tail: strings.TrimSpace(string(tail.b))}
 	var ee *exec.ExitError
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		res.code, res.err = 124, fmt.Errorf("agent timed out after %s", r.timeout)
+	case errors.Is(err, exec.ErrWaitDelay) && c.ProcessState != nil:
+		res.code = c.ProcessState.ExitCode() // finished; a detached child held the output open
 	case errors.As(err, &ee):
 		res.code = ee.ExitCode()
 	default:
