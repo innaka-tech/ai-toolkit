@@ -2,11 +2,14 @@ package adapters
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/jsonedit"
@@ -277,7 +280,11 @@ func claudeUserMCP(e Env, remove bool) []Change {
 	var cfg struct {
 		MCPServers map[string]any `json:"mcpServers"`
 	}
-	json.Unmarshal(read(filepath.Join(e.Home, ".claude.json")), &cfg)
+	cfgPath := filepath.Join(e.Home, ".claude.json")
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		cfgPath = filepath.Join(dir, ".claude.json")
+	}
+	json.Unmarshal(read(cfgPath), &cfg)
 	_, present := cfg.MCPServers["aitk"]
 	switch {
 	case !remove && !present:
@@ -295,13 +302,15 @@ func cliMCP(e Env, bin string, remove bool, list, add, del []string) []Change {
 		return nil
 	}
 	list, add, del = withBin(path, list), withBin(path, add), withBin(path, del)
-	out, err := exec.Command(list[0], list[1:]...).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, list[0], list[1:]...).Output()
 	if err != nil {
 		return nil // cannot tell; leave it alone
 	}
 	present := false
 	for _, l := range strings.Split(string(out), "\n") {
-		if f := strings.Fields(l); len(f) > 0 && f[0] == "aitk" {
+		if f := strings.Fields(l); len(f) > 0 && strings.TrimSuffix(f[0], ":") == "aitk" {
 			present = true
 		}
 	}

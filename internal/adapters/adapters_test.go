@@ -206,3 +206,19 @@ func TestGlobalEditKeepsSymlinkAndPermissions(t *testing.T) {
 		t.Fatal("target not updated")
 	}
 }
+
+func TestApplyKeepsGoingPastFailedRun(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "out.md")
+	cs := []Change{
+		{Rel: "tool", Run: []string{os.Args[0], "-test.run=^$", "-no-such-flag"}},
+		{Path: p, Rel: "out.md", after: []byte("hi")},
+	}
+	err := Apply(cs, filepath.Join(dir, "bak"))
+	if err == nil {
+		t.Fatal("want the failed command reported")
+	}
+	if b, _ := os.ReadFile(p); string(b) != "hi" {
+		t.Fatalf("later change not applied: %q", b)
+	}
+}

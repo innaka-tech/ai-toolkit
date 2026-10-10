@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	gosync "sync"
 	"time"
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
@@ -243,11 +244,18 @@ func Plan(e Env, tools []string, global bool) ([]Change, error) {
 }
 
 // lastNotes holds the informational skips (the user's own files) of the last PlanSkipping.
-var lastNotes []string
+var (
+	notesMu   gosync.Mutex
+	lastNotes []string
+)
 
 // Notes returns the informational skips of the last plan: files of the user's that carry a
 // name aitk would use. They are left alone on purpose and are not pending changes.
-func Notes() []string { return lastNotes }
+func Notes() []string {
+	notesMu.Lock()
+	defer notesMu.Unlock()
+	return lastNotes
+}
 
 // PlanSkipping is Plan that keeps going past problems and lists them.
 func PlanSkipping(e Env, tools []string, global bool) ([]Change, []string, error) {
@@ -257,7 +265,11 @@ func PlanSkipping(e Env, tools []string, global bool) ([]Change, []string, error
 	}
 	var out []Change
 	var skipped, notes []string
-	defer func() { lastNotes = notes }()
+	defer func() {
+		notesMu.Lock()
+		lastNotes = notes
+		notesMu.Unlock()
+	}()
 	for _, a := range as {
 		cs, err := a.project(e)
 		if err != nil {
@@ -325,8 +337,10 @@ func unsafeTarget(path string) string {
 	return ""
 }
 
-// Apply writes the changes. Global files are backed up to backupDir first.
+// Apply writes the changes. Global files are backed up to backupDir first. A command that fails
+// (a tool's own CLI) does not stop the rest; its failures are returned together at the end.
 func Apply(cs []Change, backupDir string) error {
+	var runErrs []string
 	stamp := time.Now().UTC().Format("20060102T150405Z")
 	for _, c := range cs {
 		if c.Global && len(c.before) > 0 {
@@ -337,8 +351,8 @@ func Apply(cs []Change, backupDir string) error {
 		}
 		if len(c.Run) > 0 {
 			cmd := exec.Command(c.Run[0], c.Run[1:]...)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("%s: %v: %s", strings.Join(c.Run, " "), err, strings.TrimSpace(string(out)))
+			if out, err := cmd.CombinedOutput(); err != nil && !strings.Contains(strings.ToLower(string(out)), "already exists") {
+				runErrs = append(runErrs, fmt.Sprintf("%s: %v: %s", strings.Join(c.Run, " "), err, strings.TrimSpace(string(out))))
 			}
 			continue
 		}
@@ -358,6 +372,9 @@ func Apply(cs []Change, backupDir string) error {
 		if err := fsx.WriteFileKeep(c.Path, c.after, 0o644); err != nil {
 			return err
 		}
+	}
+	if len(runErrs) > 0 {
+		return fmt.Errorf("%s", strings.Join(runErrs, "\n"))
 	}
 	return nil
 }

@@ -70,7 +70,7 @@ func commandWarnings(e Env) []Change {
 	_, warns := slash.Project(e.Root)
 	var out []Change
 	for _, w := range warns {
-		out = append(out, Change{Rel: slash.ProjectDir, What: "project command", problem: w})
+		out = append(out, Change{Rel: slash.ProjectDir, What: "project command", problem: w, note: true})
 	}
 	return out
 }
