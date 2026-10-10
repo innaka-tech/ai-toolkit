@@ -34,7 +34,7 @@ Nobody has to tell an agent to use aitk. Four layers make sure it finds out:
 | **User-level instructions** | A short section in each AI tool's own user instructions says that a repository with `aitk.toml` is managed by aitk and the agent starts with `aitk brief`. It works in every aitk repository on the machine, including fresh clones. | `aitk setup` (once per machine; `--remove` undoes it) |
 | **AGENTS.md** | The aitk block in the repository: five steps, shell commands only, read natively by most agents. | `aitk init` |
 | **Tool-specific files** | For tools that don't read AGENTS.md by themselves: a rule or instruction file pointing to it, the MCP server, and a session hook that runs `aitk brief`. | `aitk adapters sync` |
-| **MCP server** | 20 tools (`brief`, `task_next`, `check`, `impact`, `close`, …). Its instructions tell the agent to call `brief` first, without being asked. | registered by both commands above |
+| **MCP server** | 20 tools (`brief`, `task_next`, `check`, `impact`, `close`, …) and every slash command as a prompt. Its instructions tell the agent to call `brief` first, without being asked. | registered by both commands above |
 
 | Tool | Repository (`adapters sync`) | Machine (`setup`) |
 |---|---|---|
@@ -55,6 +55,14 @@ Nobody has to tell an agent to use aitk. Four layers make sure it finds out:
 | anything else | `AGENTS.md`; git hooks enforce the rules for everyone | |
 
 `adapters sync` configures the tools it detects; `--tool all` writes every tool's files, for teams whose members use different tools. Your own settings and text are kept: aitk changes only its own marked section or `aitk` entry (JSON files may be re-indented). A file it cannot edit safely (unreadable, read-only, JSON with comments, markers edited by hand) is skipped and reported, never overwritten.
+
+## Slash commands and personas
+
+Besides working on their own, agents take commands. `aitk setup` and `aitk adapters sync` install them natively in Claude Code, Codex, OpenCode, Gemini CLI, Qwen Code, Cursor, Copilot, and Windsurf, and `aitk mcp` serves them as MCP prompts:
+
+`/aitk-start` · `/aitk-plan <request>` · `/aitk-next` · `/aitk-check` · `/aitk-impact` · `/aitk-close` · `/aitk-handover` · `/aitk-status` and the personas `/aitk-review` (independent reviewer), `/aitk-hunt` (bug hunter), `/aitk-fix` (test-first fixer), `/aitk-uat` (acceptance script writer), `/aitk-release` (release manager).
+
+Your own: a markdown file in `docs/ai/commands/` becomes a slash command in every tool your team uses. `aitk prompt <name> <text>` prints any command for scripting (`aitk prompt aitk-hunt payments | claude -p`). See [slash commands and personas](docs/how-to/commands.md).
 
 ## How it works
 
@@ -125,7 +133,7 @@ One static binary, no runtime dependencies besides git. The script also installs
 ## Documentation
 
 - [Tutorial: your first project in 10 minutes](docs/tutorial.md)
-- How-to: [set up AI tools](docs/how-to/ai-tools.md) · [autopilot: aitk run](docs/how-to/autopilot.md) · [security, UAT, conventions](docs/how-to/quality.md) · [release your project](docs/how-to/release.md) · [Spec Kit, BMAD, Superpowers](docs/how-to/planning-tools.md) · [work in parallel](docs/how-to/parallel.md) · [gates and CI](docs/how-to/ci.md) · [migrate from v1](docs/how-to/migrate-v1.md) · [write a plugin](docs/how-to/plugins.md)
+- How-to: [set up AI tools](docs/how-to/ai-tools.md) · [slash commands and personas](docs/how-to/commands.md) · [autopilot: aitk run](docs/how-to/autopilot.md) · [security, UAT, conventions](docs/how-to/quality.md) · [release your project](docs/how-to/release.md) · [Spec Kit, BMAD, Superpowers](docs/how-to/planning-tools.md) · [work in parallel](docs/how-to/parallel.md) · [gates and CI](docs/how-to/ci.md) · [migrate from v1](docs/how-to/migrate-v1.md) · [write a plugin](docs/how-to/plugins.md)
 - Reference: [CLI](docs/reference/cli.md) · [specification](docs/spec/README.md) · [JSON Schemas](schemas/) · [changelog](CHANGELOG.md)
 - Explanation: [architecture decisions](docs/adr/README.md)
 

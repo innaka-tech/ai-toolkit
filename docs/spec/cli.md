@@ -40,7 +40,7 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 
 | Command | Purpose |
 |---|---|
-| `aitk task new "<title>" [--id ID] [--ac "<criterion>"]... [--tag T]... [--goal G] [--profile P]` | Create a task (`todo`). |
+| `aitk task new "<title>" [--id ID] [--ac "<criterion>"]... [--tag T]... [--depends ID]... [--goal G] [--profile P]` | Create a task (`todo`). Dependencies must exist. |
 | `aitk task start <id>` | Set the session's active task; status → `in_progress`; claim it (§Parallel work). Warns when `depends_on` tasks are unfinished. |
 | `aitk task next [--goal G] [--tag T] [--start]` | Tasks that can start now, in order: this worktree's active task, then `in_progress`, then `todo`, oldest first; only tasks whose `depends_on` are done or cancelled and that no other worktree claims. Others are listed as waiting. `--start` starts the first. |
 | `aitk task list [--status S] [--all-branches]` | List tasks. |
@@ -97,6 +97,7 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `aitk mcp [--http :PORT]` | Serve MCP over stdio (default) or streamable HTTP. |
 | `aitk import github-issues [--repo] [--label] [--state] [--dry-run]` | Issues become tasks `GH-<n>` (checkboxes → criteria, labels → tags, closed → done) via `gh`. |
 | `aitk import spec-kit\|openspec [tasks.md…] [--dry-run]` | Checklist lines become tasks (`<FEATURE>-T001` keeps Spec Kit IDs). Spec Kit: `[P]` → tag `parallel`, other markers (`[US1]`) → tags; a task depends on the previous sequential task, and a sequential task on the parallel tasks before it; tasks link the feature's spec.md, plan.md, data-model.md, research.md, quickstart.md. Re-imports skip existing tasks, check off lines of done tasks (`synced`), and report lines checked only in the file (`checked_in_source_only`). `close` to done (and `uat accept`) checks off the task's line. |
+| `aitk prompt [name] [text…]` | List slash commands (built-ins and `docs/ai/commands/*.md`), or print one with `$ARGUMENTS` replaced by the text. |
 | `aitk plugin list` | Discovered `aitk-*` plugins, their hooks, and whether they are enabled. |
 | `aitk deploy [target]` | Run `deploy.targets.<target>` then `deploy.post_check`; without a target, list targets. |
 | `aitk version` | Version, commit, build date, supported schema versions. |

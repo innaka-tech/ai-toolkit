@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/slash"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"io"
 	"net/http"
@@ -59,6 +60,7 @@ func New(root, version string, exec Exec) *mcp.Server {
 			a = opt(a, "--objective", in.Objective)
 			a = multi(a, "--ac", in.Criteria)
 			a = multi(a, "--tag", in.Tags)
+			a = multi(a, "--depends", in.DependsOn)
 			if in.Start {
 				a = append(a, "--start")
 			}
@@ -183,14 +185,25 @@ func New(root, version string, exec Exec) *mcp.Server {
 			}
 			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "application/json", Text: text}}}, nil
 		})
-	for _, p := range []struct{ name, desc, text string }{
-		{"start-session", "Begin work in this repository", "Call the aitk `brief` tool and read it. Then continue the active task (or start/create one), do the work, and run `check` until it passes."},
-		{"close-session", "Finish work in this repository", "Run `check`. When it passes, call `close` with a one-paragraph summary of what changed and one lasting finding as knowledge (or \"none\"). If close is rejected, follow its fix."},
-	} {
-		p := p
-		s.AddPrompt(&mcp.Prompt{Name: p.name, Description: p.desc}, func(ctx context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-			return &mcp.GetPromptResult{Description: p.desc, Messages: []*mcp.PromptMessage{{Role: "user", Content: &mcp.TextContent{Text: p.text}}}}, nil
-		})
+	// Slash commands and personas (built-in and the project's docs/ai/commands) as MCP prompts,
+	// so any MCP client offers them; start-session and close-session stay as aliases.
+	cmds, _ := slash.All(root)
+	type alias struct{ name, of string }
+	for _, a := range []alias{{"start-session", "aitk-start"}, {"close-session", "aitk-close"}} {
+		for _, c := range cmds {
+			if c.Name == a.of {
+				c.Name, c.Description = a.name, c.Description+" (alias of /"+a.of+")"
+				cmds = append(cmds, c)
+				break
+			}
+		}
+	}
+	for _, c := range cmds {
+		c := c
+		s.AddPrompt(&mcp.Prompt{Name: c.Name, Description: c.Description, Arguments: []*mcp.PromptArgument{{Name: "args", Description: firstNonEmpty(c.ArgHint, "optional text for the command")}}},
+			func(ctx context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+				return &mcp.GetPromptResult{Description: c.Description, Messages: []*mcp.PromptMessage{{Role: "user", Content: &mcp.TextContent{Text: c.Expand(req.Params.Arguments["args"])}}}}, nil
+			})
 	}
 	return s
 }
@@ -482,6 +495,7 @@ type taskNewIn struct {
 	Profile   string   `json:"profile,omitempty" jsonschema:"pin risk profile: lite, standard, or strict"`
 	Objective string   `json:"objective,omitempty" jsonschema:"one-paragraph objective"`
 	Start     bool     `json:"start,omitempty" jsonschema:"start the task immediately"`
+	DependsOn []string `json:"depends_on,omitempty" jsonschema:"ids of tasks that must be done first"`
 }
 type idIn struct {
 	ID string `json:"id" jsonschema:"task id"`
@@ -551,4 +565,11 @@ func withID(a []string, id string) []string {
 
 type doctorIn struct {
 	Fix bool `json:"fix,omitempty" jsonschema:"repair what is safe"`
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
 }

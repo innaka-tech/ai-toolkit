@@ -198,3 +198,27 @@ func TestFreeTextIsNeverParsedAsFlags(t *testing.T) {
 		t.Fatalf("title starting with '--': %v %s", isErr, out)
 	}
 }
+
+func TestSlashCommandsAreMCPPrompts(t *testing.T) {
+	dir := gitRepo(t)
+	os.MkdirAll(filepath.Join(dir, "docs/ai/commands"), 0o755)
+	os.WriteFile(filepath.Join(dir, "docs/ai/commands/deploy-check.md"), []byte("---\ndescription: Check a deploy\n---\nCheck $ARGUMENTS.\n"), 0o644)
+	cs := connect(t, dir, "claude-code")
+	res, err := cs.ListPrompts(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, p := range res.Prompts {
+		names[p.Name] = true
+	}
+	for _, n := range []string{"aitk-review", "aitk-hunt", "aitk-plan", "deploy-check", "start-session", "close-session"} {
+		if !names[n] {
+			t.Errorf("prompt %s missing", n)
+		}
+	}
+	got, err := cs.GetPrompt(context.Background(), &mcp.GetPromptParams{Name: "deploy-check", Arguments: map[string]string{"args": "v1.2"}})
+	if err != nil || got.Messages[0].Content.(*mcp.TextContent).Text != "Check v1.2.\n" {
+		t.Fatalf("prompt arguments not filled in: %v %v", got, err)
+	}
+}

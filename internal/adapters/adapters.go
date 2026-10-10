@@ -489,7 +489,7 @@ func claudeProject(e Env) ([]Change, error) {
 	cs = append(cs, Change{Path: p, Rel: "CLAUDE.md", What: "import AGENTS.md", before: before, after: after})
 	sp, sb := projectFile(e, ".claude/skills/aitk/SKILL.md")
 	cs = append(cs, Change{Path: sp, Rel: ".claude/skills/aitk/SKILL.md", What: "Agent Skill: aitk workflow", before: sb, after: skills.AitkSkill})
-	return cs, nil
+	return append(cs, projectCmds(e, ".claude/commands", "claude", projectCommands(e))...), nil
 }
 
 func opencodeProject(e Env) ([]Change, error) {
@@ -502,16 +502,18 @@ func opencodeProject(e Env) ([]Change, error) {
 		}
 		return setServer("mcp", map[string]any{"type": "local", "command": mcpCommand, "enabled": true})(o)
 	})
-	return []Change{c}, err
+	return append([]Change{c}, projectCmds(e, ".opencode/command", "opencode", projectCommands(e))...), err
 }
 
 func geminiProject(e Env) ([]Change, error) {
-	return geminiLike(e, ".gemini/settings.json", "GEMINI.md", true)
+	cs, err := geminiLike(e, ".gemini/settings.json", "GEMINI.md", true)
+	return append(cs, projectCmds(e, ".gemini/commands", "gemini", projectCommands(e))...), err
 }
 
 // qwenProject: Qwen Code shares Gemini CLI's settings format.
 func qwenProject(e Env) ([]Change, error) {
-	return geminiLike(e, ".qwen/settings.json", "QWEN.md", false)
+	cs, err := geminiLike(e, ".qwen/settings.json", "QWEN.md", false)
+	return append(cs, projectCmds(e, ".qwen/commands", "gemini", projectCommands(e))...), err
 }
 
 func geminiLike(e Env, rel, own string, hook bool) ([]Change, error) {
@@ -564,11 +566,13 @@ func copilotProject(e Env) ([]Change, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []Change{blockFile(e, ".github/copilot-instructions.md", "instructions: follow AGENTS.md"), c}, nil
+	cs := []Change{blockFile(e, ".github/copilot-instructions.md", "instructions: follow AGENTS.md"), c}
+	return append(cs, projectCmds(e, ".github/prompts", "copilot", allCommands(e))...), nil
 }
 
 func windsurfProject(e Env) ([]Change, error) {
-	return []Change{ruleFile(e, ".windsurf/rules/aitk.md", "always-on rule: follow AGENTS.md", "---\ntrigger: always_on\n---\n\n# aitk\n\n"+Pointer)}, nil
+	cs := []Change{ruleFile(e, ".windsurf/rules/aitk.md", "always-on rule: follow AGENTS.md", "---\ntrigger: always_on\n---\n\n# aitk\n\n"+Pointer)}
+	return append(cs, projectCmds(e, ".windsurf/workflows", "windsurf", allCommands(e))...), nil
 }
 
 // clineProject: a .clinerules directory gets its own file; a single .clinerules file gets a block.
@@ -655,7 +659,8 @@ func cursorProject(e Env) ([]Change, error) {
 		return nil, err
 	}
 	rp, rb := projectFile(e, ".cursor/rules/aitk.mdc")
-	return []Change{c, {Path: rp, Rel: ".cursor/rules/aitk.mdc", What: "always-on rule: follow AGENTS.md", before: rb, after: []byte(cursorRule)}}, nil
+	cs := []Change{c, {Path: rp, Rel: ".cursor/rules/aitk.mdc", What: "always-on rule: follow AGENTS.md", before: rb, after: []byte(cursorRule)}}
+	return append(cs, projectCmds(e, ".cursor/commands", "cursor", allCommands(e))...), nil
 }
 
 const tomlBegin, tomlEnd = "# aitk:begin", "# aitk:end"

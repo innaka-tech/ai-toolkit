@@ -430,6 +430,14 @@ List discovered plugins, their hooks, and whether they are enabled
 aitk plugin list
 ```
 
+## `aitk prompt`
+
+List aitk's slash commands and personas, or print one ready to paste or pipe into any AI tool
+
+```
+aitk prompt [command] [text…]
+```
+
 ## `aitk release`
 
 Version the project: next SemVer from Conventional Commits, CHANGELOG, manifests; --tag commits and tags (never pushes)
@@ -596,13 +604,14 @@ aitk task new "<title>" [flags]
 ```
 
 ```
-      --ac stringArray     acceptance criterion, e.g. "Given …, when …, then …" (repeatable)
-      --goal string        goal id (G-…)
-      --id string          custom task id (default: random T-xxxx)
-      --objective string   one-paragraph objective
-      --profile string     pin the risk profile: lite, standard, strict
-      --start              start the task immediately
-      --tag stringArray    tag (repeatable)
+      --ac stringArray        acceptance criterion, e.g. "Given …, when …, then …" (repeatable)
+      --depends stringArray   task that must be done first (repeatable)
+      --goal string           goal id (G-…)
+      --id string             custom task id (default: random T-xxxx)
+      --objective string      one-paragraph objective
+      --profile string        pin the risk profile: lite, standard, strict
+      --start                 start the task immediately
+      --tag stringArray       tag (repeatable)
 ```
 
 ## `aitk task next`

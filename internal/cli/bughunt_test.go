@@ -361,3 +361,29 @@ func TestFirstImplicitCloseSeesCommittedSensitiveWork(t *testing.T) {
 		t.Fatalf("committed auth work must not close as an implicit lite task: %v", data(r))
 	}
 }
+
+func TestPromptCommandAndTaskDepends(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	if _, err := os.Stat(filepath.Join(dir, "docs/ai/commands/README.md")); err != nil {
+		t.Fatal("init must explain project commands")
+	}
+	list := aitk(t, dir, "prompt")
+	mustOK(t, list)
+	if !strings.Contains(list.stdout, "aitk-review") {
+		t.Fatalf("prompt must list the built-ins: %s", list.stdout)
+	}
+	r := aitk(t, dir, "prompt", "aitk-plan", "add", "CSV", "export")
+	mustOK(t, r)
+	if !strings.Contains(data(r)["prompt"].(string), "Plan this work as aitk tasks: add CSV export") {
+		t.Fatalf("arguments not filled in: %v", data(r)["prompt"])
+	}
+	expect(t, aitk(t, dir, "prompt", "nope"), 2, "E_USAGE")
+	a := data(aitk(t, dir, "task", "new", "Schema"))["id"].(string)
+	b := aitk(t, dir, "task", "new", "API on the schema", "--depends", a)
+	mustOK(t, b)
+	if deps := data(b)["depends_on"].([]any); len(deps) != 1 || deps[0] != a {
+		t.Fatalf("--depends not recorded: %v", data(b))
+	}
+	expect(t, aitk(t, dir, "task", "new", "Broken", "--depends", "T-none"), 2, "E_TASK_NOT_FOUND")
+}

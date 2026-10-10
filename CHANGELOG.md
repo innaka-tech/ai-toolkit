@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [2.6.0] - 2026-10-10
+
+Slash commands and personas in every AI tool.
+
+### Added
+- **13 built-in slash commands**: `/aitk-start`, `/aitk-plan`, `/aitk-next`, `/aitk-check`, `/aitk-impact`, `/aitk-close`, `/aitk-handover`, `/aitk-status`, and the personas `/aitk-review` (independent reviewer that records `aitk review pass` and never starts the task), `/aitk-hunt` (bug hunter that files each proven defect as a `bug` task), `/aitk-fix` (test-first fixer), `/aitk-uat` (acceptance script writer), and `/aitk-release` (release manager).
+- **Native in each tool**: Claude Code, Codex (custom prompts), OpenCode, Gemini CLI and Qwen Code (TOML with `{{args}}`), Cursor, GitHub Copilot prompt files (`${input:args}`), Windsurf workflows. Built-ins are installed at user level by `aitk setup` where a tool has a user folder, otherwise in the repository by `aitk adapters sync`.
+- **Project commands**: a markdown file in `docs/ai/commands/` becomes a slash command in every tool, and an MCP prompt; it replaces a built-in of the same name. Generated files are marked, kept current, and removed when their source is gone. A user's own command with the same name is never overwritten. `aitk init` adds a README with an example.
+- **MCP prompts**: every command, with an `args` argument (`start-session` and `close-session` remain as aliases).
+- **`aitk prompt [name] [text…]`**: lists the commands, or prints one with the text filled in, for any tool or a pipe (`aitk prompt aitk-hunt payments | claude -p`).
+- **`aitk task new --depends <id>`** (and `depends_on` in MCP `task_new`), used by `/aitk-plan`.
+
 ## [2.5.1] - 2026-10-10
 
 Fixes from an independent bug hunt across the whole tool (28 reproduced defects).

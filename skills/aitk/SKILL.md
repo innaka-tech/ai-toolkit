@@ -29,6 +29,11 @@ Use the `aitk` CLI (or the `mcp__aitk__*` tools); never edit files under docs/ai
 - The task waits for user acceptance: tell the user to run `aitk uat accept <id>` themselves.
   You cannot accept on their behalf; `aitk uat script <id>` writes the test script for them.
 
+## Commands the user may type
+
+`/aitk-plan`, `/aitk-next`, `/aitk-review`, `/aitk-hunt`, `/aitk-fix`, `/aitk-uat`, `/aitk-release`, and others (`aitk prompt` lists them,
+including the project's own in docs/ai/commands/). Follow the command's steps; they use the same aitk commands as below.
+
 ## Finding and fixing problems
 
 - `aitk audit --tasks` turns scanner findings into fix tasks: one per vulnerable dependency (with the fixed

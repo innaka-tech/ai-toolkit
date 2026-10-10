@@ -37,6 +37,7 @@ import (
 	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/schema"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/session"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/slash"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/task"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/textx"
 )
@@ -211,7 +212,7 @@ func (a *app) root() *cobra.Command {
 	root.PersistentFlags().StringVarP(&a.dir, "path", "C", "", "run as if started in this directory")
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
-		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd(), a.runCmd(), a.impactCmd(), a.setupCmd())
+		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd(), a.runCmd(), a.impactCmd(), a.setupCmd(), a.promptCmd())
 	a.groupsAnswer(root)
 	// Under --json, help is an envelope too (stdout must hold exactly one JSON object).
 	defHelp := root.HelpFunc()
@@ -417,6 +418,7 @@ func (a *app) taskNew() *cobra.Command {
 	c.Flags().StringVar(&in.Goal, "goal", "", "goal id (G-…)")
 	c.Flags().StringVar(&in.Profile, "profile", "", "pin the risk profile: lite, standard, strict")
 	c.Flags().StringVar(&in.Objective, "objective", "", "one-paragraph objective")
+	c.Flags().StringArrayVar(&in.DependsOn, "depends", nil, "task that must be done first (repeatable)")
 	c.Flags().BoolVar(&start, "start", false, "start the task immediately")
 	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
 		p, err := a.openWrite()
@@ -1154,6 +1156,40 @@ func (a *app) setupCmd() *cobra.Command {
 			res.warnings = append(res.warnings, "skipped "+sk)
 		}
 		return res, nil
+	})
+	return c
+}
+
+func (a *app) promptCmd() *cobra.Command {
+	c := &cobra.Command{Use: "prompt [command] [text…]", Short: "List aitk's slash commands and personas, or print one ready to paste or pipe into any AI tool",
+		Long: "Without arguments, lists the commands: aitk's built-ins (aitk-start, aitk-plan, aitk-review, aitk-hunt, aitk-fix, …) and the\n" +
+			"project's own from docs/ai/commands/*.md. With a name, prints that command's prompt with the text after it filled in, e.g.\n" +
+			"  aitk prompt aitk-plan add CSV export to reports | claude -p\n" +
+			"The same commands are installed as native slash commands by aitk setup and aitk adapters sync, and served as MCP prompts.",
+		Args: cobra.ArbitraryArgs}
+	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
+		root := "."
+		if p, err := a.open(); err == nil {
+			root = p.Root
+		}
+		if len(args) == 0 {
+			cmds, warns := slash.All(root)
+			var b strings.Builder
+			for _, cmd := range cmds {
+				src := ""
+				if cmd.Source != "builtin" {
+					src = "  (" + cmd.Source + ")"
+				}
+				fmt.Fprintf(&b, "/%-14s %s%s\n", cmd.Name, cmd.Description, src)
+			}
+			return &result{data: cmds, human: strings.TrimRight(b.String(), "\n"), warnings: warns}, nil
+		}
+		cmd, ok := slash.Find(root, args[0])
+		if !ok {
+			return nil, apperr.New("E_USAGE", apperr.ExitUsage, "aitk prompt (lists the commands)", "no command %q", args[0])
+		}
+		text := cmd.Expand(strings.Join(args[1:], " "))
+		return &result{data: map[string]any{"command": cmd.Name, "source": cmd.Source, "prompt": text}, human: strings.TrimRight(text, "\n")}, nil
 	})
 	return c
 }

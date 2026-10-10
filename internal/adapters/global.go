@@ -8,6 +8,7 @@ import (
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/jsonedit"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/slash"
 	"github.com/innaka-tech/ai-toolkit/v2/skills"
 )
 
@@ -51,15 +52,17 @@ func globalTargets() []globalTarget {
 			// A user-level Agent Skill: Claude Code loads it in every project and uses it when the
 			// repository is an aitk project (its description says so).
 			cs = append(cs, ownedFile(e, ".claude/skills/aitk/SKILL.md", "user-level Agent Skill: aitk workflow", skills.AitkSkill, rm))
-			return cs, nil
+			return append(cs, globalCmds(e, ".claude/commands", "claude", rm)...), nil
 		}},
 		{"codex", []string{"codex"}, []string{".codex"}, func(e Env, rm bool) ([]Change, error) {
 			cs := []Change{blockChange(e, ".codex/AGENTS.md", "user instructions: recognise aitk projects", rm)}
+			cs = append(cs, globalCmds(e, ".codex/prompts", "claude", rm)...) // Codex custom prompts: /prompts:aitk-…
 			mcp, err := codexMCP(e, rm)
 			return append(cs, mcp...), err
 		}},
 		{"opencode", []string{"opencode"}, []string{".config/opencode"}, func(e Env, rm bool) ([]Change, error) {
 			cs := []Change{blockChange(e, ".config/opencode/AGENTS.md", "user instructions: recognise aitk projects", rm)}
+			cs = append(cs, globalCmds(e, ".config/opencode/command", "opencode", rm)...)
 			if fsx.Exists(filepath.Join(e.Home, ".config/opencode/opencode.jsonc")) {
 				return cs, fmt.Errorf("MCP not registered: ~/.config/opencode/opencode.jsonc has comments; add the aitk server by hand")
 			}
@@ -72,6 +75,7 @@ func globalTargets() []globalTarget {
 		}},
 		{"gemini-cli", []string{"gemini"}, []string{".gemini"}, func(e Env, rm bool) ([]Change, error) {
 			cs := []Change{blockChange(e, ".gemini/GEMINI.md", "user instructions: recognise aitk projects", rm)}
+			cs = append(cs, globalCmds(e, ".gemini/commands", "gemini", rm)...)
 			c, err := globalJSON(e, ".gemini/settings.json", "register aitk MCP server", "mcpServers", stdioEntry(), rm)
 			if err != nil {
 				return cs, err
@@ -79,7 +83,8 @@ func globalTargets() []globalTarget {
 			return append(cs, c), nil
 		}},
 		{"qwen-code", []string{"qwen"}, []string{".qwen"}, func(e Env, rm bool) ([]Change, error) {
-			return []Change{blockChange(e, ".qwen/QWEN.md", "user instructions: recognise aitk projects", rm)}, nil
+			cs := []Change{blockChange(e, ".qwen/QWEN.md", "user instructions: recognise aitk projects", rm)}
+			return append(cs, globalCmds(e, ".qwen/commands", "gemini", rm)...), nil
 		}},
 		{"kiro", []string{"kiro", "kiro-cli"}, []string{".kiro"}, func(e Env, rm bool) ([]Change, error) {
 			return []Change{ownedFile(e, ".kiro/steering/aitk.md", "global steering: recognise aitk projects",
@@ -227,4 +232,9 @@ func codexMCP(e Env, remove bool) ([]Change, error) {
 		}
 	}
 	return []Change{{Path: p, Rel: "~/.codex/config.toml", What: "remove: aitk MCP server", before: before, after: after}}, nil
+}
+
+// globalCmds installs (or removes) the built-in slash commands in a tool's user-level folder.
+func globalCmds(e Env, dir, format string, remove bool) []Change {
+	return commandChanges(e.Home, dir, "~/"+dir, slash.Formats[format], slash.Builtins(), true, remove)
 }
