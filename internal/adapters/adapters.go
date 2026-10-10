@@ -7,10 +7,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/slash"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	gosync "sync"
 	"time"
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/fsx"
@@ -20,16 +22,20 @@ import (
 
 // Change is one file write an adapter wants.
 type Change struct {
-	Tool   string `json:"tool"`
-	Path   string `json:"path"` // absolute
-	Rel    string `json:"file"` // display path (repo-relative or ~/...)
-	What   string `json:"what"`
-	Global bool   `json:"global"`
-	Delete bool   `json:"delete,omitempty"` // remove the file (aitk-owned files only)
+	Tool   string   `json:"tool"`
+	Path   string   `json:"path"` // absolute
+	Rel    string   `json:"file"` // display path (repo-relative or ~/...)
+	What   string   `json:"what"`
+	Global bool     `json:"global"`
+	Delete bool     `json:"delete,omitempty"` // remove the file (aitk-owned files only)
+	Run    []string `json:"run,omitempty"`    // a tool's own CLI to run instead of writing a file
 	// problem, when set, means the change must not be applied: the reason is reported instead.
 	problem string
-	before  []byte
-	after   []byte
+	// note marks a problem that is the user's choice (their own file with our name): reported by
+	// sync, but not a pending change for doctor.
+	note   bool
+	before []byte
+	after  []byte
 }
 
 // Status of an adapter in doctor output.
@@ -237,6 +243,20 @@ func Plan(e Env, tools []string, global bool) ([]Change, error) {
 	return cs, err
 }
 
+// lastNotes holds the informational skips (the user's own files) of the last PlanSkipping.
+var (
+	notesMu   gosync.Mutex
+	lastNotes []string
+)
+
+// Notes returns the informational skips of the last plan: files of the user's that carry a
+// name aitk would use. They are left alone on purpose and are not pending changes.
+func Notes() []string {
+	notesMu.Lock()
+	defer notesMu.Unlock()
+	return lastNotes
+}
+
 // PlanSkipping is Plan that keeps going past problems and lists them.
 func PlanSkipping(e Env, tools []string, global bool) ([]Change, []string, error) {
 	as, err := pick(e, tools)
@@ -244,7 +264,12 @@ func PlanSkipping(e Env, tools []string, global bool) ([]Change, []string, error
 		return nil, nil, err
 	}
 	var out []Change
-	var skipped []string
+	var skipped, notes []string
+	defer func() {
+		notesMu.Lock()
+		lastNotes = notes
+		notesMu.Unlock()
+	}()
 	for _, a := range as {
 		cs, err := a.project(e)
 		if err != nil {
@@ -260,14 +285,18 @@ func PlanSkipping(e Env, tools []string, global bool) ([]Change, []string, error
 			cs = append(cs, g...)
 		}
 		for _, c := range cs {
-			if c.problem == "" {
+			if c.problem == "" && len(c.Run) == 0 {
 				c.problem = unsafeTarget(c.Path)
 			}
 			if c.problem != "" {
-				skipped = append(skipped, a.name+": "+c.Rel+": "+c.problem)
+				if c.note {
+					notes = append(notes, a.name+": "+c.Rel+": "+c.problem)
+				} else {
+					skipped = append(skipped, a.name+": "+c.Rel+": "+c.problem)
+				}
 				continue
 			}
-			if !bytes.Equal(c.before, c.after) || c.Delete && len(c.before) > 0 {
+			if len(c.Run) > 0 || !bytes.Equal(c.before, c.after) || c.Delete && len(c.before) > 0 {
 				c.Tool = a.name
 				out = append(out, c)
 			}
@@ -308,8 +337,10 @@ func unsafeTarget(path string) string {
 	return ""
 }
 
-// Apply writes the changes. Global files are backed up to backupDir first.
+// Apply writes the changes. Global files are backed up to backupDir first. A command that fails
+// (a tool's own CLI) does not stop the rest; its failures are returned together at the end.
 func Apply(cs []Change, backupDir string) error {
+	var runErrs []string
 	stamp := time.Now().UTC().Format("20060102T150405Z")
 	for _, c := range cs {
 		if c.Global && len(c.before) > 0 {
@@ -317,6 +348,13 @@ func Apply(cs []Change, backupDir string) error {
 			if err := fsx.WriteFile(dst, c.before, 0o600); err != nil {
 				return fmt.Errorf("backup %s: %w", c.Rel, err)
 			}
+		}
+		if len(c.Run) > 0 {
+			cmd := exec.Command(c.Run[0], c.Run[1:]...)
+			if out, err := cmd.CombinedOutput(); err != nil && !strings.Contains(strings.ToLower(string(out)), "already exists") {
+				runErrs = append(runErrs, fmt.Sprintf("%s: %v: %s", strings.Join(c.Run, " "), err, strings.TrimSpace(string(out))))
+			}
+			continue
 		}
 		if c.Delete {
 			if info, err := os.Lstat(c.Path); err == nil && info.Mode()&os.ModeSymlink != 0 {
@@ -334,6 +372,9 @@ func Apply(cs []Change, backupDir string) error {
 		if err := fsx.WriteFileKeep(c.Path, c.after, 0o644); err != nil {
 			return err
 		}
+	}
+	if len(runErrs) > 0 {
+		return fmt.Errorf("%s", strings.Join(runErrs, "\n"))
 	}
 	return nil
 }
@@ -489,7 +530,8 @@ func claudeProject(e Env) ([]Change, error) {
 	cs = append(cs, Change{Path: p, Rel: "CLAUDE.md", What: "import AGENTS.md", before: before, after: after})
 	sp, sb := projectFile(e, ".claude/skills/aitk/SKILL.md")
 	cs = append(cs, Change{Path: sp, Rel: ".claude/skills/aitk/SKILL.md", What: "Agent Skill: aitk workflow", before: sb, after: skills.AitkSkill})
-	return cs, nil
+	cs = append(cs, projectCmds(e, ".claude/commands", "claude", projectCommands(e))...)
+	return append(cs, commandWarnings(e)...), nil
 }
 
 func opencodeProject(e Env) ([]Change, error) {
@@ -502,16 +544,20 @@ func opencodeProject(e Env) ([]Change, error) {
 		}
 		return setServer("mcp", map[string]any{"type": "local", "command": mcpCommand, "enabled": true})(o)
 	})
-	return []Change{c}, err
+	cs := append([]Change{c}, projectCmds(e, ".opencode/commands", "opencode", projectCommands(e))...)
+	cs = append(cs, commandChanges(e.Root, ".opencode/command", ".opencode/command", slash.Formats["opencode"], nil, false, true)...) // legacy singular folder
+	return cs, err
 }
 
 func geminiProject(e Env) ([]Change, error) {
-	return geminiLike(e, ".gemini/settings.json", "GEMINI.md", true)
+	cs, err := geminiLike(e, ".gemini/settings.json", "GEMINI.md", true)
+	return append(cs, projectCmds(e, ".gemini/commands", "gemini", projectCommands(e))...), err
 }
 
 // qwenProject: Qwen Code shares Gemini CLI's settings format.
 func qwenProject(e Env) ([]Change, error) {
-	return geminiLike(e, ".qwen/settings.json", "QWEN.md", false)
+	cs, err := geminiLike(e, ".qwen/settings.json", "QWEN.md", false)
+	return append(cs, projectCmds(e, ".qwen/commands", "gemini", projectCommands(e))...), err
 }
 
 func geminiLike(e Env, rel, own string, hook bool) ([]Change, error) {
@@ -564,11 +610,13 @@ func copilotProject(e Env) ([]Change, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []Change{blockFile(e, ".github/copilot-instructions.md", "instructions: follow AGENTS.md"), c}, nil
+	cs := []Change{blockFile(e, ".github/copilot-instructions.md", "instructions: follow AGENTS.md"), c}
+	return append(cs, projectCmds(e, ".github/prompts", "copilot", allCommands(e))...), nil
 }
 
 func windsurfProject(e Env) ([]Change, error) {
-	return []Change{ruleFile(e, ".windsurf/rules/aitk.md", "always-on rule: follow AGENTS.md", "---\ntrigger: always_on\n---\n\n# aitk\n\n"+Pointer)}, nil
+	cs := []Change{ruleFile(e, ".windsurf/rules/aitk.md", "always-on rule: follow AGENTS.md", "---\ntrigger: always_on\n---\n\n# aitk\n\n"+Pointer)}
+	return append(cs, projectCmds(e, ".windsurf/workflows", "windsurf", allCommands(e))...), nil
 }
 
 // clineProject: a .clinerules directory gets its own file; a single .clinerules file gets a block.
@@ -655,7 +703,8 @@ func cursorProject(e Env) ([]Change, error) {
 		return nil, err
 	}
 	rp, rb := projectFile(e, ".cursor/rules/aitk.mdc")
-	return []Change{c, {Path: rp, Rel: ".cursor/rules/aitk.mdc", What: "always-on rule: follow AGENTS.md", before: rb, after: []byte(cursorRule)}}, nil
+	cs := []Change{c, {Path: rp, Rel: ".cursor/rules/aitk.mdc", What: "always-on rule: follow AGENTS.md", before: rb, after: []byte(cursorRule)}}
+	return append(cs, projectCmds(e, ".cursor/commands", "cursor", projectCommands(e))...), nil // built-ins: ~/.cursor/commands (aitk setup)
 }
 
 const tomlBegin, tomlEnd = "# aitk:begin", "# aitk:end"
@@ -699,6 +748,9 @@ func contains(xs []string, s string) bool {
 
 // Diff renders a short before/after summary for dry runs.
 func Diff(c Change) string {
+	if len(c.Run) > 0 {
+		return "run " + strings.Join(c.Run, " ")
+	}
 	if c.Delete {
 		if info, err := os.Lstat(c.Path); err == nil && info.Mode()&os.ModeSymlink != 0 {
 			return "empty " + c.Rel + " (symlink kept)"

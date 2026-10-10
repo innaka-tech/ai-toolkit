@@ -1,0 +1,254 @@
+// Package slash turns aitk's commands (built-in personas and a project's own commands in
+// docs/ai/commands/) into each AI tool's native slash-command format.
+package slash
+
+import (
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"go.yaml.in/yaml/v3"
+
+	"github.com/innaka-tech/ai-toolkit/v2/commands"
+)
+
+// ProjectDir holds a project's own commands, one markdown file each.
+const ProjectDir = "docs/ai/commands"
+
+// Command is one slash command. Body uses $ARGUMENTS for the text typed after the command.
+type Command struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ArgHint     string `json:"argument_hint,omitempty"`
+	Body        string `json:"-"`
+	Source      string `json:"source"` // "builtin" or the project file
+}
+
+var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
+
+// maxCommand bounds a command file (Windsurf workflows, the strictest, take about 12,000 characters).
+const maxCommand = 12000
+
+// Parse reads a command file: YAML frontmatter (description, argument-hint) and a body.
+func Parse(name, source string, b []byte) (Command, error) {
+	if !nameRE.MatchString(name) {
+		return Command{}, fmt.Errorf("%s: command names use lowercase letters, digits, and '-'", source)
+	}
+	c := Command{Name: name, Source: source}
+	s := strings.ReplaceAll(string(b), "\r\n", "\n")
+	if len(s) > maxCommand {
+		return Command{}, fmt.Errorf("%s: larger than %d KB; keep commands short", source, maxCommand/1024)
+	}
+	if strings.HasPrefix(s, "---\n") {
+		rest := s[4:]
+		var front string
+		switch {
+		case strings.HasPrefix(rest, "---\n") || rest == "---": // empty frontmatter
+			front, s = "", strings.TrimPrefix(strings.TrimPrefix(rest, "---"), "\n")
+		case strings.Contains(rest, "\n---\n"):
+			end := strings.Index(rest, "\n---\n")
+			front, s = rest[:end], rest[end+5:]
+		case strings.HasSuffix(rest, "\n---"): // frontmatter only, no newline at the end
+			front, s = strings.TrimSuffix(rest, "\n---"), ""
+		default:
+			return Command{}, fmt.Errorf("%s: frontmatter is not closed with ---", source)
+		}
+		var fm struct {
+			Description string `yaml:"description"`
+			ArgHint     string `yaml:"argument-hint"`
+		}
+		if err := yaml.Unmarshal([]byte(front), &fm); err != nil {
+			return Command{}, fmt.Errorf("%s: frontmatter: %v", source, err)
+		}
+		c.Description, c.ArgHint = fm.Description, fm.ArgHint
+	}
+	if strings.TrimSpace(s) == "" {
+		return Command{}, fmt.Errorf("%s: the command has no text", source)
+	}
+	c.Body = strings.TrimSpace(s) + "\n"
+	if strings.TrimSpace(c.Description) == "" {
+		c.Description = firstLine(c.Body)
+	}
+	return c, nil
+}
+
+func firstLine(s string) string {
+	l, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
+	if len(l) > 100 {
+		l = l[:100]
+	}
+	return l
+}
+
+// Builtins are aitk's own commands and personas.
+func Builtins() []Command {
+	var out []Command
+	entries, _ := fs.ReadDir(commands.FS, ".")
+	for _, e := range entries {
+		b, _ := commands.FS.ReadFile(e.Name())
+		if c, err := Parse(strings.TrimSuffix(e.Name(), ".md"), "builtin", b); err == nil {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Project reads the project's own commands from root/docs/ai/commands/*.md.
+func Project(root string) ([]Command, []string) {
+	var out []Command
+	var warns []string
+	entries, _ := os.ReadDir(filepath.Join(root, filepath.FromSlash(ProjectDir)))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") || strings.EqualFold(e.Name(), "README.md") {
+			continue
+		}
+		rel := ProjectDir + "/" + e.Name()
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			warns = append(warns, err.Error())
+			continue
+		}
+		c, err := Parse(strings.TrimSuffix(e.Name(), ".md"), rel, b)
+		if err != nil {
+			warns = append(warns, err.Error())
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, warns
+}
+
+// All is the built-in commands plus the project's; a project command replaces a built-in of the
+// same name.
+func All(root string) ([]Command, []string) {
+	proj, warns := Project(root)
+	byName := map[string]Command{}
+	for _, c := range Builtins() {
+		byName[c.Name] = c
+	}
+	for _, c := range proj {
+		byName[c.Name] = c
+	}
+	out := make([]Command, 0, len(byName))
+	for _, c := range byName {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, warns
+}
+
+// Find returns the command called name.
+func Find(root, name string) (Command, bool) {
+	all, _ := All(root)
+	for _, c := range all {
+		if c.Name == strings.TrimPrefix(name, "/") {
+			return c, true
+		}
+	}
+	return Command{}, false
+}
+
+// Expand puts args into the body, for tools and the CLI that pass text instead of using a
+// placeholder of their own.
+func (c Command) Expand(args string) string {
+	return strings.ReplaceAll(c.Body, "$ARGUMENTS", strings.TrimSpace(args))
+}
+
+// Format is how one AI tool stores slash commands.
+type Format struct {
+	Name   string
+	Ext    string // file name suffix
+	Render func(c Command) []byte
+}
+
+const marker = "generated by aitk"
+
+func note(c Command) string {
+	if c.Source == "builtin" {
+		return marker + " (built-in command); `aitk setup` or `aitk adapters sync` keeps it current"
+	}
+	return marker + " from " + c.Source + "; edit that file and run `aitk adapters sync`"
+}
+
+// Generated reports whether a command file was written by aitk (and may be replaced or removed):
+// one of its first lines is aitk's note itself, not merely a mention of it.
+func Generated(b []byte) bool {
+	for i, l := range strings.SplitN(string(b), "\n", 12) {
+		if i == 11 {
+			break
+		}
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "<!-- "+marker) || strings.HasPrefix(t, "# "+marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func yamlQuote(s string) string {
+	b, _ := yaml.Marshal(s)
+	return strings.TrimSpace(string(b))
+}
+
+func mdFront(fields [][2]string, c Command, body string) []byte {
+	var b strings.Builder
+	b.WriteString("---\n")
+	for _, f := range fields {
+		if f[1] != "" {
+			fmt.Fprintf(&b, "%s: %s\n", f[0], yamlQuote(f[1]))
+		}
+	}
+	b.WriteString("---\n<!-- " + note(c) + " -->\n\n" + body)
+	return []byte(b.String())
+}
+
+const noArgs = "(the text typed after the command, if any)"
+
+// Formats by tool.
+var Formats = map[string]Format{
+	// Claude Code commands, Codex custom prompts, OpenCode commands: markdown with $ARGUMENTS.
+	"claude": {"claude", ".md", func(c Command) []byte {
+		return mdFront([][2]string{{"description", c.Description}, {"argument-hint", c.ArgHint}}, c, c.Body)
+	}},
+	"opencode": {"opencode", ".md", func(c Command) []byte {
+		return mdFront([][2]string{{"description", c.Description}}, c, c.Body)
+	}},
+	// Gemini CLI and Qwen Code: TOML with {{args}}.
+	"gemini": {"gemini", ".toml", func(c Command) []byte {
+		body := strings.ReplaceAll(c.Body, "$ARGUMENTS", "{{args}}")
+		return []byte("# " + note(c) + "\ndescription = " + tomlString(c.Description) + "\nprompt = " + tomlMulti(body) + "\n")
+	}},
+	// GitHub Copilot prompt files: ${input:args}.
+	"copilot": {"copilot", ".prompt.md", func(c Command) []byte {
+		body := strings.ReplaceAll(c.Body, "$ARGUMENTS", "${input:args}")
+		return mdFront([][2]string{{"agent", "agent"}, {"mode", "agent"}, {"description", c.Description}}, c, body) // agent: VS Code 1.106+; mode: earlier
+	}},
+	// pi prompt templates: $@ is everything typed after the command.
+	"pi": {"pi", ".md", func(c Command) []byte {
+		return mdFront([][2]string{{"description", c.Description}}, c, strings.ReplaceAll(c.Body, "$ARGUMENTS", "$@"))
+	}},
+	// Cursor commands and Windsurf workflows take the typed text as context, without a placeholder.
+	"cursor": {"cursor", ".md", func(c Command) []byte {
+		return []byte("<!-- " + note(c) + " -->\n\n" + strings.ReplaceAll(c.Body, "$ARGUMENTS", noArgs))
+	}},
+	"windsurf": {"windsurf", ".md", func(c Command) []byte {
+		return mdFront([][2]string{{"description", c.Description}}, c, strings.ReplaceAll(c.Body, "$ARGUMENTS", noArgs))
+	}},
+}
+
+func tomlString(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`)
+	return `"` + r.Replace(s) + `"`
+}
+
+func tomlMulti(s string) string {
+	if !strings.Contains(s, "'''") {
+		return "'''\n" + s + "'''"
+	}
+	r := strings.NewReplacer(`\`, `\\`, `"""`, `\"\"\"`)
+	return `"""` + "\n" + r.Replace(s) + `"""`
+}
