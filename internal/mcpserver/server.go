@@ -108,8 +108,14 @@ func New(root, version string, exec Exec) *mcp.Server {
 			a = opt(a, "--status", in.Status)
 			return a
 		})
-	add(s, h, "review_pass", "Record one bug-hunt review pass on the active task (strict tasks need two, the last with 0 findings).",
-		func(in reviewIn) []string { return []string{"review", "pass", "--findings", strconv.Itoa(in.Findings)} })
+	add(s, h, "review_pass", "Record one bug-hunt review pass on a task (strict tasks need two, the last with 0 findings). Reviewers give id instead of starting the task.",
+		func(in reviewIn) []string {
+			a := []string{"review", "pass", "--findings", strconv.Itoa(in.Findings)}
+			if in.ID != "" {
+				a = append(a, "--", in.ID)
+			}
+			return a
+		})
 	add(s, h, "knowledge_search", "Search project knowledge.",
 		func(in searchIn) []string {
 			a := []string{"knowledge", "search"}
@@ -189,7 +195,14 @@ func New(root, version string, exec Exec) *mcp.Server {
 	// so any MCP client offers them; start-session and close-session stay as aliases.
 	cmds, _ := slash.All(root)
 	type alias struct{ name, of string }
+	have := map[string]bool{}
+	for _, c := range cmds {
+		have[c.Name] = true
+	}
 	for _, a := range []alias{{"start-session", "aitk-start"}, {"close-session", "aitk-close"}} {
+		if have[a.name] {
+			continue // a project command of that name wins
+		}
 		for _, c := range cmds {
 			if c.Name == a.of {
 				c.Name, c.Description = a.name, c.Description+" (alias of /"+a.of+")"
@@ -531,7 +544,8 @@ type closeIn struct {
 	Status    string   `json:"status,omitempty" jsonschema:"only to hand over unfinished work: in_progress or blocked"`
 }
 type reviewIn struct {
-	Findings int `json:"findings" jsonschema:"problems found in this pass (0 if none)"`
+	Findings int    `json:"findings" jsonschema:"problems found in this pass (0 if none)"`
+	ID       string `json:"id,omitempty" jsonschema:"task to record the pass on (default: the active task); reviewers should give it"`
 }
 type searchIn struct {
 	Query string `json:"query" jsonschema:"what to look for"`

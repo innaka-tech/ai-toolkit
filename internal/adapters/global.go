@@ -2,7 +2,9 @@ package adapters
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -52,17 +54,20 @@ func globalTargets() []globalTarget {
 			// A user-level Agent Skill: Claude Code loads it in every project and uses it when the
 			// repository is an aitk project (its description says so).
 			cs = append(cs, ownedFile(e, ".claude/skills/aitk/SKILL.md", "user-level Agent Skill: aitk workflow", skills.AitkSkill, rm))
-			return append(cs, globalCmds(e, ".claude/commands", "claude", rm)...), nil
+			cs = append(cs, globalCmds(e, ".claude/commands", "claude", rm)...)
+			return append(cs, claudeUserMCP(e, rm)...), nil
 		}},
 		{"codex", []string{"codex"}, []string{".codex"}, func(e Env, rm bool) ([]Change, error) {
 			cs := []Change{blockChange(e, ".codex/AGENTS.md", "user instructions: recognise aitk projects", rm)}
 			cs = append(cs, globalCmds(e, ".codex/prompts", "claude", rm)...) // Codex custom prompts: /prompts:aitk-…
+			cs = append(cs, ownedFile(e, ".codex/skills/aitk/SKILL.md", "user-level Agent Skill: aitk workflow", skills.AitkSkill, rm))
 			mcp, err := codexMCP(e, rm)
 			return append(cs, mcp...), err
 		}},
 		{"opencode", []string{"opencode"}, []string{".config/opencode"}, func(e Env, rm bool) ([]Change, error) {
 			cs := []Change{blockChange(e, ".config/opencode/AGENTS.md", "user instructions: recognise aitk projects", rm)}
-			cs = append(cs, globalCmds(e, ".config/opencode/command", "opencode", rm)...)
+			cs = append(cs, globalCmds(e, ".config/opencode/commands", "opencode", rm)...)
+			cs = append(cs, commandChanges(e.Home, ".config/opencode/command", "~/.config/opencode/command", slash.Formats["opencode"], nil, true, true)...) // aitk ≤ 2.6.0 used the singular folder
 			if fsx.Exists(filepath.Join(e.Home, ".config/opencode/opencode.jsonc")) {
 				return cs, fmt.Errorf("MCP not registered: ~/.config/opencode/opencode.jsonc has comments; add the aitk server by hand")
 			}
@@ -89,6 +94,29 @@ func globalTargets() []globalTarget {
 		{"kiro", []string{"kiro", "kiro-cli"}, []string{".kiro"}, func(e Env, rm bool) ([]Change, error) {
 			return []Change{ownedFile(e, ".kiro/steering/aitk.md", "global steering: recognise aitk projects",
 				[]byte("---\ninclusion: always\n---\n\n"+GlobalText), rm)}, nil
+		}},
+		{"cursor", []string{"cursor", "cursor-agent"}, []string{".cursor"}, func(e Env, rm bool) ([]Change, error) {
+			return globalCmds(e, ".cursor/commands", "cursor", rm), nil
+		}},
+		{"antigravity", []string{"agy"}, []string{".gemini/antigravity-cli"}, func(e Env, rm bool) ([]Change, error) {
+			cs := []Change{blockChange(e, ".gemini/antigravity-cli/AGENTS.md", "user instructions: recognise aitk projects", rm)}
+			cs = append(cs, ownedFile(e, ".gemini/antigravity-cli/skills/aitk/SKILL.md", "Agent Skill: aitk workflow", skills.AitkSkill, rm))
+			return append(cs, cliMCP(e, "agy", rm, []string{"agy", "mcp", "list"}, []string{"agy", "mcp", "add", "aitk", "aitk", "mcp"}, []string{"agy", "mcp", "remove", "aitk"})...), nil
+		}},
+		{"jcode", []string{"jcode"}, []string{".jcode"}, func(e Env, rm bool) ([]Change, error) {
+			cs := []Change{blockChange(e, ".jcode/prompt-overlay.md", "user instructions: recognise aitk projects", rm)}
+			c, err := globalJSON(e, ".jcode/mcp.json", "register aitk MCP server", "servers",
+				map[string]any{"command": mcpCommand[0], "args": mcpCommand[1:], "env": map[string]any{}, "shared": true}, rm)
+			if err != nil {
+				return cs, err
+			}
+			return append(cs, c), nil
+		}},
+		{"pi", []string{"pi"}, []string{".pi/agent"}, func(e Env, rm bool) ([]Change, error) {
+			// pi has no built-in MCP support (by design); it uses aitk through its shell tool.
+			cs := []Change{blockChange(e, ".pi/agent/AGENTS.md", "user instructions: recognise aitk projects", rm)}
+			cs = append(cs, ownedFile(e, ".pi/agent/skills/aitk/SKILL.md", "Agent Skill: aitk workflow", skills.AitkSkill, rm))
+			return append(cs, globalCmds(e, ".pi/agent/prompts", "pi", rm)...), nil
 		}},
 		{"windsurf", []string{"windsurf"}, []string{".codeium/windsurf"}, func(e Env, rm bool) ([]Change, error) {
 			return []Change{blockChange(e, ".codeium/windsurf/memories/global_rules.md", "global rules: recognise aitk projects", rm)}, nil
@@ -128,14 +156,14 @@ func Setup(e Env, tools []string, remove bool) (*SetupResult, error) {
 			res.Skipped = append(res.Skipped, g.tool+": "+err.Error())
 		}
 		for _, c := range cs {
-			if c.problem == "" {
+			if c.problem == "" && len(c.Run) == 0 {
 				c.problem = unsafeTarget(c.Path)
 			}
 			if c.problem != "" {
 				res.Skipped = append(res.Skipped, g.tool+": "+c.Rel+": "+c.problem)
 				continue
 			}
-			if !bytes.Equal(c.before, c.after) || c.Delete && len(c.before) > 0 {
+			if len(c.Run) > 0 || !bytes.Equal(c.before, c.after) || c.Delete && len(c.before) > 0 {
 				c.Tool, c.Global = g.tool, true
 				res.Changes = append(res.Changes, c)
 			}
@@ -237,4 +265,55 @@ func codexMCP(e Env, remove bool) ([]Change, error) {
 // globalCmds installs (or removes) the built-in slash commands in a tool's user-level folder.
 func globalCmds(e Env, dir, format string, remove bool) []Change {
 	return commandChanges(e.Home, dir, "~/"+dir, slash.Formats[format], slash.Builtins(), true, remove)
+}
+
+// claudeUserMCP registers the server for every Claude Code project with Claude's own CLI (the
+// user config file is rewritten by running sessions, so aitk does not edit it directly).
+func claudeUserMCP(e Env, remove bool) []Change {
+	claude, err := e.LookPath("claude")
+	if err != nil {
+		return nil
+	}
+	var cfg struct {
+		MCPServers map[string]any `json:"mcpServers"`
+	}
+	json.Unmarshal(read(filepath.Join(e.Home, ".claude.json")), &cfg)
+	_, present := cfg.MCPServers["aitk"]
+	switch {
+	case !remove && !present:
+		return []Change{{Rel: "Claude Code user config", What: "register aitk MCP server (all projects)", Run: []string{claude, "mcp", "add", "--scope", "user", "aitk", "--", "aitk", "mcp"}}}
+	case remove && present:
+		return []Change{{Rel: "Claude Code user config", What: "remove: aitk MCP server", Run: []string{claude, "mcp", "remove", "--scope", "user", "aitk"}}}
+	}
+	return nil
+}
+
+// cliMCP registers the server through a tool's own CLI, when its listing does not show it yet.
+func cliMCP(e Env, bin string, remove bool, list, add, del []string) []Change {
+	path, err := e.LookPath(bin)
+	if err != nil {
+		return nil
+	}
+	list, add, del = withBin(path, list), withBin(path, add), withBin(path, del)
+	out, err := exec.Command(list[0], list[1:]...).Output()
+	if err != nil {
+		return nil // cannot tell; leave it alone
+	}
+	present := false
+	for _, l := range strings.Split(string(out), "\n") {
+		if f := strings.Fields(l); len(f) > 0 && f[0] == "aitk" {
+			present = true
+		}
+	}
+	switch {
+	case !remove && !present:
+		return []Change{{Rel: bin + " MCP config", What: "register aitk MCP server", Run: add}}
+	case remove && present:
+		return []Change{{Rel: bin + " MCP config", What: "remove: aitk MCP server", Run: del}}
+	}
+	return nil
+}
+
+func withBin(path string, argv []string) []string {
+	return append([]string{path}, argv[1:]...)
 }

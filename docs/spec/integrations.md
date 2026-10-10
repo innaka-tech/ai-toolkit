@@ -40,13 +40,17 @@ Rules:
 
 | Tool | User-level instructions | Also |
 |---|---|---|
-| Claude Code | `~/.claude/CLAUDE.md` (marked block) | Agent Skill `~/.claude/skills/aitk/SKILL.md` |
-| Codex CLI | `~/.codex/AGENTS.md` (marked block) | MCP in `~/.codex/config.toml` |
+| Claude Code | `~/.claude/CLAUDE.md` (marked block) | Agent Skill `~/.claude/skills/aitk/SKILL.md`, commands, MCP via `claude mcp add --scope user` |
+| Codex CLI | `~/.codex/AGENTS.md` (marked block) | MCP in `~/.codex/config.toml`, prompts, Agent Skill `~/.codex/skills/aitk/` |
 | OpenCode | `~/.config/opencode/AGENTS.md` (marked block) | MCP in `~/.config/opencode/opencode.json` |
 | Gemini CLI | `~/.gemini/GEMINI.md` (marked block) | MCP in `~/.gemini/settings.json` |
 | Qwen Code | `~/.qwen/QWEN.md` (marked block) | — |
 | Kiro | `~/.kiro/steering/aitk.md` (owned file) | — |
 | Windsurf | `~/.codeium/windsurf/memories/global_rules.md` (marked block) | — |
+| Antigravity CLI | `~/.gemini/antigravity-cli/AGENTS.md` (marked block) | Agent Skill; MCP via `agy mcp add aitk aitk mcp` |
+| jcode | `~/.jcode/prompt-overlay.md` (marked block) | MCP in `~/.jcode/mcp.json` `servers.aitk` |
+| pi | `~/.pi/agent/AGENTS.md` (marked block) | Agent Skill, prompt templates (`$@`); pi has no MCP support by design |
+| Cursor | — | built-in commands in `~/.cursor/commands/` |
 
 - The block (`adapters.GlobalText`) applies only in repositories with `aitk.toml`. It says to start with `aitk brief`, and it gives aitk's rules precedence over older ai-toolkit instructions.
 - Only installed tools are touched; `--tool` selects explicitly; `--dry-run` shows the changes.
@@ -62,9 +66,10 @@ Commands are markdown files with optional YAML frontmatter (`description`, `argu
 |---|---|---|
 | Claude Code | `~/.claude/commands/` (built-ins, setup), `.claude/commands/` (project) | markdown, `$ARGUMENTS` |
 | Codex CLI | `~/.codex/prompts/` (built-ins, setup) | markdown, `$ARGUMENTS`; invoked as `/prompts:<name>` |
-| OpenCode | `~/.config/opencode/command/`, `.opencode/command/` | markdown, `$ARGUMENTS` |
+| OpenCode | `~/.config/opencode/commands/`, `.opencode/commands/` (aitk removes its files from the older singular folders) | markdown, `$ARGUMENTS` |
 | Gemini CLI, Qwen Code | `~/.gemini/commands/`, `.gemini/commands/`; `~/.qwen/commands/`, `.qwen/commands/` | TOML `description`/`prompt`, `{{args}}` |
-| Cursor | `.cursor/commands/` (built-ins and project) | markdown; arguments as context |
+| Cursor | `~/.cursor/commands/` (built-ins, setup), `.cursor/commands/` (project) | markdown; arguments as context |
+| pi | `~/.pi/agent/prompts/` (built-ins, setup) | markdown, `$@` |
 | GitHub Copilot | `.github/prompts/<name>.prompt.md` | `mode: agent`, `${input:args}` |
 | Windsurf | `.windsurf/workflows/` | markdown workflow |
 

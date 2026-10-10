@@ -797,9 +797,9 @@ func (a *app) closeCmd() *cobra.Command {
 func (a *app) reviewCmd() *cobra.Command {
 	c := &cobra.Command{Use: "review", Short: "Record bug-hunt review passes (strict tasks)"}
 	var findings int
-	pass := &cobra.Command{Use: "pass", Short: "Record one review pass on the active task", Args: cobra.NoArgs}
+	pass := &cobra.Command{Use: "pass [id]", Short: "Record one review pass on a task (default: the active task); a reviewer names the task instead of starting it", Args: cobra.MaximumNArgs(1)}
 	pass.Flags().IntVar(&findings, "findings", -1, "number of problems found in this pass (required)")
-	pass.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
+	pass.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
 		if !pass.Flags().Changed("findings") {
 			return nil, apperr.Usage("--findings is required (0 when the pass found nothing)")
 		}
@@ -810,7 +810,11 @@ func (a *app) reviewCmd() *cobra.Command {
 		if err != nil {
 			return nil, err
 		}
-		t, err := ops.ReviewPass(p, findings)
+		id := ""
+		if len(args) == 1 {
+			id = args[0]
+		}
+		t, err := ops.ReviewPass(p, id, findings)
 		if err != nil {
 			return nil, err
 		}

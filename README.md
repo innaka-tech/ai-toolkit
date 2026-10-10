@@ -38,8 +38,8 @@ Nobody has to tell an agent to use aitk. Four layers make sure it finds out:
 
 | Tool | Repository (`adapters sync`) | Machine (`setup`) |
 |---|---|---|
-| Claude Code | `CLAUDE.md` → `@AGENTS.md`, `.mcp.json`, SessionStart hook, Agent Skill | `~/.claude/CLAUDE.md`, user-level Agent Skill |
-| Codex CLI | `AGENTS.md` (native) | `~/.codex/AGENTS.md`, MCP in `~/.codex/config.toml` |
+| Claude Code | `CLAUDE.md` → `@AGENTS.md`, `.mcp.json`, SessionStart hook, Agent Skill | `~/.claude/CLAUDE.md`, user-level Agent Skill, commands, MCP via `claude mcp add --scope user` |
+| Codex CLI | `AGENTS.md` (native) | `~/.codex/AGENTS.md`, MCP in `~/.codex/config.toml`, prompts, Agent Skill |
 | OpenCode | `AGENTS.md` (native), `opencode.json` MCP | `~/.config/opencode/AGENTS.md`, MCP in `opencode.json` |
 | Gemini CLI | `.gemini/settings.json`: AGENTS.md as context, MCP, SessionStart hook | `~/.gemini/GEMINI.md`, MCP in `settings.json` |
 | GitHub Copilot (VS Code) | `.github/copilot-instructions.md`, `.vscode/mcp.json` | |
@@ -51,6 +51,9 @@ Nobody has to tell an agent to use aitk. Four layers make sure it finds out:
 | Aider | `.aider.conf.yml`: `read: [AGENTS.md]` | |
 | Junie | `.junie/guidelines.md` | |
 | Qwen Code | `.qwen/settings.json`: AGENTS.md as context, MCP | `~/.qwen/QWEN.md` |
+| Antigravity CLI (`agy`) | `AGENTS.md` (native) | `~/.gemini/antigravity-cli/AGENTS.md`, Agent Skill, MCP via `agy mcp add` |
+| jcode | `AGENTS.md` (native) | `~/.jcode/prompt-overlay.md`, MCP in `~/.jcode/mcp.json` |
+| pi | `AGENTS.md` (native) | `~/.pi/agent/AGENTS.md`, Agent Skill, prompt templates (no MCP: pi uses the aitk CLI) |
 | Amp, Zed, Jules, Factory, others | `AGENTS.md` (native) | |
 | anything else | `AGENTS.md`; git hooks enforce the rules for everyone | |
 

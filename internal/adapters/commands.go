@@ -24,8 +24,13 @@ func commandChanges(base, dir, display string, f slash.Format, cmds []slash.Comm
 			before := read(p)
 			after := f.Render(c)
 			ch := Change{Path: p, Rel: display + "/" + name, What: "slash command /" + c.Name, Global: global, before: before, after: after}
-			if len(before) > 0 && !slash.Generated(before) {
-				ch.problem, ch.after = "a command of yours with this name exists; left alone", before
+			switch {
+			case isLink(p):
+				ch.problem, ch.after, ch.note = "a symlink; aitk leaves linked commands to you", before, true
+			case len(before) > 0 && !slash.Generated(before):
+				ch.problem, ch.after, ch.note = "a command of yours with this name exists; left alone", before, true
+			case f.Name == "windsurf" && len(after) > 12000:
+				ch.problem, ch.after = "longer than Windsurf's 12,000-character workflow limit", before
 			}
 			out = append(out, ch)
 		}
@@ -36,7 +41,8 @@ func commandChanges(base, dir, display string, f slash.Format, cmds []slash.Comm
 		if e.IsDir() || want[e.Name()] || !strings.HasSuffix(e.Name(), f.Ext) {
 			continue
 		}
-		if b := read(filepath.Join(abs, e.Name())); slash.Generated(b) {
+		p := filepath.Join(abs, e.Name())
+		if b := read(p); slash.Generated(b) && !isLink(p) {
 			stale = append(stale, e.Name())
 		}
 	}
@@ -48,10 +54,25 @@ func commandChanges(base, dir, display string, f slash.Format, cmds []slash.Comm
 	return out
 }
 
+func isLink(p string) bool {
+	info, err := os.Lstat(p)
+	return err == nil && info.Mode()&os.ModeSymlink != 0
+}
+
 // projectCommands are the repository's own commands (docs/ai/commands).
 func projectCommands(e Env) []slash.Command {
 	cs, _ := slash.Project(e.Root)
 	return cs
+}
+
+// commandWarnings reports project command files that could not be used, once per sync.
+func commandWarnings(e Env) []Change {
+	_, warns := slash.Project(e.Root)
+	var out []Change
+	for _, w := range warns {
+		out = append(out, Change{Rel: slash.ProjectDir, What: "project command", problem: w})
+	}
+	return out
 }
 
 // allCommands are the built-in commands plus the repository's own, for tools that have no

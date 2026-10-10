@@ -14,6 +14,23 @@ Slash commands and personas in every AI tool.
 - **MCP prompts**: every command, with an `args` argument (`start-session` and `close-session` remain as aliases).
 - **`aitk prompt [name] [text…]`**: lists the commands, or prints one with the text filled in, for any tool or a pipe (`aitk prompt aitk-hunt payments | claude -p`).
 - **`aitk task new --depends <id>`** (and `depends_on` in MCP `task_new`), used by `/aitk-plan`.
+- **`aitk review pass [id]`** (and `id` in MCP `review_pass`): a reviewer names the task instead of starting it, so the review stays independent.
+- **More tools in `aitk setup`**:
+  - Claude Code: the MCP server for every project, via `claude mcp add --scope user`.
+  - Antigravity CLI (`agy`): instructions, Agent Skill, and MCP via `agy mcp add`.
+  - jcode: instructions and MCP.
+  - pi: instructions, Agent Skill, and prompt templates. pi has no MCP by design and uses the aitk CLI.
+  - Codex: the aitk Agent Skill.
+  - Cursor: built-in commands at user level.
+  - Tools whose config files are rewritten by running sessions are configured through their own CLI.
+
+### Fixed (review before release)
+- Command pruning only removes files whose first lines are aitk's own marker (not files that mention it), and never touches symlinked commands.
+- Commands no longer splice "(nothing given)" or other text into shell commands when no arguments are given.
+- Frontmatter-only and empty-frontmatter command files are parsed correctly; invalid or oversized project commands are reported by `adapters sync`.
+- A user's own command with an aitk name is a note, not a pending change, so `adapters doctor` stays clean.
+- OpenCode commands use the documented plural folders. Copilot prompt files carry `agent:` (VS Code 1.106+) as well as `mode:`.
+- `/aitk-handover` writes one handoff, and an MCP alias no longer hides a project command of the same name.
 
 ## [2.5.1] - 2026-10-10
 

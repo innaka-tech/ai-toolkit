@@ -27,7 +27,7 @@ func TestSetupRoundTrip(t *testing.T) {
 			t.Fatalf("tools that are not installed must be left alone: %+v", c)
 		}
 	}
-	if err := Apply(r.Changes, t.TempDir()); err != nil {
+	if err := Apply(filesOnly(r.Changes), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	claude := get(t, filepath.Join(e.Home, ".claude/CLAUDE.md"))
@@ -44,11 +44,11 @@ func TestSetupRoundTrip(t *testing.T) {
 	if !strings.Contains(get(t, filepath.Join(e.Home, ".codex/AGENTS.md")), "aitk brief") {
 		t.Fatal("codex user instructions missing")
 	}
-	if r, _ := Setup(e, nil, false); len(r.Changes) != 0 {
+	if r, _ := Setup(e, nil, false); len(filesOnly(r.Changes)) != 0 {
 		t.Fatalf("setup must be idempotent: %+v", r.Changes)
 	}
 	r, _ = Setup(e, nil, true)
-	if err := Apply(r.Changes, t.TempDir()); err != nil {
+	if err := Apply(filesOnly(r.Changes), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	for rel, want := range before {
@@ -127,7 +127,7 @@ func TestSetupRefusesUnsafeFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Apply(r.Changes, t.TempDir()); err != nil {
+	if err := Apply(filesOnly(r.Changes), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	os.Chmod(claude, 0o644)
@@ -156,7 +156,7 @@ func TestSetupReadOnlyAndHandWrittenFiles(t *testing.T) {
 	defer os.Chmod(ro, 0o644)
 	put(t, filepath.Join(e.Home, ".kiro/steering/aitk.md"), "my own steering\n")
 	r, _ := Setup(e, nil, false)
-	Apply(r.Changes, t.TempDir())
+	Apply(filesOnly(r.Changes), t.TempDir())
 	if get(t, ro) != "read only\n" || get(t, filepath.Join(e.Home, ".kiro/steering/aitk.md")) != "my own steering\n" {
 		t.Fatal("read-only and hand-written files must be left alone")
 	}
@@ -176,12 +176,12 @@ func TestSetupRemoveKeepsSymlinkedDotfiles(t *testing.T) {
 		t.Skip(err)
 	}
 	r, _ := Setup(e, []string{"codex"}, false)
-	Apply(r.Changes, t.TempDir())
+	Apply(filesOnly(r.Changes), t.TempDir())
 	if !strings.Contains(get(t, target), "aitk") {
 		t.Fatal("setup must write through the link")
 	}
 	r, _ = Setup(e, []string{"codex"}, true)
-	Apply(r.Changes, t.TempDir())
+	Apply(filesOnly(r.Changes), t.TempDir())
 	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatal("remove must keep the symlink")
 	}
@@ -230,22 +230,93 @@ func TestSlashCommandsSyncPruneAndSetup(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.Root, ".claude/commands/aitk-review.md")); err == nil {
 		t.Fatal("built-ins come from aitk setup for Claude Code, not from the repository")
 	}
-	for _, f := range []string{".cursor/commands/aitk-review.md", ".github/prompts/aitk-plan.prompt.md", ".gemini/commands/deploy-check.toml"} {
+	for _, f := range []string{".cursor/commands/deploy-check.md", ".github/prompts/aitk-plan.prompt.md", ".gemini/commands/deploy-check.toml"} {
 		if _, err := os.Stat(filepath.Join(e.Root, f)); err != nil {
 			t.Fatalf("%s missing", f)
 		}
 	}
 	// Machine setup: built-ins at user level; --remove takes them out.
 	r, _ := Setup(e, []string{"claude-code", "codex"}, false)
-	Apply(r.Changes, t.TempDir())
+	Apply(filesOnly(r.Changes), t.TempDir())
 	for _, f := range []string{".claude/commands/aitk-hunt.md", ".codex/prompts/aitk-fix.md"} {
 		if _, err := os.Stat(filepath.Join(e.Home, f)); err != nil {
 			t.Fatalf("%s missing after setup", f)
 		}
 	}
 	r, _ = Setup(e, []string{"claude-code", "codex"}, true)
-	Apply(r.Changes, t.TempDir())
+	Apply(filesOnly(r.Changes), t.TempDir())
 	if m, _ := filepath.Glob(filepath.Join(e.Home, ".claude/commands/aitk-*.md")); len(m) != 0 {
 		t.Fatalf("remove must delete the built-in commands: %v", m)
+	}
+}
+
+// filesOnly drops changes that run a tool's CLI: tests must never touch the real tools.
+func filesOnly(cs []Change) []Change {
+	var out []Change
+	for _, c := range cs {
+		if len(c.Run) == 0 {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestSetupPlansCLIRegistrationsWithoutRunningThem(t *testing.T) {
+	e := env(t, "claude")
+	r, _ := Setup(e, []string{"claude-code"}, false)
+	found := false
+	for _, c := range r.Changes {
+		if len(c.Run) > 0 {
+			found = c.Run[0] == "/usr/bin/claude" && strings.Join(c.Run[1:], " ") == "mcp add --scope user aitk -- aitk mcp"
+		}
+	}
+	if !found {
+		t.Fatalf("setup must register the MCP server with Claude Code's own CLI: %+v", r.Changes)
+	}
+	put(t, filepath.Join(e.Home, ".claude.json"), `{"mcpServers":{"aitk":{"command":"aitk"}}}`)
+	r, _ = Setup(e, []string{"claude-code"}, false)
+	for _, c := range r.Changes {
+		if len(c.Run) > 0 {
+			t.Fatal("an existing registration must not be added again")
+		}
+	}
+}
+
+func TestSetupJcodeAndPi(t *testing.T) {
+	e := env(t, "jcode", "pi")
+	put(t, filepath.Join(e.Home, ".jcode/mcp.json"), "{\n  \"servers\": {\"uteke\": {\"command\": \"uteke\"}}\n}\n")
+	r, _ := Setup(e, []string{"jcode", "pi"}, false)
+	if err := Apply(filesOnly(r.Changes), t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	j := get(t, filepath.Join(e.Home, ".jcode/mcp.json"))
+	if !strings.Contains(j, `"uteke"`) || !strings.Contains(j, `"aitk"`) || !strings.Contains(j, `"shared": true`) {
+		t.Fatalf("jcode MCP config wrong:\n%s", j)
+	}
+	for _, f := range []string{".jcode/prompt-overlay.md", ".pi/agent/AGENTS.md", ".pi/agent/skills/aitk/SKILL.md", ".pi/agent/prompts/aitk-review.md"} {
+		if _, err := os.Stat(filepath.Join(e.Home, f)); err != nil {
+			t.Fatalf("%s missing", f)
+		}
+	}
+	if !strings.Contains(get(t, filepath.Join(e.Home, ".pi/agent/prompts/aitk-plan.md")), "$@") {
+		t.Fatal("pi prompt templates take $@")
+	}
+}
+
+// Review: a user's file that merely mentions the marker, or a symlink, is never touched.
+func TestCommandPruningOnlyTouchesAitkFiles(t *testing.T) {
+	e := env(t, "claude")
+	rule := "Never hand-edit files generated by aitk.\n"
+	put(t, filepath.Join(e.Root, ".claude/commands/team-rule.md"), rule)
+	target := filepath.Join(e.Root, "dot/old.md")
+	put(t, target, "<!-- generated by aitk from docs/ai/commands/old.md -->\nold\n")
+	os.Symlink(target, filepath.Join(e.Root, ".claude/commands/old.md"))
+	cs, _ := Plan(e, []string{"claude-code"}, false)
+	Apply(cs, t.TempDir())
+	if get(t, filepath.Join(e.Root, ".claude/commands/team-rule.md")) != rule {
+		t.Fatal("a file that mentions the marker is the user's")
+	}
+	if b, _ := os.ReadFile(target); !strings.Contains(string(b), "old") {
+		t.Fatal("a symlinked command and its target must be left alone")
 	}
 }

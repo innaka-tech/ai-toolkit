@@ -811,12 +811,16 @@ func reviewDone(t *task.Task) bool {
 }
 
 // ReviewPass records a bug-hunt pass on the active task.
-func ReviewPass(p *project.Project, findings int) (*task.Task, error) {
+// With id, a reviewer records the pass without starting the task (starting it would make the
+// reviewer one of its workers, and the review would no longer count as independent).
+func ReviewPass(p *project.Project, id string, findings int) (*task.Task, error) {
 	var t *task.Task
 	err := WithLock(p, func() error {
-		id := session.Load(p).Active()
 		if id == "" {
-			return apperr.NoActiveTask()
+			id = session.Load(p).Active()
+		}
+		if id == "" {
+			return apperr.New("E_NO_ACTIVE_TASK", apperr.ExitGate, "aitk review pass <id> --findings N (reviewers: name the task; do not start it)", "no task given and no active task")
 		}
 		var err error
 		if t, err = task.Find(p, id); err != nil {

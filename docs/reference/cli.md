@@ -477,10 +477,10 @@ aitk review
 
 ## `aitk review pass`
 
-Record one review pass on the active task
+Record one review pass on a task (default: the active task); a reviewer names the task instead of starting it
 
 ```
-aitk review pass [flags]
+aitk review pass [id] [flags]
 ```
 
 ```

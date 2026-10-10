@@ -3,7 +3,6 @@
 package slash
 
 import (
-	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -31,6 +30,9 @@ type Command struct {
 
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
 
+// maxCommand bounds a command file (Windsurf workflows, the strictest, take about 12,000 characters).
+const maxCommand = 12000
+
 // Parse reads a command file: YAML frontmatter (description, argument-hint) and a body.
 func Parse(name, source string, b []byte) (Command, error) {
 	if !nameRE.MatchString(name) {
@@ -38,18 +40,34 @@ func Parse(name, source string, b []byte) (Command, error) {
 	}
 	c := Command{Name: name, Source: source}
 	s := strings.ReplaceAll(string(b), "\r\n", "\n")
+	if len(s) > maxCommand {
+		return Command{}, fmt.Errorf("%s: larger than %d KB; keep commands short", source, maxCommand/1024)
+	}
 	if strings.HasPrefix(s, "---\n") {
-		if end := strings.Index(s[4:], "\n---\n"); end >= 0 {
-			var fm struct {
-				Description string `yaml:"description"`
-				ArgHint     string `yaml:"argument-hint"`
-			}
-			if err := yaml.Unmarshal([]byte(s[4:4+end]), &fm); err != nil {
-				return Command{}, fmt.Errorf("%s: frontmatter: %v", source, err)
-			}
-			c.Description, c.ArgHint = fm.Description, fm.ArgHint
-			s = s[4+end+5:]
+		rest := s[4:]
+		var front string
+		switch {
+		case strings.HasPrefix(rest, "---\n") || rest == "---": // empty frontmatter
+			front, s = "", strings.TrimPrefix(strings.TrimPrefix(rest, "---"), "\n")
+		case strings.Contains(rest, "\n---\n"):
+			end := strings.Index(rest, "\n---\n")
+			front, s = rest[:end], rest[end+5:]
+		case strings.HasSuffix(rest, "\n---"): // frontmatter only, no newline at the end
+			front, s = strings.TrimSuffix(rest, "\n---"), ""
+		default:
+			return Command{}, fmt.Errorf("%s: frontmatter is not closed with ---", source)
 		}
+		var fm struct {
+			Description string `yaml:"description"`
+			ArgHint     string `yaml:"argument-hint"`
+		}
+		if err := yaml.Unmarshal([]byte(front), &fm); err != nil {
+			return Command{}, fmt.Errorf("%s: frontmatter: %v", source, err)
+		}
+		c.Description, c.ArgHint = fm.Description, fm.ArgHint
+	}
+	if strings.TrimSpace(s) == "" {
+		return Command{}, fmt.Errorf("%s: the command has no text", source)
 	}
 	c.Body = strings.TrimSpace(s) + "\n"
 	if strings.TrimSpace(c.Description) == "" {
@@ -137,10 +155,7 @@ func Find(root, name string) (Command, bool) {
 // Expand puts args into the body, for tools and the CLI that pass text instead of using a
 // placeholder of their own.
 func (c Command) Expand(args string) string {
-	if strings.TrimSpace(args) == "" {
-		args = "(nothing given)"
-	}
-	return strings.ReplaceAll(c.Body, "$ARGUMENTS", args)
+	return strings.ReplaceAll(c.Body, "$ARGUMENTS", strings.TrimSpace(args))
 }
 
 // Format is how one AI tool stores slash commands.
@@ -159,8 +174,20 @@ func note(c Command) string {
 	return marker + " from " + c.Source + "; edit that file and run `aitk adapters sync`"
 }
 
-// Generated reports whether a command file was written by aitk (and may be replaced or removed).
-func Generated(b []byte) bool { return bytes.Contains(b, []byte(marker)) }
+// Generated reports whether a command file was written by aitk (and may be replaced or removed):
+// one of its first lines is aitk's note itself, not merely a mention of it.
+func Generated(b []byte) bool {
+	for i, l := range strings.SplitN(string(b), "\n", 12) {
+		if i == 11 {
+			break
+		}
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "<!-- "+marker) || strings.HasPrefix(t, "# "+marker) {
+			return true
+		}
+	}
+	return false
+}
 
 func yamlQuote(s string) string {
 	b, _ := yaml.Marshal(s)
@@ -179,7 +206,7 @@ func mdFront(fields [][2]string, c Command, body string) []byte {
 	return []byte(b.String())
 }
 
-const noArgs = "the text the user typed after the command (if any)"
+const noArgs = "(the text typed after the command, if any)"
 
 // Formats by tool.
 var Formats = map[string]Format{
@@ -198,7 +225,11 @@ var Formats = map[string]Format{
 	// GitHub Copilot prompt files: ${input:args}.
 	"copilot": {"copilot", ".prompt.md", func(c Command) []byte {
 		body := strings.ReplaceAll(c.Body, "$ARGUMENTS", "${input:args}")
-		return mdFront([][2]string{{"mode", "agent"}, {"description", c.Description}}, c, body)
+		return mdFront([][2]string{{"agent", "agent"}, {"mode", "agent"}, {"description", c.Description}}, c, body) // agent: VS Code 1.106+; mode: earlier
+	}},
+	// pi prompt templates: $@ is everything typed after the command.
+	"pi": {"pi", ".md", func(c Command) []byte {
+		return mdFront([][2]string{{"description", c.Description}}, c, strings.ReplaceAll(c.Body, "$ARGUMENTS", "$@"))
 	}},
 	// Cursor commands and Windsurf workflows take the typed text as context, without a placeholder.
 	"cursor": {"cursor", ".md", func(c Command) []byte {

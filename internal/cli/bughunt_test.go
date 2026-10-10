@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"io"
 	"os"
+	"regexp"
+
+	"github.com/innaka-tech/ai-toolkit/v2/internal/slash"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -386,4 +390,39 @@ func TestPromptCommandAndTaskDepends(t *testing.T) {
 		t.Fatalf("--depends not recorded: %v", data(b))
 	}
 	expect(t, aitk(t, dir, "task", "new", "Broken", "--depends", "T-none"), 2, "E_TASK_NOT_FOUND")
+}
+
+// Every aitk flag a built-in command tells an agent to use must exist.
+func TestBuiltinCommandsUseRealFlags(t *testing.T) {
+	root := (&app{stdout: io.Discard, stderr: io.Discard}).root()
+	re := regexp.MustCompile("`aitk ([a-z][a-z ]*?)((?: --[a-z-]+[^`]*)?)`")
+	flagRE := regexp.MustCompile(`--([a-z-]+)`)
+	for _, c := range slash.Builtins() {
+		for _, m := range re.FindAllStringSubmatch(c.Body, -1) {
+			words := strings.Fields(m[1])
+			cmd, rest, err := root.Find(words)
+			if err != nil || cmd == root {
+				t.Errorf("%s: unknown command %q", c.Name, m[0])
+				continue
+			}
+			_ = rest
+			for _, f := range flagRE.FindAllStringSubmatch(m[2], -1) {
+				if cmd.Flags().Lookup(f[1]) == nil && cmd.InheritedFlags().Lookup(f[1]) == nil {
+					t.Errorf("%s: %s has no --%s (%q)", c.Name, cmd.CommandPath(), f[1], m[0])
+				}
+			}
+		}
+	}
+}
+
+func TestReviewPassByIDWithoutStarting(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	id := data(aitk(t, dir, "task", "new", "Reviewed task", "--ac", "x"))["id"].(string)
+	r := aitk(t, dir, "review", "pass", id, "--findings", "0")
+	mustOK(t, r)
+	show := data(aitk(t, dir, "task", "show", id))["task"].(map[string]any)
+	if show["status"] != "todo" || show["workers"] != nil {
+		t.Fatalf("recording a review by id must not start the task: %v", show)
+	}
 }
