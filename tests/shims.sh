@@ -45,7 +45,7 @@ check "v2: v1-only command still runs v1 (ai-status)" "has 'Provider Status' ai-
 # v1 argument shapes in a v2 project
 git init -q --bare "$WORK/remote.git" && git remote add origin "$WORK/remote.git"
 echo more > more.txt
-check "v2: ai-commit takes the message, a path, and --push" "ai-commit 'docs: more' . --push && [ \"\$(git log -1 --format=%s)\" = 'docs: more' ] && git -C '$WORK/remote.git' log -1 --format=%s | grep -q 'docs: more'"
+check "v2: ai-commit takes the message, a path, and --push" "ai-commit 'docs: more' . --push && [ \"\$(git log -1 --format=%s)\" = 'docs: more' ] && git -C '$WORK/remote.git' log -1 --format=%s main | grep -q 'docs: more'"
 check "v2: ai-commit rejects unknown options instead of committing them" "echo x > y.txt && ! ai-commit 'docs: y' --nope && [ \"\$(git log -1 --format=%s)\" = 'docs: more' ]"
 check "v2: ai-commit with nothing to commit succeeds like v1" "git add -A && git commit -qm 'docs: wip' && out=\$(ai-commit 'docs: nothing') && grep -q 'Nothing to commit' <<<\"\$out\""
 repo "$WORK/v2b"

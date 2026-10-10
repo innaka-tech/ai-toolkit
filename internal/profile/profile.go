@@ -3,6 +3,7 @@ package profile
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -155,6 +156,12 @@ func countLines(path string) int {
 		return 0
 	}
 	defer f.Close()
+	head := make([]byte, 8000)
+	k, _ := f.Read(head)
+	if bytes.IndexByte(head[:k], 0) >= 0 {
+		return 0 // binary: lines mean nothing (git's numstat reports "-" too)
+	}
+	f.Seek(0, 0)
 	n := 0
 	s := bufio.NewScanner(f)
 	s.Buffer(make([]byte, 64*1024), 4*1024*1024)
