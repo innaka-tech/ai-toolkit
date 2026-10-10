@@ -39,6 +39,12 @@ var rules = []rule{
 	{"generic-secret-assignment", regexp.MustCompile(`(?i)\b[\w.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret)(?:[_-](?:key|value|prod|production|live|staging|dev))?\b["']?\s*[:=]\s*["']([^"'\s$<>{}]{12,})["']`), 3.3},
 	// .env and shell lines: UPPER_CASE_KEY=value without quotes.
 	{"generic-secret-assignment", regexp.MustCompile(`^\s*(?:export\s+)?[A-Z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|CLIENT_?SECRET)(?:_(?:KEY|VALUE|PROD|PRODUCTION|LIVE|STAGING|DEV))?=([^"'\s$<>{}#]{12,})\s*(?:#.*)?$`), 3.3},
+	// Config formats that write values without quotes: docker-compose ("KEY: v", "- KEY=v"),
+	// Dockerfile ENV, docker run -e, AWS credentials files, .npmrc, and .properties files.
+	{"generic-secret-assignment", regexp.MustCompile(`(?:^\s*-?\s*|\bENV\s+|\s-e\s+)[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|CLIENT_?SECRET)(?:_(?:KEY|VALUE|PROD|PRODUCTION|LIVE|STAGING|DEV))?\s*[=:]\s*([^"'\s$<>{}#]{12,})`), 3.3},
+	{"aws-secret-key", regexp.MustCompile(`(?i)\baws_secret_access_key\s*[=:]\s*["']?([A-Za-z0-9/+=]{40})\b`), 3.5},
+	{"npm-auth-token", regexp.MustCompile(`:_authToken\s*=\s*([^"'\s$<>{}]{20,})`), 3.0},
+	{"generic-secret-assignment", regexp.MustCompile(`^\s*[a-z0-9_.-]+\.(?:password|passwd|secret|token|api[_-]?key)\s*[=:]\s*([^"'\s$<>{}#]{12,})\s*$`), 3.3},
 	{"url-credentials", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://([^/\s:@"']+):([^/\s:@"']{3,})@`), 0},
 }
 
@@ -53,6 +59,7 @@ func ScanLine(file string, n int, line string) []Finding {
 		}
 	}
 	var out []Finding
+	seen := map[string]bool{} // one finding per value, even when several rules match it
 	for _, r := range rules {
 		for _, m := range r.re.FindAllStringSubmatch(line, -1) {
 			v := m[0]
@@ -82,6 +89,10 @@ func ScanLine(file string, n int, line string) []Finding {
 			if (r.name == "generic-secret-assignment" || r.name == "url-credentials") && codeReference(v) {
 				continue
 			}
+			if seen[v] {
+				continue
+			}
+			seen[v] = true
 			out = append(out, Finding{File: file, Line: n, Rule: r.name, Match: redact(v)})
 		}
 	}

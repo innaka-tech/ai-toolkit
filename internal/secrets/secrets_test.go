@@ -84,6 +84,9 @@ func TestMoreRules(t *testing.T) {
 		`// JSON Web Tokens: http://self-issued.info/docs/draft-ietf-oauth-json-web-token.html`,
 		`errExpiredToken = "expired_token_received"`,
 		`TokenTypeIDToken = "urn:ietf:params:oauth:token-type:id_token"`,
+		`      DB_PASSWORD: ${DB_PASSWORD}`,
+		`ENV TOKEN_TTL=86400`,
+		`spring.datasource.password=${DB_PASSWORD}`,
 	} {
 		if fs := ScanLine("f", 1, line); len(fs) > 0 {
 			t.Errorf("false positive in %q: %v", line, fs)

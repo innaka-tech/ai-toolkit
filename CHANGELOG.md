@@ -77,6 +77,14 @@ Fixes from an independent bug hunt across the whole tool (28 reproduced defects)
     - Doctor's fix line no longer suggests `--fix` after it already ran.
   - **Release:** `[workspace.package]` versions are bumped, and reverts are labelled "Revert" in the changelog.
   - **v1 shims:** `ai-commit` keeps `--push` and `--deploy` as options, and `ai-push [path]` sets the upstream on the first push.
+- **Third verification round**:
+  - **Risk profile:** the first close without a task counts everything since the commit that added `aitk.toml`.
+  - **MCP:**
+    - Only requests and notifications are accepted from the client. Stray responses and fractional ids get -32600 instead of ending the session.
+    - At end of input, the server waits until every request read has been answered, including a slow `check`.
+  - **Fingerprint:** untracked files over 32 MiB count by size and modification time instead of being copied on every check.
+  - **Secret scan:** newly covered are docker-compose `KEY: value` and `- KEY=value`, Dockerfile `ENV`, `docker run -e`, `aws_secret_access_key`, `.npmrc` `_authToken`, and `.properties` passwords. A value matched by several rules is reported once.
+  - **v1 shims:** `ai-commit` with nothing to commit exits 0, like v1.
 
 ## [2.5.0] - 2026-10-10
 

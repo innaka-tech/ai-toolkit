@@ -284,8 +284,7 @@ func TestAmendKeepsSensitiveWorkStrict(t *testing.T) {
 // Round 2: a close without a task covers what was committed since the last close.
 func TestImplicitCloseSeesCommittedSensitiveWork(t *testing.T) {
 	dir := sensitiveRepo(t)
-	mustOK(t, aitk(t, dir, "check"))
-	mustOK(t, aitk(t, dir, "close", "--summary", "first", "--knowledge", "none")) // a handoff to count from
+	mustOK(t, aitk(t, dir, "switch", "codex", "--print")) // a handoff to count from
 	run(t, dir, "git", "add", "-A")
 	run(t, dir, "git", "commit", "-qm", "chore: aitk")
 	write(t, dir, "auth/l.go", "package auth\n")
@@ -348,5 +347,17 @@ func TestReleaseBumpsCargoWorkspaceAndLabelsReverts(t *testing.T) {
 	}
 	if !strings.Contains(read(t, dir, "CHANGELOG.md"), "Revert feat: a") {
 		t.Fatalf("a revert must say so in the changelog:\n%s", read(t, dir, "CHANGELOG.md"))
+	}
+}
+
+// Round 3: the very first close without a task (no handoff yet) still sees committed work.
+func TestFirstImplicitCloseSeesCommittedSensitiveWork(t *testing.T) {
+	dir := sensitiveRepo(t) // aitk.toml was committed with the base
+	write(t, dir, "auth/l.go", "package auth\n")
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "feat: l")
+	aitk(t, dir, "check")
+	if r := aitk(t, dir, "close", "--summary", "changed auth", "--knowledge", "none"); r.code == 0 {
+		t.Fatalf("committed auth work must not close as an implicit lite task: %v", data(r))
 	}
 }

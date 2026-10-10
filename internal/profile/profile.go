@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -251,6 +252,26 @@ func treeFingerprint(p *project.Project) string {
 		out, err := c.Output()
 		return strings.TrimSpace(string(out)), err
 	}
+	// Very large untracked files are fingerprinted by size and modification time instead of
+	// being copied into the temporary object store on every check.
+	big := bigUntracked(p, 32<<20)
+	if len(big) > 0 {
+		ex, err := os.CreateTemp("", "aitk-exclude-*")
+		if err != nil {
+			return ""
+		}
+		for _, f := range big {
+			fmt.Fprintf(ex, "/%s\n", f.path)
+		}
+		ex.Close()
+		defer os.Remove(ex.Name())
+		run = func(args ...string) (string, error) {
+			c := exec.Command("git", append([]string{"-c", "core.excludesFile=" + ex.Name()}, args...)...)
+			c.Dir, c.Env = p.Root, env
+			out, err := c.Output()
+			return strings.TrimSpace(string(out)), err
+		}
+	}
 	if _, err := run("add", "-A", "--", "."); err != nil {
 		return ""
 	}
@@ -267,12 +288,35 @@ func treeFingerprint(p *project.Project) string {
 	}
 	h := sha256.New()
 	h.Write([]byte("tree:" + tree))
+	for _, f := range big {
+		fmt.Fprintf(h, "\x00big:%s:%d:%d", f.path, f.size, f.mtime)
+	}
 	if _, err := os.Stat(p.Path(".gitmodules")); err == nil {
 		// Uncommitted work inside submodules is not in the tree (only their commits are).
 		dirt, _ := gitx.RunRaw(p.Root, "submodule", "foreach", "--recursive", "--quiet", "git status --porcelain=v1 --untracked-files=all; git diff HEAD")
 		h.Write(dirt)
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+type bigFile struct {
+	path        string
+	size, mtime int64
+}
+
+// bigUntracked lists untracked, not ignored files larger than limit bytes.
+func bigUntracked(p *project.Project, limit int64) []bigFile {
+	out, _ := gitx.RunRaw(p.Root, "ls-files", "-z", "--others", "--exclude-standard")
+	var big []bigFile
+	for _, rel := range strings.Split(string(out), "\x00") {
+		if rel == "" || Managed(rel) {
+			continue
+		}
+		if info, err := os.Lstat(p.Path(rel)); err == nil && info.Mode().IsRegular() && info.Size() > limit {
+			big = append(big, bigFile{rel, info.Size(), info.ModTime().UnixNano()})
+		}
+	}
+	return big
 }
 
 func statusFingerprint(p *project.Project) string {

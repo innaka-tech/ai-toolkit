@@ -24,7 +24,12 @@ while [ $# -gt 0 ]; do
     *) echo "ai-commit: unknown option $1" >&2; exit 2 ;;
   esac
 done
-git -C "$dir" add -A && git -C "$dir" commit -m "$msg" || exit $?
+git -C "$dir" add -A || exit $?
+if git -C "$dir" diff --cached --quiet; then
+  echo "Nothing to commit."
+else
+  git -C "$dir" commit -m "$msg" || exit $?
+fi
 if [ "$push" = true ]; then
   "$(dirname "$0")/ai-push" "$dir" || exit $?
 fi

@@ -918,6 +918,11 @@ func TaskChanges(p *project.Project, t *task.Task) []profile.Change {
 				}
 			}
 		}
+		// No close yet: everything since aitk was set up (the commit that added aitk.toml).
+		if added, err := gitx.Run(p.Root, "log", "--diff-filter=A", "--format=%H", "--", project.ConfigFile); err == nil && added != "" {
+			lines := strings.Fields(added)
+			return profile.DiffSince(p, parentOf(p, lines[len(lines)-1]))
+		}
 		return profile.Diff(p)
 	}
 	base := t.Base

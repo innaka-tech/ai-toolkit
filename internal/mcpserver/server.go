@@ -9,12 +9,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -211,7 +213,22 @@ func (l *lockedWriter) Write(b []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.last = time.Now()
+	if isResponse(b) {
+		inflight.Add(-1)
+	}
 	return l.w.Write(b)
+}
+
+// isResponse reports whether b is the SDK's answer to a request (an id that is not null).
+func isResponse(b []byte) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(bytes.TrimSpace(b), &m) != nil {
+		return false
+	}
+	_, res := m["result"]
+	_, er := m["error"]
+	id, ok := m["id"]
+	return (res || er) && ok && string(bytes.TrimSpace(id)) != "null"
 }
 
 func (l *lockedWriter) Close() error { return nil }
@@ -237,8 +254,11 @@ func tolerant(in io.Reader, reply io.Writer) io.ReadCloser {
 				case !json.Valid(t):
 					errReply(-32700, "Parse error: not valid JSON")
 				case !isMessage(t):
-					errReply(-32600, "Invalid Request: not a JSON-RPC 2.0 message (batches are not supported)")
+					errReply(-32600, "Invalid Request: not a JSON-RPC 2.0 request or notification (batches and responses are not accepted)")
 				default:
+					if hasID(t) {
+						inflight.Add(1)
+					}
 					if _, werr := pw.Write(append(append([]byte{}, t...), '\n')); werr != nil {
 						return
 					}
@@ -291,33 +311,50 @@ func isMessage(b []byte) bool {
 			return false
 		}
 	}
-	if method, ok := m["method"]; ok {
-		var name string
-		return json.Unmarshal(method, &name) == nil && name != ""
+	if id, ok := m["id"]; ok {
+		var f float64
+		if json.Unmarshal(id, &f) == nil && f != float64(int64(f)) {
+			return false // fractional ids would be truncated
+		}
 	}
-	_, res := m["result"]
-	_, er := m["error"]
-	return res || er
+	// aitk never sends requests to the client, so a client message must be a request or a
+	// notification: a stray response would only end the session.
+	method, ok := m["method"]
+	if !ok {
+		return false
+	}
+	var name string
+	if json.Unmarshal(method, &name) != nil || name == "" {
+		return false
+	}
+	_, err := jsonrpc.DecodeMessage(b)
+	return err == nil
 }
 
-// settle waits until no reply has been written for a moment (at most 10 s), so requests read
-// just before end of input are answered.
+// inflight counts requests passed to the SDK that have not been answered yet.
+var inflight atomic.Int64
+
+func hasID(b []byte) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(b, &m) != nil {
+		return false
+	}
+	id, ok := m["id"]
+	return ok && string(bytes.TrimSpace(id)) != "null"
+}
+
+// settle waits, at end of input, until every request read has been answered (at most 15
+// minutes, longer than the default check timeout), so a client that writes its requests and
+// closes stdin still gets every answer.
 func settle(w io.Writer) {
-	lw, ok := w.(*lockedWriter)
-	if !ok {
-		return
+	if w != io.Writer(out) {
+		return // only the real stdio transport has an SDK answering behind it
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	time.Sleep(300 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		lw.mu.Lock()
-		quiet := time.Since(lw.last) > 500*time.Millisecond
-		lw.mu.Unlock()
-		if quiet {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
+	deadline := time.Now().Add(15 * time.Minute)
+	for inflight.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
 	}
+	time.Sleep(50 * time.Millisecond) // let the last write finish
 }
 
 // ServeHTTP serves streamable HTTP on addr.
