@@ -10,7 +10,7 @@ import (
 )
 
 func TestBuiltinsAreComplete(t *testing.T) {
-	want := []string{"aitk-check", "aitk-close", "aitk-fix", "aitk-handover", "aitk-hunt", "aitk-impact", "aitk-next", "aitk-plan", "aitk-release", "aitk-review", "aitk-start", "aitk-status", "aitk-uat"}
+	want := []string{"aitk-analyst", "aitk-architect", "aitk-auditor", "aitk-check", "aitk-close", "aitk-dba", "aitk-devops", "aitk-fix", "aitk-handover", "aitk-hunt", "aitk-impact", "aitk-lean", "aitk-next", "aitk-plan", "aitk-pm", "aitk-qa", "aitk-release", "aitk-review", "aitk-security", "aitk-start", "aitk-status", "aitk-team", "aitk-uat", "aitk-ux", "aitk-writer"}
 	got := map[string]Command{}
 	for _, c := range Builtins() {
 		got[c.Name] = c

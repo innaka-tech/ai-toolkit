@@ -34,7 +34,7 @@ Nobody has to tell an agent to use aitk. Four layers make sure it finds out:
 | **User-level instructions** | A short section in each AI tool's own user instructions says that a repository with `aitk.toml` is managed by aitk and the agent starts with `aitk brief`. It works in every aitk repository on the machine, including fresh clones. | `aitk setup` (once per machine; `--remove` undoes it) |
 | **AGENTS.md** | The aitk block in the repository: five steps, shell commands only, read natively by most agents. | `aitk init` |
 | **Tool-specific files** | For tools that don't read AGENTS.md by themselves: a rule or instruction file pointing to it, the MCP server, and a session hook that runs `aitk brief`. | `aitk adapters sync` |
-| **MCP server** | 20 tools (`brief`, `task_next`, `check`, `impact`, `close`, …) and every slash command as a prompt. Its instructions tell the agent to call `brief` first, without being asked. | registered by both commands above |
+| **MCP server** | 22 tools (`brief`, `task_next`, `check`, `impact`, `close`, …) and every slash command as a prompt. Its instructions tell the agent to call `brief` first, without being asked. | registered by both commands above |
 
 | Tool | Repository (`adapters sync`) | Machine (`setup`) |
 |---|---|---|
@@ -64,6 +64,10 @@ Nobody has to tell an agent to use aitk. Four layers make sure it finds out:
 Besides working on their own, agents take commands. `aitk setup` and `aitk adapters sync` install them natively in Claude Code, Codex, OpenCode, Gemini CLI, Qwen Code, Cursor, Copilot, and Windsurf, and `aitk mcp` serves them as MCP prompts:
 
 `/aitk-start` · `/aitk-plan <request>` · `/aitk-next` · `/aitk-check` · `/aitk-impact` · `/aitk-close` · `/aitk-handover` · `/aitk-status` and the personas `/aitk-review` (independent reviewer), `/aitk-hunt` (bug hunter), `/aitk-fix` (test-first fixer), `/aitk-uat` (acceptance script writer), `/aitk-release` (release manager).
+
+**SDLC personas**: `/aitk-team` (routes a request to the right phase and persona), `/aitk-pm`, `/aitk-analyst`, `/aitk-architect`, `/aitk-dba`, `/aitk-ux`, `/aitk-qa`, `/aitk-security`, `/aitk-devops`, `/aitk-auditor`, `/aitk-writer`. Auditing personas take a trailing `fix` and correct what they find instead of only reporting it. All of them work in one character, a lean senior engineer (`/aitk-lean lite|full|ultra`, adapted from Ponytail): the smallest change that fully works, never cutting validation, error handling, or security, and every reply ending with what was skipped and the risk.
+
+**Standards built in**: `aitk standards` serves 13 development standards to every project and every agent (character, SDLC with Definition of Ready/Done, engineering, testing, security on OWASP/ASVS, API, database, operations and DR, git, review and finding format, documentation, AI agents, UX/WCAG). A project overrides or extends any topic with `docs/ai/standards/<topic>.md`. `aitk debt` lists the `shortcut:` comments that record deliberate limits. See [standards](docs/how-to/standards.md).
 
 Your own: a markdown file in `docs/ai/commands/` becomes a slash command in every tool your team uses. `aitk prompt <name> <text>` prints any command for scripting (`aitk prompt aitk-hunt payments | claude -p`). See [slash commands and personas](docs/how-to/commands.md).
 

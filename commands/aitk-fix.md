@@ -2,7 +2,7 @@
 description: Persona - fix a bug test-first and close it through the Definition of Done
 argument-hint: "[bug task id]"
 ---
-Fix a bug the safe way.
+Fix a bug the safe way, in the aitk character (`aitk standards character`): find every caller, fix the root cause once, never cut validation or error handling.
 
 Bug task id given (may be empty): $ARGUMENTS
 

@@ -297,6 +297,8 @@ func rules(prof string, hasCheck bool) []string {
 			"Fill the task's Risk section: Impact, Security (STRIDE), Rollback, Validation.",
 			"Done needs ≥2 review passes (last with 0 findings), one by a different tool: aitk review pass --findings N.")
 	}
+	r = append(r, "Smallest change that fully works; never cut validation, error handling, security, or what was asked (aitk standards character).",
+		"Correct defects you find: fix in scope test-first, otherwise file a task. End with Skipped: and Risk: lines.")
 	r = append(r, "If unsure, blocked, or the check fails twice: stop and ask the user.")
 	return r
 }

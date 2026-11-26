@@ -31,7 +31,7 @@ Use the `aitk` CLI (or the `mcp__aitk__*` tools); never edit files under docs/ai
 
 ## Commands the user may type
 
-`/aitk-plan`, `/aitk-next`, `/aitk-review`, `/aitk-hunt`, `/aitk-fix`, `/aitk-uat`, `/aitk-release`, and others (`aitk prompt` lists them,
+`/aitk-plan`, `/aitk-next`, `/aitk-review`, `/aitk-hunt`, `/aitk-fix`, `/aitk-uat`, `/aitk-release`, the SDLC personas (`/aitk-team`, `/aitk-pm`, `/aitk-analyst`, `/aitk-architect`, `/aitk-security`, `/aitk-auditor`, `/aitk-qa`, `/aitk-devops`, `/aitk-dba`, `/aitk-ux`, `/aitk-writer`), and others (`aitk prompt` lists them,
 including the project's own in docs/ai/commands/). Follow the command's steps; they use the same aitk commands as below.
 
 ## Finding and fixing problems
