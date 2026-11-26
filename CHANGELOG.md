@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-11-26
+
 aitk as a development assistant: standards, SDLC personas, and one working character.
 
 ### Added
@@ -17,6 +19,9 @@ aitk as a development assistant: standards, SDLC personas, and one working chara
 - `aitk brief` rules carry the character: smallest change that fully works, correct what you find, end with Skipped and Risk.
 - `/aitk-review` reports findings in the standard finding format; `/aitk-hunt` and `/aitk-fix` follow the character.
 - The v1 `conventions/` folder moved to `docs/v1/conventions/`; the standards replace it.
+
+### Fixed
+- `aitk task update --ac-done` given more than once (`--ac-done 1 --ac-done 2`) marked only the last value; every value is now applied. `1,3` and `"1 3"` keep working.
 
 ## [2.6.0] - 2026-10-10
 
