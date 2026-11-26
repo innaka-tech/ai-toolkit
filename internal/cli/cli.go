@@ -682,10 +682,10 @@ func (a *app) taskShow() *cobra.Command {
 
 func (a *app) taskUpdate() *cobra.Command {
 	var in ops.UpdateInput
-	var acDone string
+	var acDone []string
 	c := &cobra.Command{Use: "update [id]", Short: "Edit structured task fields (default: the active task)", Args: cobra.MaximumNArgs(1)}
 	c.Flags().StringVar(&in.Status, "status", "", "new status: todo, in_progress, blocked, or cancelled (done is set by close)")
-	c.Flags().StringVar(&acDone, "ac-done", "", "mark criteria done, e.g. 1 or 1,3")
+	c.Flags().StringArrayVar(&acDone, "ac-done", nil, "mark criteria done, e.g. 1 or 1,3 (repeatable)")
 	c.Flags().StringArrayVar(&in.AddAC, "add-ac", nil, "add a criterion (repeatable)")
 	c.Flags().StringVar(&in.Note, "note", "", "append a timestamped note")
 	c.Flags().StringArrayVar(&in.Tags, "tag", nil, "add a tag (repeatable)")
@@ -695,7 +695,7 @@ func (a *app) taskUpdate() *cobra.Command {
 		if err != nil {
 			return nil, err
 		}
-		for _, f := range strings.FieldsFunc(acDone, func(r rune) bool { return r == ',' || r == ' ' }) {
+		for _, f := range strings.FieldsFunc(strings.Join(acDone, ","), func(r rune) bool { return r == ',' || r == ' ' }) {
 			n, err := strconv.Atoi(f)
 			if err != nil {
 				return nil, apperr.Usage("--ac-done expects numbers, got %q", f)
