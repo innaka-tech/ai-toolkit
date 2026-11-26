@@ -45,7 +45,7 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `aitk task next [--goal G] [--tag T] [--start]` | Tasks that can start now, in order: this worktree's active task, then `in_progress`, then `todo`, oldest first; only tasks whose `depends_on` are done or cancelled and that no other worktree claims. Others are listed as waiting. `--start` starts the first. |
 | `aitk task list [--status S] [--all-branches]` | List tasks. |
 | `aitk task show <id>` | Print one task. |
-| `aitk task update <id> [--status S] [--ac-done N] [--add-ac "<c>"] [--note "<text>"] [--tag T]` | Edit structured fields without hand-editing YAML. |
+| `aitk task update <id> [--status S] [--ac-done N[,N…]]… [--add-ac "<c>"] [--note "<text>"] [--tag T]` | Edit structured fields without hand-editing YAML. |
 | `aitk task block <id> --reason "<text>"` | Status → `blocked`. |
 | `aitk check` | Run `check.cmd` with `check.timeout`; record evidence on the active task. Exit 1 if the command fails. |
 | `aitk close --summary "<text>" --knowledge "<text>\|none" [--next "<step>"]... [--status S]` | Apply the Definition of Done, write evidence, handoff, and knowledge. |
