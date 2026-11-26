@@ -165,6 +165,15 @@ func New(root, version string, exec Exec) *mcp.Server {
 		func(in optIDIn) []string { return withID([]string{"security", "checklist"}, in.ID) })
 	add(s, h, "uat_script", "Write a user acceptance test script for a person. Only the user can accept or reject (aitk uat accept|reject in their terminal).",
 		func(in optIDIn) []string { return withID([]string{"uat", "script"}, in.ID) })
+	add(s, h, "standards", "Development standards (character, sdlc, engineering, testing, security, api, database, operations, git, review, documentation, ai-agents, ux). Without topic: the list. Audit and correct work against them.",
+		func(in topicIn) []string {
+			if in.Topic == "" {
+				return []string{"standards"}
+			}
+			return []string{"standards", "--", in.Topic}
+		})
+	add(s, h, "debt", "Deliberate shortcuts recorded in code as 'shortcut: <limit>, <when to upgrade>' comments, with file:line.",
+		func(struct{}) []string { return []string{"debt"} })
 	add(s, h, "adr_new", "Create an architecture decision record (MADR).", func(in titleIn) []string { return []string{"adr", "new", "--", in.Title} })
 	add(s, h, "doctor", "Validate the project; fix=true repairs what is safe.",
 		func(in doctorIn) []string {
@@ -555,6 +564,9 @@ type knowledgeIn struct {
 	Text string   `json:"text" jsonschema:"the finding, one or two sentences"`
 	Tags []string `json:"tags,omitempty" jsonschema:"tags; the first is the topic"`
 	Pin  bool     `json:"pin,omitempty" jsonschema:"always show in briefs"`
+}
+type topicIn struct {
+	Topic string `json:"topic,omitempty" jsonschema:"standard topic, e.g. security (empty: list the topics)"`
 }
 type titleIn struct {
 	Title string `json:"title" jsonschema:"decision title"`

@@ -137,6 +137,14 @@ aitk close [flags]
       --tag stringArray    tag for the knowledge entry (repeatable)
 ```
 
+## `aitk debt`
+
+List deliberate shortcuts recorded in code as 'shortcut: <the limit>, <when to upgrade>' comments
+
+```
+aitk debt
+```
+
 ## `aitk deploy`
 
 Run a deploy target from aitk.toml, then deploy.post_check
@@ -535,6 +543,14 @@ aitk setup [flags]
       --dry-run            show what would change
       --remove             remove aitk from the tools' user-level config
       --tool stringArray   only this tool (repeatable)
+```
+
+## `aitk standards`
+
+List the development standards, or print one topic (built-in, overridden by docs/ai/standards/*.md)
+
+```
+aitk standards [topic]
 ```
 
 ## `aitk switch`

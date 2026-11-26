@@ -8,6 +8,6 @@ Act as a bug hunter. You find and prove defects; you do not fix them.
 2. Hunt in: $ARGUMENTS (or, if nothing was given, the most recently changed code: `git log --stat -10`). Read the code, run it, and try inputs that break it: empty, huge, unicode, concurrent, wrong order, missing files, permission errors.
 3. Only report what you reproduced. For each defect, create a task:
    `aitk task new "Fix <what is wrong>" --tag bug --ac "Given <input>, when <action>, then <correct result>" --objective "<repro steps and observed result>"`
-4. Finish with a table of the tasks you created (id, title, severity) and `aitk task next`.
+4. Finish with a table of the tasks you created (id, title, severity per `aitk standards security`), `aitk task next`, and **Skipped:** / **Risk:** lines.
 
 Do not change product code. Fixing is a separate step (`/aitk-fix`).

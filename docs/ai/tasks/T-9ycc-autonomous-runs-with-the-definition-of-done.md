@@ -17,8 +17,6 @@ paths:
   - .claude/settings.json
   - .claude/skills/aitk/SKILL.md
   - .mcp.json
-  - .omo/run-continuation/ses_ede0d2247ffeX12uzbXxtf4K7p.json
-  - .omo/run-continuation/ses_ede25061affeg8q1WO06ECPbDy.json
   - CHANGELOG.md
   - README.md
   - docs/how-to/autopilot.md

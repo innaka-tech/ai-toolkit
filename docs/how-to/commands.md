@@ -18,6 +18,27 @@ aitk installs the same commands into every AI tool you use, in each tool's own f
 | `/aitk-uat [id]` | **UAT persona**: writes the acceptance script; tells you to run `aitk uat accept` |
 | `/aitk-release [level]` | **Release manager persona**: next version and notes; tags only when you confirm, never pushes |
 
+### SDLC personas
+
+Each persona works in the aitk character (`aitk standards character`: smallest change that fully works, never cut safety, correct instead of only suggesting, end with **Skipped:** and **Risk:**) and checks the work against the matching standard (`aitk standards <topic>`). Personas that audit take a trailing `fix` to correct what they find in the same run; without it every finding becomes a task with a reproducible criterion.
+
+| Command | Phase | What it does |
+|---|---|---|
+| `/aitk-team <request>` | any | **Team lead**: finds the SDLC phase from the evidence and runs the right persona, phase after phase, stopping for decisions that are yours |
+| `/aitk-pm <idea>` | Discover | **Product manager**: problem, measurable outcome (`aitk goal add`), MoSCoW scope, hands the must items to planning |
+| `/aitk-analyst <feature>` | Analyse | **Business analyst**: flow, state table, rules, edge cases, Given/when/then criteria written into tasks |
+| `/aitk-architect <subject>` | Design | **Architect**: options with TCO and lock-in, Mermaid design, STRIDE summary, ADR; design defects become tasks |
+| `/aitk-dba [scope] [fix]` | Design / Verify | **Database engineer**: constraints, migration safety (expand/contract, down path), indexes, N+1 |
+| `/aitk-ux [scope] [fix]` | Design / Verify | **UX & accessibility**: WCAG 2.1 AA and usability findings, fixed or filed |
+| `/aitk-qa [scope] [fix]` | Verify | **QA engineer**: coverage matrix (criterion/risk → test), missing tests added or filed |
+| `/aitk-security [scope] [fix]` | Verify | **Security engineer**: `aitk audit --tasks`, threat model, OWASP review, proven findings fixed or filed |
+| `/aitk-devops [scope] [fix]` | Release / Operate | **DevOps/SRE**: deploy, observability, backup and restore readiness; never touches production itself |
+| `/aitk-auditor [topics] [fix]` | Operate | **Auditor**: scorecard of the project against every standard with evidence, ranked fix plan as tasks, report in `docs/ai/audit-<date>.md`; with `fix` closes the top quick wins |
+| `/aitk-writer [scope]` | any | **Technical writer**: verifies documented commands and paths, corrects docs, records decisions as ADRs |
+| `/aitk-lean [lite\|full\|ultra\|off]` | any | **Character mode** for the session: lite proposes the smaller option, full builds the minimum, ultra challenges the request first |
+
+The character is adapted from [Ponytail](https://github.com/DietrichGebert/ponytail) (MIT). Deliberate limits are recorded in code as `shortcut: <the limit>, <when to upgrade>` comments; `aitk debt` lists them.
+
 A typical loop with several tools:
 
 ```

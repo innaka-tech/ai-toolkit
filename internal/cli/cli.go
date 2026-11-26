@@ -212,7 +212,7 @@ func (a *app) root() *cobra.Command {
 	root.PersistentFlags().StringVarP(&a.dir, "path", "C", "", "run as if started in this directory")
 	root.CompletionOptions.HiddenDefaultCmd = true
 	root.AddCommand(a.initCmd(), a.migrateCmd(), a.doctorCmd(), a.briefCmd(), a.taskCmd(), a.checkCmd(), a.closeCmd(),
-		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd(), a.runCmd(), a.impactCmd(), a.setupCmd(), a.promptCmd())
+		a.reviewCmd(), a.knowledgeCmd(), a.adrCmd(), a.versionCmd(), a.mcpCmd(), a.adaptersCmd(), a.hooksCmd(), a.hookCmd(), a.ciCmd(), a.workCmd(), a.switchCmd(), a.reportCmd(), a.logCmd(), a.pluginCmd(), a.importCmd(), a.deployCmd(), a.uatCmd(), a.securityCmd(), a.auditCmd(), a.releaseCmd(), a.goalCmd(), a.runCmd(), a.impactCmd(), a.setupCmd(), a.promptCmd(), a.standardsCmd(), a.debtCmd())
 	a.groupsAnswer(root)
 	// Under --json, help is an envelope too (stdout must hold exactly one JSON object).
 	defHelp := root.HelpFunc()
@@ -1166,7 +1166,8 @@ func (a *app) setupCmd() *cobra.Command {
 
 func (a *app) promptCmd() *cobra.Command {
 	c := &cobra.Command{Use: "prompt [command] [text…]", Short: "List aitk's slash commands and personas, or print one ready to paste or pipe into any AI tool",
-		Long: "Without arguments, lists the commands: aitk's built-ins (aitk-start, aitk-plan, aitk-review, aitk-hunt, aitk-fix, …) and the\n" +
+		Long: "Without arguments, lists the commands: aitk's built-ins (aitk-start, aitk-plan, aitk-review, aitk-hunt, aitk-fix, the SDLC personas\n" +
+			"aitk-pm, aitk-analyst, aitk-architect, aitk-security, aitk-auditor, aitk-qa, aitk-devops, aitk-dba, aitk-ux, aitk-writer, aitk-team, …) and the\n" +
 			"project's own from docs/ai/commands/*.md. With a name, prints that command's prompt with the text after it filled in, e.g.\n" +
 			"  aitk prompt aitk-plan add CSV export to reports | claude -p\n" +
 			"The same commands are installed as native slash commands by aitk setup and aitk adapters sync, and served as MCP prompts.",

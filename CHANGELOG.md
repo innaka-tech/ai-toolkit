@@ -5,6 +5,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-11-26
+
+aitk as a development assistant: standards, SDLC personas, and one working character.
+
+### Added
+- **`aitk standards [topic]`** and MCP `standards`: 13 built-in development standards embedded in the binary (character, sdlc, engineering, testing, security, api, database, operations, git, review, documentation, ai-agents, ux). `docs/ai/standards/<topic>.md` overrides or adds a topic per project.
+- **SDLC personas**: `/aitk-team` (phase router), `/aitk-pm`, `/aitk-analyst`, `/aitk-architect`, `/aitk-dba`, `/aitk-ux`, `/aitk-qa`, `/aitk-security`, `/aitk-devops`, `/aitk-auditor`, `/aitk-writer`. Auditing personas take a trailing `fix` to correct findings in the same run; otherwise each finding becomes a task.
+- **The aitk character** (`aitk standards character`, `/aitk-lean lite|full|ultra|off`), adapted from Ponytail (MIT): smallest-change ladder, never cut safety, correct instead of only suggesting, replies end with **Skipped:** and **Risk:**.
+- **`aitk debt`** and MCP `debt`: lists `shortcut: <limit>, <when to upgrade>` comments with file and line.
+
+### Changed
+- `aitk brief` rules carry the character: smallest change that fully works, correct what you find, end with Skipped and Risk.
+- `/aitk-review` reports findings in the standard finding format; `/aitk-hunt` and `/aitk-fix` follow the character.
+- The v1 `conventions/` folder moved to `docs/v1/conventions/`; the standards replace it.
+
 ### Fixed
 - `aitk task update --ac-done` given more than once (`--ac-done 1 --ac-done 2`) marked only the last value; every value is now applied. `1,3` and `"1 3"` keep working.
 
