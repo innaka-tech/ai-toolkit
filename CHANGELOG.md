@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- README is in Indonesian and lists the current features (standards, SDLC personas, character and talk, the automatic assistant); the English README moved to `README.en.md`, linked from the top of both.
+
 ## [2.9.0] - 2026-11-27
 
 Character, talk, and personas applied automatically in every agent session.
