@@ -113,7 +113,7 @@ Follows [clig.dev](https://clig.dev). One binary, `aitk`, with subcommands.
 | `E_NO_ACTIVE_TASK` | 3 | Command needs an active task | `aitk task start <id>` |
 | `E_TASK_NOT_FOUND` | 2 | Unknown task ID | `aitk task list` |
 | `E_TASK_CLAIMED` | 4 | Claimed by another session | `aitk task list` or wait for expiry |
-| `E_TASK_ACTIVE` | 3 | Starting another task while this worktree's active task is in_progress or in_review (`quality.one_task`) | finish it (review until 0, then `aitk close`) or `aitk task block <id> --reason "…"` |
+| `E_TASK_ACTIVE` | 3 | Starting another task while this worktree's active task still needs its agent: any status but done, blocked, or cancelled, except an in_review task that only waits for another tool's pass or a person's acceptance (`quality.one_task`) | finish it (review until 0, then `aitk close`) or `aitk task block <id> --reason "…"` |
 | `E_LOCKED` | 4 | Another aitk process holds the lock | retry |
 | `E_DOD_SECURITY` | 3 | Strict task without a verified OWASP ASVS checklist | `aitk security checklist <id>` |
 | `E_DOD_AUDIT` | 3 | Security audit missing, failing, or stale | `aitk audit` |

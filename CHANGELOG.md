@@ -7,7 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 - **Review until clean**: `[quality] review` (`off`, `strict` default, `standard`, `all`) makes tasks of those profiles wait in `in_review` until the last review pass finds 0; `aitk init` writes `review = "standard"` for new projects. The brief tells the agent to review, fix, and repeat, and to stop and ask when the last three passes do not decrease.
-- **One task at a time** (`[quality] one_task`, default true): `aitk task start`, `task new --start`, and `task next --start` refuse with `E_TASK_ACTIVE` while the active task is `in_progress` or `in_review`; finish it or `aitk task block` it. `aitk run` is exempt.
+- **One task at a time** (`[quality] one_task`, default true): `aitk task start`, `task new --start`, and `task next --start` refuse with `E_TASK_ACTIVE` while the active task still needs its agent (any status but done, blocked, or cancelled, except an `in_review` task that only waits for another tool or a person); finish it or `aitk task block` it. `aitk run` is exempt. This applies to existing projects too (set `one_task = false` to opt out).
 - Review passes record the working-tree fingerprint; a clean pass counts for the review loop only while the code is unchanged.
 
 ### Changed

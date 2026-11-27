@@ -189,3 +189,20 @@ func TestReviewLoopSecondPassFindings(t *testing.T) {
 	}
 
 }
+
+func TestUATAcceptSaysWhyTheTaskStillWaits(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"standard\"\n")
+	id := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	standardChange(t, dir, "u")
+	mustOK(t, aitk(t, dir, "task", "update", id, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+	asPerson(t)
+	r := aitk(t, dir, "uat", "accept", id, "--by", "alice")
+	mustOK(t, r)
+	if m, _ := data(r)["missing"].(string); !strings.Contains(m, "review until clean") {
+		t.Fatalf("acceptance that cannot finish the task must say what is missing: %s", r.stdout)
+	}
+}

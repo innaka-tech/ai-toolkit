@@ -263,14 +263,7 @@ func (r *runner) one(c Candidate) RunTask {
 				rt.Note = "the agent reported " + claimed + ", but aitk's own verification failed (" + why + "); reopened"
 				continue
 			}
-			if target == task.InReview && t.Profile != "strict" && p.Config.ReviewRequired(t.Profile) && !reviewSatisfied(p, t, t.Profile) {
-				// The agent's own review loop is unfinished: that is work for another attempt.
-				t.Status, t.Closed, t.Updated = task.InProgress, "", task.Now()
-				WithLock(p, func() error { return task.Save(p, t) })
-				rt.Note = "review until clean is not finished (no clean review pass on the current code); reopened"
-				continue
-			}
-			rt.Status = target
+			rt.Status, rt.Note = target, "" // an earlier attempt's note no longer applies
 			if target == task.InReview {
 				rt.Note = "waiting for a person's acceptance (aitk uat accept " + t.ID + ")"
 				if t.Profile == "strict" && !reviewDone(t) {
@@ -317,11 +310,15 @@ type protected struct {
 	goal      string
 	dependsOn []string
 	criteria  []string // texts; marking them done is the agent's job, rewording them is not
+	// Who worked on the task decides which review passes count as independent.
+	createdBy string
+	workers   []string
 }
 
 func protectedOf(t *task.Task) protected {
 	s := protected{profile: t.Profile, pinned: t.ProfilePinned, tags: append([]string(nil), t.Tags...),
-		goal: t.Goal, dependsOn: append([]string(nil), t.DependsOn...)}
+		goal: t.Goal, dependsOn: append([]string(nil), t.DependsOn...),
+		createdBy: t.CreatedBy, workers: append([]string(nil), t.Workers...)}
 	for _, c := range t.Criteria() {
 		s.criteria = append(s.criteria, c.Text)
 	}
@@ -363,6 +360,14 @@ func ownPasses(base, attempt *task.Review, agent string) *task.Review {
 
 func restoreProtected(t *task.Task, s protected) {
 	t.Profile, t.ProfilePinned, t.Tags, t.Goal, t.DependsOn = s.profile, s.pinned, s.tags, s.goal, s.dependsOn
+	t.CreatedBy = s.createdBy
+	workers := append([]string(nil), s.workers...) // an agent can add itself but never remove anyone
+	for _, w := range t.Workers {
+		if !containsFold(workers, w) {
+			workers = append(workers, w)
+		}
+	}
+	t.Workers = workers
 	t.Review = s.review
 	if t.Evidence == nil {
 		t.Evidence = &task.Evidence{}
@@ -379,6 +384,7 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 	p := r.p
 	attempt := t.Review // the agent's own passes: they count for the non-strict review loop only
 	restoreProtected(t, snap)
+	t.AddWorker(r.agentName) // aitk records this, not the agent: its own passes are never independent
 	cur := t.Criteria()
 	if len(cur) < len(snap.criteria) {
 		return "", "acceptance criteria were removed"
@@ -423,6 +429,10 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 	if err != nil {
 		t.Review = snap.review // a failed attempt keeps nothing the agent wrote about reviews
 		return "", "the Definition of Done does not hold: " + err.Error()
+	}
+	if target == task.InReview && prof != "strict" && p.Config.ReviewRequired(prof) && !reviewSatisfied(p, t, prof) {
+		t.Review = snap.review // the agent's own loop is unfinished: work for the next attempt
+		return "", "review until clean is not finished (no clean review pass on the current code)"
 	}
 	if IsBugTask(t) {
 		t.Evidence.RegressionTests = capList(regressionTests(p, t), 10)
@@ -632,8 +642,7 @@ func runPrompt(p *project.Project, t *task.Task, attempt, max int) string {
 Steps:
 1. Read the brief below and the task file. Keep the change focused on this task.
 2. Implement it, then run ` + "`aitk check`" + ` until it passes. Mark each satisfied criterion: ` + "`aitk task update " + t.ID + " --ac-done N`" + `.
-3. If the task is tagged bug, add a regression test that fails without the fix. Before closing, run ` + "`aitk impact`" + ` and make sure the code that depends on what you changed is covered by the check.
-   Then review your own change: record ` + "`aitk review pass " + t.ID + " --findings N`" + `, fix what you found, run the check again, and repeat until a pass finds 0 (required here unless the task is lite and [quality] review is not "all").
+3. If the task is tagged bug, add a regression test that fails without the fix. Before closing, run ` + "`aitk impact`" + ` and make sure the code that depends on what you changed is covered by the check.` + reviewStep(p, t) + `
 4. Finish with ` + "`aitk close --summary \"<what changed>\" --knowledge \"<lasting finding>|none\"`" + `. If close refuses, do what its fix line says and close again.
 5. If you cannot finish (missing access, unclear requirement, the check fails twice for the same reason), run ` + "`aitk close --status blocked --summary \"<why>\" --knowledge none`" + ` and stop.
 Never mark work done any other way, never edit aitk's evidence by hand, and never accept UAT.
@@ -738,4 +747,17 @@ func firstPositive(xs ...int) int {
 		}
 	}
 	return 0
+}
+
+// reviewStep is the prompt line for the agent's own review loop, only where it applies: a
+// non-strict task under [quality] review standard or all (strict work needs another tool).
+func reviewStep(p *project.Project, t *task.Task) string {
+	prof := t.Profile
+	if prof == "" || prof == "lite" {
+		prof = "standard" // the diff may still grow past lite
+	}
+	if prof == "strict" || !p.Config.ReviewRequired(prof) {
+		return ""
+	}
+	return "\n   Then review your own change: record `aitk review pass " + t.ID + " --findings N`, fix what you found, run the check again, and repeat until a pass finds 0."
 }

@@ -507,3 +507,99 @@ aitk close --summary "did it" --knowledge none
 		t.Fatalf("the handover must say the review loop was not finished:\n%s", grep)
 	}
 }
+
+// Run 1 finishes a standard task with the agent's own review loop (its passes are kept under
+// the agent's name). The task is reopened; run 2 makes it strict and removes the agent from the
+// workers. The agent's old passes must never count as the independent review.
+func TestRunAgentCannotCertifyStrictReviewByFlippingTheProfile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	dir := project(t)
+	must(t, dir, bin, "hooks", "uninstall")
+	cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+	c := strings.Replace(string(cfg), "sensitive_paths = []", `sensitive_paths = ["secure/**"]`, 1) + "\n[security]\naudit = \"off\"\nasvs_level = 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(c), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Feature", "--ac", "works")))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	if r := aitkRun(t, dir, "--cmd", reviewingAgent, "--max-tasks", "1"); len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status != "done" {
+		t.Fatalf("setup: run 1 must finish the standard task: %+v", r.Data.Tasks)
+	}
+	if ps := passesOf(t, dir, id); len(ps) == 0 {
+		t.Fatal("setup: run 1 must keep the agent's passes")
+	}
+	must(t, dir, bin, "task", "update", id, "--status", "todo") // reopened by a person
+	flip := `set -e
+f=$(ls docs/ai/tasks/"$AITK_RUN_TASK"-*.md)
+mkdir -p secure && echo s > secure/x.txt
+sed -i.bak 's/(Required for strict profile. Impact:, Security (STRIDE):, Rollback:, Validation:)/Impact: x. Security (STRIDE): y. Rollback: z. Validation: w./' "$f"
+aitk check
+aitk close --summary "second" --knowledge none || true
+sed -i.bak -E '/^workers:/,/^[a-z_]+:/{/^[[:space:]]+- /d;}' "$f"
+sed -i.bak -E 's/^created_by: .*/created_by: human/' "$f"
+sed -i.bak -E 's/^status: .*/status: done/' "$f"
+rm -f "$f.bak"
+`
+	aitkRun(t, dir, "--cmd", flip, "--max-attempts", "1", "--max-tasks", "1")
+	var r struct {
+		Data struct {
+			Task struct {
+				Status  string `json:"status"`
+				Profile string `json:"profile"`
+			} `json:"task"`
+		} `json:"data"`
+	}
+	json.Unmarshal([]byte(must(t, dir, bin, "--json", "task", "show", id)), &r)
+	if r.Data.Task.Status == "done" {
+		t.Fatalf("strict work finished on the agent's own passes (profile %s): %+v", r.Data.Task.Profile, passesOf(t, dir, id))
+	}
+}
+
+// The review step is in the run prompt only where the agent's own loop applies, and a task that
+// finishes on a later attempt carries no stale note from an earlier one.
+func TestRunPromptReviewStepAndNotes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	probe := `grep -c "review your own change" "$AITK_RUN_PROMPT_FILE" > prompt-count.txt || true
+aitk close --status blocked --summary "probe only" --knowledge none
+`
+	for _, tc := range []struct {
+		review string
+		want   string
+	}{{`review = "standard"`, "1"}, {"", "0"}} {
+		dir := project(t)
+		must(t, dir, bin, "hooks", "uninstall")
+		cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+		os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(strings.Replace(string(cfg), `review = "standard"`, tc.review, 1)), 0o644)
+		must(t, dir, bin, "task", "new", "Feature", "--ac", "works")
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		aitkRun(t, dir, "--cmd", probe, "--max-attempts", "1", "--max-tasks", "1")
+		if b, _ := os.ReadFile(filepath.Join(dir, "prompt-count.txt")); strings.TrimSpace(string(b)) != tc.want {
+			t.Fatalf("config %q: review step count in prompt = %q, want %s", tc.review, b, tc.want)
+		}
+	}
+
+	dir := project(t)
+	must(t, dir, bin, "hooks", "uninstall")
+	must(t, dir, bin, "task", "new", "Feature", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	late := `set -e
+for i in 1 2 3 4 5 6; do echo x > "src_$i.txt"; done
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+if [ -f .reviewed-once ]; then aitk review pass --findings 0; fi
+touch .reviewed-once
+aitk close --summary "did it" --knowledge none
+`
+	r := aitkRun(t, dir, "--cmd", late, "--max-attempts", "2", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status != "done" || r.Data.Tasks[0].Attempts != 2 || r.Data.Tasks[0].Note != "" {
+		t.Fatalf("a task finished on the second attempt must be done with no stale note: %+v", r.Data.Tasks)
+	}
+}
