@@ -132,7 +132,10 @@ func contains(xs []string, s string) bool {
 // ask when the passes are not converging.
 func reviewRules(c project.Config, t *task.Task, prof string) []string {
 	var r []string
-	if c.ReviewRequired(prof) && prof != "strict" {
+	if t == nil {
+		return nil // no task: nothing to review or finish yet (a quick lite close is exempt)
+	}
+	if c.ReviewRequired(prof) && prof != "strict" && !t.Implicit {
 		r = append(r, "Review until clean: review your change, record aitk review pass --findings N, fix what it found, and repeat until a pass finds 0. Only then close.")
 	}
 	if c.OneTaskAtATime() {

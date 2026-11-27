@@ -528,7 +528,6 @@ type CloseInput struct {
 	Next      []string
 	Status    string // optional: in_progress or blocked to close a session without finishing
 	Tags      []string
-	implicit  bool // a quick lite close with no active task: there is no task to keep reviewing
 }
 
 // CloseResult reports what close did.
@@ -591,8 +590,7 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			}
 			now := task.Now()
 			t = &task.Task{Meta: task.Meta{ID: task.NewID(p), Title: implicitTitle(in.Summary), Status: task.InProgress, Profile: "lite",
-				Created: now, Updated: now, CreatedBy: Tool()}, Body: task.NewBody(in.Summary, nil)}
-			in.implicit = true
+				Created: now, Updated: now, CreatedBy: Tool(), Implicit: true}, Body: task.NewBody(in.Summary, nil)}
 			if s.LastCheck != nil {
 				c := *s.LastCheck
 				t.Evidence = &task.Evidence{Check: &c}
@@ -787,7 +785,7 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 			return "", apperr.New("E_DOD_AUDIT", apperr.ExitGate, "aitk audit", "files changed after the last passing audit")
 		}
 	}
-	if !(in.implicit && prof != "strict") && !reviewSatisfied(p, t, prof) {
+	if !reviewSatisfied(p, t, prof) {
 		return task.InReview, nil
 	}
 	if p.Config.UATRequired(prof) && (t.Evidence == nil || t.Evidence.UAT == nil || t.Evidence.UAT.Status != "accepted") {
@@ -802,8 +800,8 @@ func reviewSatisfied(p *project.Project, t *task.Task, prof string) bool {
 	if prof == "strict" {
 		return reviewDone(t)
 	}
-	if !p.Config.ReviewRequired(prof) {
-		return true
+	if !p.Config.ReviewRequired(prof) || t.Implicit {
+		return true // an implicit quick close has no task to keep reviewing
 	}
 	if t.Review == nil || len(t.Review.Passes) == 0 {
 		return false
@@ -813,16 +811,24 @@ func reviewSatisfied(p *project.Project, t *task.Task, prof string) bool {
 	return last.Findings == 0 && (last.Tree == profile.Fingerprint(p) || profile.Fresh(p, last.Tree))
 }
 
+// RunScope keeps an agent inside aitk run on the one task it was given; work on anything else
+// would be finished outside the run's own verification.
+func RunScope(next string) error {
+	if os.Getenv(RunEnv) == "" {
+		return nil
+	}
+	if mine := os.Getenv("AITK_RUN_TASK"); mine != "" && !strings.EqualFold(next, mine) {
+		return apperr.New("E_RUN_SCOPE", apperr.ExitGate, "work on "+mine+" only; aitk run picks the next task itself",
+			"inside aitk run this agent works on %s, not on another task", mine)
+	}
+	return nil
+}
+
 // SwitchAllowed enforces one task at a time: an agent finishes the active task (review until
 // clean, then close) or blocks it before starting another in the same worktree.
 func SwitchAllowed(p *project.Project, next string) error {
-	// Inside aitk run the agent works on the one task it was given; anything else would be
-	// finished outside the run's own verification.
-	if os.Getenv(RunEnv) != "" {
-		if mine := os.Getenv("AITK_RUN_TASK"); mine != "" && !strings.EqualFold(next, mine) {
-			return apperr.New("E_RUN_SCOPE", apperr.ExitGate, "work on "+mine+" only; aitk run picks the next task itself",
-				"inside aitk run this agent works on %s, not on another task", mine)
-		}
+	if err := RunScope(next); err != nil {
+		return err
 	}
 	if !p.Config.OneTaskAtATime() {
 		return nil
@@ -857,7 +863,7 @@ func waitingOnOthers(p *project.Project, t *task.Task) bool {
 	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
 		prof = computed
 	}
-	if prof == "strict" || p.Config.ReviewRequired(prof) {
+	if prof == "strict" || (p.Config.ReviewRequired(prof) && !t.Implicit) {
 		if t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0 {
 			return false
 		}

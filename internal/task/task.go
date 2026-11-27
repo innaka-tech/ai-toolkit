@@ -109,6 +109,7 @@ type Meta struct {
 	Status        string         `yaml:"status" json:"status"`
 	Profile       string         `yaml:"profile" json:"profile"`
 	ProfilePinned bool           `yaml:"profile_pinned,omitempty" json:"profile_pinned,omitempty"`
+	Implicit      bool           `yaml:"implicit,omitempty" json:"implicit,omitempty"` // a quick lite close with no task: no review loop
 	Goal          string         `yaml:"goal,omitempty" json:"goal,omitempty"`
 	Tags          []string       `yaml:"tags,omitempty" json:"tags,omitempty"`
 	DependsOn     []string       `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`

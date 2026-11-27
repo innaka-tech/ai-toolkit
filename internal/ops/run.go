@@ -433,6 +433,10 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 		t.Review = snap.review // the agent's own loop is unfinished: work for the next attempt
 		return "", "review until clean is not finished (no clean review pass on the current code)"
 	}
+	if target == task.InReview && prof == "strict" && !reviewDone(t) && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0) {
+		t.Review = snap.review // strict work waits for another tool only after the agent's own clean pass
+		return "", "your own review pass is missing or found something to fix (strict work needs it before another tool's pass)"
+	}
 	if IsBugTask(t) {
 		t.Evidence.RegressionTests = capList(regressionTests(p, t), 10)
 	}
@@ -758,8 +762,11 @@ func reviewStep(p *project.Project, t *task.Task) string {
 	if prof == "lite" && !t.ProfilePinned {
 		prof = "standard" // the diff may still grow past lite
 	}
-	if prof == "strict" || !p.Config.ReviewRequired(prof) {
-		return ""
+	switch {
+	case prof == "strict":
+		return "\n   Then review your own change: record `aitk review pass " + t.ID + " --findings N`, fix what you found, run the check again, and repeat until a pass finds 0. Strict work also needs an independent pass by another tool after yours; your own passes never count as that one."
+	case p.Config.ReviewRequired(prof):
+		return "\n   Then review your own change: record `aitk review pass " + t.ID + " --findings N`, fix what you found, run the check again, and repeat until a pass finds 0."
 	}
-	return "\n   Then review your own change: record `aitk review pass " + t.ID + " --findings N`, fix what you found, run the check again, and repeat until a pass finds 0."
+	return ""
 }

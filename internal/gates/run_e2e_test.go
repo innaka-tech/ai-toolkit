@@ -670,7 +670,8 @@ sed -i.bak 's/(Required for strict profile. Impact:, Security (STRIDE):, Rollbac
 touch ok.txt
 aitk task update --ac-done 1
 aitk check
-aitk review pass --findings 0
+# Follows the prompt only: it reviews its own change because the prompt says so.
+if grep -q "review your own change" "$AITK_RUN_PROMPT_FILE"; then aitk review pass --findings 0; fi
 aitk close --summary "auth" --knowledge none
 `
 	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
@@ -717,5 +718,21 @@ rm -f "$f.bak"
 	aitkRun(t, dir, "--agent", "codex", "--max-attempts", "1", "--max-tasks", "1")
 	if st := statusOf(t, dir, id); st == "done" {
 		t.Fatalf("strict work finished on another agent's earlier passes: %+v", passesOf(t, dir, id))
+	}
+}
+
+// The run scope also covers aitk work: an agent cannot open another task in a new worktree.
+func TestRunScopeCoversWork(t *testing.T) {
+	dir := newRunProject(t, "")
+	a := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "First", "--ac", "works")))[1]
+	b := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Second", "--ac", "works", "--depends", a)))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: tasks")
+	escape := `aitk --json work ` + b + ` > work.json 2>&1 || true
+aitk close --status blocked --summary "probe" --knowledge none
+`
+	aitkRun(t, dir, "--cmd", escape, "--max-attempts", "1", "--max-tasks", "1")
+	if out, _ := os.ReadFile(filepath.Join(dir, "work.json")); !strings.Contains(string(out), "E_RUN_SCOPE") {
+		t.Fatalf("aitk work on another task inside aitk run must fail with E_RUN_SCOPE:\n%s", out)
 	}
 }

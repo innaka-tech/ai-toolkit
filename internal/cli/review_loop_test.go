@@ -226,3 +226,26 @@ func TestBriefReviewRuleUsesTheProfileCloseWillUse(t *testing.T) {
 		t.Fatalf("a task pinned lite must not be told to review until clean:\n%s", md)
 	}
 }
+
+func TestImplicitCloseStaysExemptAndBriefWithoutTask(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), `review = "standard"`, `review = "all"`, 1)+"\n[uat]\nrequired = \"all\"\n")
+	if md, _ := briefMD(t, dir); strings.Contains(md, "Review until clean") || strings.Contains(md, "finish this task") {
+		t.Fatalf("with no task there is nothing to review or finish:\n%s", md)
+	}
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "check"))
+	r := aitk(t, dir, "close", "--summary", "typo fix", "--knowledge", "none")
+	mustOK(t, r)
+	id := data(r)["task"].(string)
+	if strings.Contains(r.stdout, "review until clean") {
+		t.Fatalf("an implicit quick close is exempt from the review loop; the note must name the real wait:\n%s", r.stdout)
+	}
+	asPerson(t)
+	acc := aitk(t, dir, "uat", "accept", id, "--by", "alice")
+	mustOK(t, acc)
+	if st := status(t, dir, id); st != "done" {
+		t.Fatalf("after acceptance an implicit quick close must be done (exempt from the loop), got %s: %s", st, acc.stdout)
+	}
+}
