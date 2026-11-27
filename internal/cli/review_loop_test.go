@@ -346,3 +346,28 @@ func TestStrictCloseNoteAsksForTheOwnPassFirst(t *testing.T) {
 		t.Fatalf("with review = standard, closing strict work without an own pass must ask for it first:\n%s", r.stdout)
 	}
 }
+
+func TestStrictIndependentPassMustBeClean(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), "sensitive_paths = []", `sensitive_paths = ["db/**"]`, 1)+"\n[uat]\nrequired = \"strict\"\n")
+	id := newStarted(t, dir, "Add payments table", "--ac", "migration applies")
+	write(t, dir, "db/001.sql", "create table payments(id int);\n")
+	write(t, dir, "ok.txt", "1")
+	f := fillRisk(t, dir)
+	mustOK(t, aitk(t, dir, "security", "checklist"))
+	write(t, dir, f, strings.ReplaceAll(read(t, dir, f), "- [ ] V", "- [x] V"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "audit"))
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	t.Setenv("AITK_TOOL", "codex")
+	mustOK(t, aitk(t, dir, "review", "pass", id, "--findings", "2")) // another tool finds problems
+	t.Setenv("AITK_TOOL", "claude-code")
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0")) // the implementer reviews its fix
+	mustOK(t, aitk(t, dir, "close", "--summary", "payments", "--knowledge", "none"))
+	asPerson(t)
+	mustOK(t, aitk(t, dir, "uat", "accept", id, "--by", "alice"))
+	if st := status(t, dir, id); st == "done" {
+		t.Fatal("another tool's findings followed by the implementer's own clean pass must not count as the independent review, not even after acceptance")
+	}
+}

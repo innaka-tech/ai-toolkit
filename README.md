@@ -45,7 +45,7 @@ Lalu cukup minta pekerjaannya ke agen ("tambahkan export CSV"). Agen membaca bri
 |---|---|---|
 | `lite` | ≤ 3 file dan ≤ 100 baris | check lolos di kode terakhir, summary, knowledge; kriteria opsional, tapi yang ditulis wajib terpenuhi |
 | `standard` | default | + semua acceptance criteria terpenuhi, dan review sampai satu pass menemukan 0 (`[quality] review = "standard"`, aktif di proyek baru) |
-| `strict` | menyentuh `risk.sensitive_paths` (auth, migrasi, infra…) | + analisis risiko (STRIDE), checklist OWASP ASVS, audit keamanan lolos, dan dua review pass (yang terakhir tanpa temuan, salah satunya oleh tool yang tidak ikut mengerjakan task) |
+| `strict` | menyentuh `risk.sensitive_paths` (auth, migrasi, infra…) | + analisis risiko (STRIDE), checklist OWASP ASVS, audit keamanan lolos, dan dua review pass (yang terakhir tanpa temuan, salah satunya pass bersih dari tool yang tidak ikut mengerjakan task) |
 
 **Review sampai 0, baru pindah task.** Agen mencatat `aitk review pass --findings N`, memperbaiki temuan, dan mengulang sampai satu pass menemukan 0; sebelum itu task tertahan di `in_review`. Selama task aktif belum selesai, `aitk task start` untuk task lain ditolak (`E_TASK_ACTIVE`): selesaikan, atau parkir dengan `aitk task block <id> --reason "…"`. Kalau tiga pass terakhir tidak menurun, brief menyuruh agen berhenti dan bertanya ke Anda.
 

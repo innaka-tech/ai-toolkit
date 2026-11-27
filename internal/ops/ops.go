@@ -896,8 +896,8 @@ func closedSince(p *project.Project, id, at string) bool {
 	return false
 }
 
-// reviewDone: ≥2 passes, the last with 0 findings, and at least one pass by a tool that did
-// not work on the task (workers, the creator, and the tool closing it).
+// reviewDone: ≥2 passes, the last with 0 findings, and at least one clean pass by a tool that
+// did not work on the task (workers, the creator, and the tool closing it).
 func reviewDone(t *task.Task) bool {
 	if t.Review == nil || len(t.Review.Passes) < 2 || t.Review.Passes[len(t.Review.Passes)-1].Findings != 0 {
 		return false
@@ -910,7 +910,9 @@ func reviewDone(t *task.Task) bool {
 		implementers[w] = true
 	}
 	for _, pass := range t.Review.Passes {
-		if pass.By != "" && pass.By != "unknown" && !implementers[pass.By] {
+		// The independent pass must itself be clean: another tool's findings followed by the
+		// implementer's own clean pass is not that tool confirming the fix.
+		if pass.By != "" && pass.By != "unknown" && !implementers[pass.By] && pass.Findings == 0 {
 			return true
 		}
 	}
