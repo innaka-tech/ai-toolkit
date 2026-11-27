@@ -97,11 +97,10 @@ func (c Config) RegressionTestsRequired() bool {
 
 // ReviewRequired reports whether a task of this profile needs review passes until one finds 0
 // before it is done. [quality] review: "strict" (default, the v2 behaviour) or its alias "off"
-// (only strict work, which always needs its independent review), "standard", or "all".
+// (only strict work, which always needs its independent review), or "standard" (standard and
+// strict work). Lite work never needs it, so a quick close without a task stays quick.
 func (c Config) ReviewRequired(profile string) bool {
 	switch c.Quality.Review {
-	case "all":
-		return true
 	case "standard":
 		return profile == "standard" || profile == "strict"
 	default:

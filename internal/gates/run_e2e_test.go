@@ -736,3 +736,48 @@ aitk close --status blocked --summary "probe" --knowledge none
 		t.Fatalf("aitk work on another task inside aitk run must fail with E_RUN_SCOPE:\n%s", out)
 	}
 }
+
+const strictSetup = `f=$(ls docs/ai/tasks/"$AITK_RUN_TASK"-*.md)
+mkdir -p secure && echo s > secure/x.txt
+sed -i.bak 's/(Required for strict profile. Impact:, Security (STRIDE):, Rollback:, Validation:)/Impact: x. Security (STRIDE): y. Rollback: z. Validation: w./' "$f" && rm -f "$f.bak"
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+`
+
+// A strict agent hand-writes two passes by "other" reviewers and status done, without running
+// aitk close or aitk review pass. aitk run records the agent as a worker itself, so the passes
+// (re-attributed to the agent) can never count as the independent review.
+func TestRunStrictHandForgedPassesNeverCount(t *testing.T) {
+	dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+	id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Auth", "--ac", "works", "--profile", "strict")))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent := "set -e\n" + strictSetup + `awk '{print} /^status:/{print "review:\n  passes:\n    - n: 1\n      by: alice\n      at: \"2026-01-01T00:00:00Z\"\n      findings: 1\n    - n: 2\n      by: bob\n      at: \"2026-01-01T00:00:01Z\"\n      findings: 0"}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+sed -i.bak -E 's/^status: .*/status: done/' "$f" && rm -f "$f.bak"
+`
+	aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if st := statusOf(t, dir, id); st == "done" {
+		t.Fatalf("hand-written passes certified strict work: %+v", passesOf(t, dir, id))
+	}
+	for _, ps := range passesOf(t, dir, id) {
+		if ps.By == "alice" || ps.By == "bob" {
+			t.Fatalf("a hand-written reviewer name survived: %+v", passesOf(t, dir, id))
+		}
+	}
+}
+
+// Strict work without the agent's own clean pass is retried, never left waiting for another tool.
+func TestRunStrictRetriesWithoutTheAgentsOwnCleanPass(t *testing.T) {
+	for _, review := range []string{"", "aitk review pass --findings 1\n"} {
+		dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+		must(t, dir, bin, "task", "new", "Auth", "--ac", "works", "--profile", "strict")
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		agent := "set -e\n" + strictSetup + review + "aitk close --summary auth --knowledge none\n"
+		r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "2", "--max-tasks", "1")
+		if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Attempts != 2 || r.Data.Tasks[0].Status == "in_review" || r.Data.Tasks[0].Status == "done" {
+			t.Fatalf("review %q: strict work without the agent's own clean pass must be retried, not left waiting: %+v", review, r.Data.Tasks)
+		}
+	}
+}

@@ -102,10 +102,13 @@ func TestReviewNotConvergingAndBackCompat(t *testing.T) {
 }
 
 func TestReviewFindingsFromTheLoopReview(t *testing.T) {
-	// review = "all": a quick lite close with no active task must not leave orphaned in_review tasks.
+	// Lite work never needs the loop: a quick close with no active task stays quick. There is no
+	// "all" mode (it needed an exemption that agents could abuse).
 	dir := repo(t)
 	initRepo(t, dir)
 	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), `review = "standard"`, `review = "all"`, 1))
+	expect(t, aitk(t, dir, "brief"), 3, "E_SCHEMA")
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), `review = "all"`, `review = "standard"`, 1))
 	write(t, dir, "ok.txt", "1")
 	mustOK(t, aitk(t, dir, "check"))
 	r := aitk(t, dir, "close", "--summary", "typo fix", "--knowledge", "none")
@@ -230,7 +233,7 @@ func TestBriefReviewRuleUsesTheProfileCloseWillUse(t *testing.T) {
 func TestImplicitCloseStaysExemptAndBriefWithoutTask(t *testing.T) {
 	dir := repo(t)
 	initRepo(t, dir)
-	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), `review = "standard"`, `review = "all"`, 1)+"\n[uat]\nrequired = \"all\"\n")
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"all\"\n")
 	if md, _ := briefMD(t, dir); strings.Contains(md, "Review until clean") || strings.Contains(md, "finish this task") {
 		t.Fatalf("with no task there is nothing to review or finish:\n%s", md)
 	}
@@ -240,12 +243,12 @@ func TestImplicitCloseStaysExemptAndBriefWithoutTask(t *testing.T) {
 	mustOK(t, r)
 	id := data(r)["task"].(string)
 	if strings.Contains(r.stdout, "review until clean") {
-		t.Fatalf("an implicit quick close is exempt from the review loop; the note must name the real wait:\n%s", r.stdout)
+		t.Fatalf("a quick lite close needs no review loop; the note must name the real wait:\n%s", r.stdout)
 	}
 	asPerson(t)
 	acc := aitk(t, dir, "uat", "accept", id, "--by", "alice")
 	mustOK(t, acc)
 	if st := status(t, dir, id); st != "done" {
-		t.Fatalf("after acceptance an implicit quick close must be done (exempt from the loop), got %s: %s", st, acc.stdout)
+		t.Fatalf("after acceptance a quick lite close must be done (lite needs no review loop), got %s: %s", st, acc.stdout)
 	}
 }

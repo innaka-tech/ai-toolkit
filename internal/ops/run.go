@@ -753,7 +753,7 @@ func firstPositive(xs ...int) int {
 }
 
 // reviewStep is the prompt line for the agent's own review loop, only where it applies: a
-// non-strict task under [quality] review standard or all (strict work needs another tool).
+// task under [quality] review standard, or strict work (own clean pass before another tool's).
 func reviewStep(p *project.Project, t *task.Task) string {
 	prof := t.Profile // what close will use: pinned, unless the diff makes it strict
 	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {

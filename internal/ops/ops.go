@@ -183,7 +183,7 @@ func Init(dir, name, check string, dryRun bool) (*InitResult, error) {
 		cfg += "\n# [check]\n# cmd = \"make test\"   # required for the Definition of Done to verify work\n"
 	}
 	cfg += "\n[risk]\n# Changes matching these globs make a task \"strict\" (risk analysis + independent review).\nsensitive_paths = []\n"
-	cfg += "\n[quality]\n# Tasks of these profiles need review passes until one finds 0 before they are done:\n# off | strict | standard | all (strict always needs two passes, one by a different tool).\nreview = \"standard\"\n"
+	cfg += "\n[quality]\n# Tasks of these profiles need review passes until one finds 0 before they are done:\n# off | strict | standard (strict always needs two passes, one by a different tool).\nreview = \"standard\"\n"
 	cfg += "\n# How agents work and talk here, applied in every aitk brief (docs/how-to/assistant.md).\n# [assistant]\n# character = \"full\"    # lite | full | ultra | off\n# talk = \"normal\"       # normal | lite | caveman\n# auto_persona = true   # the brief picks the personas the task needs\n"
 	state := map[string]any{"schema_version": 2, "project": map[string]any{"name": project.Slug(name, 62)}}
 	stateJSON, _ := json.MarshalIndent(state, "", "  ")
@@ -590,7 +590,7 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			}
 			now := task.Now()
 			t = &task.Task{Meta: task.Meta{ID: task.NewID(p), Title: implicitTitle(in.Summary), Status: task.InProgress, Profile: "lite",
-				Created: now, Updated: now, CreatedBy: Tool(), Implicit: true}, Body: task.NewBody(in.Summary, nil)}
+				Created: now, Updated: now, CreatedBy: Tool()}, Body: task.NewBody(in.Summary, nil)}
 			if s.LastCheck != nil {
 				c := *s.LastCheck
 				t.Evidence = &task.Evidence{Check: &c}
@@ -800,8 +800,8 @@ func reviewSatisfied(p *project.Project, t *task.Task, prof string) bool {
 	if prof == "strict" {
 		return reviewDone(t)
 	}
-	if !p.Config.ReviewRequired(prof) || t.Implicit {
-		return true // an implicit quick close has no task to keep reviewing
+	if !p.Config.ReviewRequired(prof) {
+		return true
 	}
 	if t.Review == nil || len(t.Review.Passes) == 0 {
 		return false
@@ -863,7 +863,7 @@ func waitingOnOthers(p *project.Project, t *task.Task) bool {
 	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
 		prof = computed
 	}
-	if prof == "strict" || (p.Config.ReviewRequired(prof) && !t.Implicit) {
+	if prof == "strict" || p.Config.ReviewRequired(prof) {
 		if t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0 {
 			return false
 		}

@@ -277,11 +277,10 @@
           "enum": [
             "off",
             "strict",
-            "standard",
-            "all"
+            "standard"
           ],
           "default": "strict",
-          "description": "Profiles whose tasks need review passes until one finds 0 before they are done. off and strict (default) are the same: only strict work, which always needs two passes with one by a different tool; standard adds standard tasks; all adds lite tasks (quick closes without a task are exempt)"
+          "description": "Profiles whose tasks need review passes until one finds 0 before they are done. off and strict (default) are the same: only strict work, which always needs two passes with one by a different tool; standard adds standard tasks. Lite work never needs it."
         },
         "one_task": {
           "type": "boolean",
