@@ -816,6 +816,14 @@ func reviewSatisfied(p *project.Project, t *task.Task, prof string) bool {
 // SwitchAllowed enforces one task at a time: an agent finishes the active task (review until
 // clean, then close) or blocks it before starting another in the same worktree.
 func SwitchAllowed(p *project.Project, next string) error {
+	// Inside aitk run the agent works on the one task it was given; anything else would be
+	// finished outside the run's own verification.
+	if os.Getenv(RunEnv) != "" {
+		if mine := os.Getenv("AITK_RUN_TASK"); mine != "" && !strings.EqualFold(next, mine) {
+			return apperr.New("E_RUN_SCOPE", apperr.ExitGate, "work on "+mine+" only; aitk run picks the next task itself",
+				"inside aitk run this agent works on %s, not on another task", mine)
+		}
+	}
 	if !p.Config.OneTaskAtATime() {
 		return nil
 	}

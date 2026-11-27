@@ -215,8 +215,8 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 	b.Rules = rules(b.Profile, p.Config.Check.Cmd != "")
 	// The task's own profile counts from the start: at task start the diff is empty (lite),
 	// but the rules must already say how the task will be finished.
-	ruleProf := b.Profile
-	if t != nil && rank(t.Profile) > rank(ruleProf) {
+	ruleProf := b.Profile // already what close will use (pinned, unless the diff is strict)
+	if t != nil && !t.ProfilePinned && len(b.Changed) == 0 && rank(t.Profile) > rank(ruleProf) {
 		ruleProf = t.Profile
 	}
 	extra := append(reviewRules(p.Config, t, ruleProf), characterRules(p.Config)...)

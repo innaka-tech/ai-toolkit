@@ -206,3 +206,23 @@ func TestUATAcceptSaysWhyTheTaskStillWaits(t *testing.T) {
 		t.Fatalf("acceptance that cannot finish the task must say what is missing: %s", r.stdout)
 	}
 }
+
+func TestBriefReviewRuleUsesTheProfileCloseWillUse(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), "sensitive_paths = []", `sensitive_paths = ["secure/**"]`, 1))
+	id := data(aitk(t, dir, "task", "new", "Feature", "--start"))["id"].(string)
+	// A sensitive change saves the task as strict; once it is gone the diff is standard again.
+	write(t, dir, "secure/x.txt", "s\n")
+	mustOK(t, aitk(t, dir, "close", "--status", "in_progress", "--summary", "wip", "--knowledge", "none"))
+	run(t, dir, "rm", "-f", "secure/x.txt")
+	standardChange(t, dir, "p")
+	if md, _ := briefMD(t, dir); !strings.Contains(md, "Review until clean") {
+		t.Fatalf("an unpinned task whose diff is standard must see the review rule close will apply:\n%s", md)
+	}
+	// Pinned lite: close uses lite, so the loop does not apply.
+	mustOK(t, aitk(t, dir, "task", "update", id, "--profile", "lite"))
+	if md, _ := briefMD(t, dir); strings.Contains(md, "Review until clean") {
+		t.Fatalf("a task pinned lite must not be told to review until clean:\n%s", md)
+	}
+}

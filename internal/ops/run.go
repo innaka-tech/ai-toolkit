@@ -419,12 +419,11 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 			return "", "the security audit fails when aitk runs it"
 		}
 	}
-	if prof != "strict" && p.Config.ReviewRequired(prof) {
-		// Review until clean is the agent's own loop (self-review counts outside strict work).
-		// Only passes appended during this attempt are kept, attributed to the agent whatever
-		// the file says, so they can never stand in for another tool's independent review.
-		t.Review = ownPasses(snap.review, attempt, r.agentName)
-	}
+	// Only passes appended during this attempt are kept, attributed to the agent whatever the
+	// file says. The agent is a worker, so for strict work they can never stand in for another
+	// tool's independent review; they do count for the non-strict review loop, and they show
+	// the agent did its own pass, so a strict task left in_review does not hold the worktree.
+	t.Review = ownPasses(snap.review, attempt, r.agentName)
 	target, err := dod(p, t, prof, CloseInput{})
 	if err != nil {
 		t.Review = snap.review // a failed attempt keeps nothing the agent wrote about reviews
@@ -752,8 +751,11 @@ func firstPositive(xs ...int) int {
 // reviewStep is the prompt line for the agent's own review loop, only where it applies: a
 // non-strict task under [quality] review standard or all (strict work needs another tool).
 func reviewStep(p *project.Project, t *task.Task) string {
-	prof := t.Profile
-	if prof == "" || prof == "lite" {
+	prof := t.Profile // what close will use: pinned, unless the diff makes it strict
+	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
+		prof = computed
+	}
+	if prof == "lite" && !t.ProfilePinned {
 		prof = "standard" // the diff may still grow past lite
 	}
 	if prof == "strict" || !p.Config.ReviewRequired(prof) {
