@@ -385,6 +385,9 @@ func TaskUpdate(p *project.Project, id string, in UpdateInput) (*task.Task, erro
 				return apperr.NoActiveTask()
 			}
 		}
+		if err := RunScope(id); err != nil {
+			return err // inside aitk run the agent writes only its own task
+		}
 		if t, err = task.Find(p, id); err != nil {
 			return apperr.TaskNotFound(id)
 		}
@@ -909,6 +912,9 @@ func ReviewPass(p *project.Project, id string, findings int) (*task.Task, error)
 			return apperr.New("E_NO_ACTIVE_TASK", apperr.ExitGate, "aitk review pass <id> --findings N (reviewers: name the task; do not start it)", "no task given and no active task")
 		}
 		var err error
+		if err := RunScope(id); err != nil {
+			return err // inside aitk run the agent reviews only its own task
+		}
 		if t, err = task.Find(p, id); err != nil {
 			return apperr.TaskNotFound(id)
 		}

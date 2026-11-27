@@ -841,3 +841,93 @@ aitk close --summary "did it" --knowledge none
 		t.Fatalf("a new task the agent filed must be kept:\n%s", out)
 	}
 }
+
+// Tasks are found by id, not by file name: a new file that claims another task's id must not
+// take that task over, and aitk itself refuses to write other tasks inside a run.
+func TestRunRemovesFilesClaimingAnotherTasksID(t *testing.T) {
+	dir := newRunProject(t, "")
+	a := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "First", "--ac", "works")))[1]
+	b := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Second", "--ac", "works", "--depends", a)))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: tasks")
+	agent := `f=$(ls docs/ai/tasks/` + b + `-*.md)
+sed -e 's/^title: .*/title: Hijacked/' -e 's/^status: .*/status: cancelled/' -e 's/^updated: .*/updated: "2099-01-01T00:00:00Z"/' "$f" > docs/ai/tasks/zz-copy.md
+aitk --json task update ` + b + ` --add-ac "sneaky" > other-write.json 2>&1
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+aitk close --summary "did it" --knowledge none
+`
+	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if out, _ := os.ReadFile(filepath.Join(dir, "other-write.json")); !strings.Contains(string(out), "E_RUN_SCOPE") {
+		t.Fatalf("aitk must refuse writing another task inside a run:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs/ai/tasks/zz-copy.md")); err == nil {
+		t.Fatal("a file claiming another task's id must be removed")
+	}
+	if out := must(t, dir, bin, "task", "show", b); strings.Contains(out, "Hijacked") || strings.Contains(out, "sneaky") {
+		t.Fatalf("the other task must be untouched:\n%s", out)
+	}
+	if len(r.Data.Tasks) != 1 || !strings.Contains(r.Data.Tasks[0].Note, "duplicate of "+b) {
+		t.Fatalf("the run must report the removed duplicate: %+v", r.Data.Tasks)
+	}
+}
+
+// A task the agent files during an attempt keeps only its description: seeded reviews, evidence,
+// workers and a finished status are stripped, so it cannot arrive pre-certified.
+func TestRunNewTasksArriveAsPlainWork(t *testing.T) {
+	dir := newRunProject(t, "")
+	must(t, dir, bin, "task", "new", "First", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent := `n=$(aitk task new "Auth follow-up" --profile strict | awk 'NR==1{print $2}')
+echo "$n" > new-id.txt
+f=$(ls docs/ai/tasks/"$n"-*.md)
+awk '{print} /^status:/{print "review:\n  passes:\n    - n: 1\n      by: codex\n      at: \"2026-01-01T00:00:00Z\"\n      findings: 0\n    - n: 2\n      by: gemini-cli\n      at: \"2026-01-01T00:00:01Z\"\n      findings: 0\nworkers:\n  - nobody"}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+sed -i.bak -E 's/^status: .*/status: in_review/; s/^created_by: .*/created_by: human/' "$f" && rm -f "$f.bak"
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+aitk close --summary "did it" --knowledge none
+`
+	aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	id, _ := os.ReadFile(filepath.Join(dir, "new-id.txt"))
+	n := strings.TrimSpace(string(id))
+	var r struct {
+		Data struct {
+			Task struct {
+				Status    string   `json:"status"`
+				CreatedBy string   `json:"created_by"`
+				Workers   []string `json:"workers"`
+			} `json:"task"`
+		} `json:"data"`
+	}
+	json.Unmarshal([]byte(must(t, dir, bin, "--json", "task", "show", n)), &r)
+	if ps := passesOf(t, dir, n); len(ps) != 0 || r.Data.Task.Status != "todo" || r.Data.Task.CreatedBy != "custom" || len(r.Data.Task.Workers) != 0 {
+		t.Fatalf("a new task must arrive as plain work: %+v passes %+v", r.Data.Task, ps)
+	}
+}
+
+// The repository's git hooks are files the agent can write: aitk run commits without them.
+func TestRunCommitsWithoutTheRepositorysHooks(t *testing.T) {
+	dir := newRunProject(t, "")
+	must(t, dir, bin, "task", "new", "First", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent := `set -e
+printf '#!/bin/sh\nsed -i.bak "s/^review = \\"standard\\"/review = \\"off\\"/" aitk.toml && rm -f aitk.toml.bak\ngit add aitk.toml\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+echo x > feature.txt
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+aitk close --summary "did it" --knowledge none
+`
+	aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml")); !strings.Contains(string(cfg), `review = "standard"`) {
+		t.Fatalf("a hook must not change aitk.toml during the run's commit:\n%s", cfg)
+	}
+	if out := must(t, dir, "git", "log", "-1", "--stat"); strings.Contains(out, "aitk.toml") {
+		t.Fatalf("the run's commit must not carry a hook's change:\n%s", out)
+	}
+}

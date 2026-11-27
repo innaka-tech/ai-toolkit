@@ -213,6 +213,7 @@ type runner struct {
 	timeout          time.Duration
 	attempts         int
 	log              io.Writer
+	guard            *attemptGuard // the latest attempt's guard, re-applied before verification and commits
 }
 
 func (r *runner) one(c Candidate) (rt RunTask) {
@@ -239,7 +240,8 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 		snap := protectedOf(t)
 		started := task.Now()
 		prompt := runPrompt(p, t, rt.Attempts, r.attempts)
-		guard := guardOf(p, t)
+		guard := guardOf(p, t, r.agentName)
+		r.guard = guard
 		before := profile.Fingerprint(p)
 		ar := r.runAgent(prompt, t.ID)
 		tampered = append(tampered, guard.restore(p)...) // before verification and any commit
@@ -267,6 +269,7 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 		case task.Done, task.InReview:
 			claimed := t.Status
 			target, why := r.decide(t, snap, started)
+			tampered = append(tampered, guard.restore(p)...) // the check ran project code: look again
 			if why != "" {
 				t.Status, t.Closed, t.Updated = task.InProgress, "", task.Now()
 				WithLock(p, func() error { return task.Save(p, t) })
@@ -358,40 +361,92 @@ func (r *runner) restore(t *task.Task, snap protected) {
 	t.AddWorker(r.agentName)
 }
 
-// attemptGuard holds files an agent must not change during an attempt: aitk.toml and the other
-// tasks' files. New task files are allowed (a persona may file follow-up tasks).
-type attemptGuard map[string][]byte
+// attemptGuard holds what an agent must not change during an attempt: aitk.toml and the other
+// tasks' files. New task files are allowed (a persona may file follow-up tasks), but only as new
+// work: a file that claims an existing task's id is removed, and a new task keeps only its
+// description (no reviews, evidence, workers, pinned lower profile, or finished status).
+type attemptGuard struct {
+	files   map[string][]byte
+	ids     map[string]bool // ids of the tasks that existed before the attempt
+	curID   string
+	curFile string
+	agent   string
+}
 
-func guardOf(p *project.Project, t *task.Task) attemptGuard {
-	g := attemptGuard{}
+func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
+	g := &attemptGuard{files: map[string][]byte{}, ids: map[string]bool{strings.ToLower(t.ID): true}, curID: t.ID, curFile: filepath.ToSlash(t.File), agent: agent}
 	if b, err := os.ReadFile(p.Path(project.ConfigFile)); err == nil {
-		g[project.ConfigFile] = b
+		g.files[project.ConfigFile] = b
 	}
-	files, _ := filepath.Glob(p.Path(project.TasksDir, "*.md"))
-	for _, f := range files {
-		rel := filepath.ToSlash(filepath.Join(project.TasksDir, filepath.Base(f)))
-		if rel == filepath.ToSlash(t.File) || strings.HasPrefix(filepath.Base(f), t.ID+"-") {
+	tasks, _ := task.List(p)
+	for _, o := range tasks {
+		g.ids[strings.ToLower(o.ID)] = true
+		rel := filepath.ToSlash(o.File)
+		if rel == g.curFile {
 			continue
 		}
-		if b, err := os.ReadFile(f); err == nil {
-			g[rel] = b
+		if b, err := os.ReadFile(p.Path(rel)); err == nil {
+			g.files[rel] = b
 		}
 	}
 	return g
 }
 
-// restore writes back every guarded file the agent changed or removed and names them.
-func (g attemptGuard) restore(p *project.Project) []string {
-	var changed []string
-	for rel, want := range g {
-		if got, err := os.ReadFile(p.Path(rel)); err == nil && bytes.Equal(got, want) {
-			continue
-		}
-		if err := fsx.WriteFile(p.Path(rel), want, 0o644); err == nil {
-			changed = append(changed, rel)
-		}
+// restore writes back every guarded file the agent changed or removed, removes new files that
+// claim an existing task's id, strips new tasks down to their description, and names it all.
+func (g *attemptGuard) restore(p *project.Project) []string {
+	if g == nil {
+		return nil
 	}
+	var changed []string
+	WithLock(p, func() error {
+		for rel, want := range g.files {
+			if got, err := os.ReadFile(p.Path(rel)); err == nil && bytes.Equal(got, want) {
+				continue
+			}
+			if err := fsx.WriteFile(p.Path(rel), want, 0o644); err == nil {
+				changed = append(changed, rel)
+			}
+		}
+		files, _ := filepath.Glob(p.Path(project.TasksDir, "*.md"))
+		for _, f := range files {
+			rel := filepath.ToSlash(filepath.Join(project.TasksDir, filepath.Base(f)))
+			if _, guarded := g.files[rel]; guarded || rel == g.curFile {
+				continue
+			}
+			nt, err := task.Load(p, rel)
+			if err != nil {
+				continue // not a task file aitk can read; List skips it too
+			}
+			if g.ids[strings.ToLower(nt.ID)] {
+				if os.Remove(f) == nil {
+					changed = append(changed, rel+" (removed: duplicate of "+nt.ID+")")
+				}
+				continue
+			}
+			if sanitizeNewTask(nt, g.agent) {
+				if task.Save(p, nt) == nil {
+					changed = append(changed, rel+" (new task reset to its description)")
+				}
+			}
+		}
+		return nil
+	})
 	sort.Strings(changed)
+	return changed
+}
+
+// sanitizeNewTask keeps a task the agent filed as plain new work. It reports whether it changed.
+func sanitizeNewTask(t *task.Task, agent string) bool {
+	changed := t.Review != nil || t.Evidence != nil || len(t.Workers) > 0 || t.CreatedBy != agent ||
+		(t.ProfilePinned && t.Profile != "strict") || (t.Status != task.Todo && t.Status != task.Blocked) || t.Closed != ""
+	t.Review, t.Evidence, t.Workers, t.CreatedBy, t.Closed = nil, nil, nil, agent, ""
+	if t.ProfilePinned && t.Profile != "strict" {
+		t.ProfilePinned = false // pinning raises the bar only
+	}
+	if t.Status != task.Todo && t.Status != task.Blocked {
+		t.Status = task.Todo
+	}
 	return changed
 }
 
@@ -605,6 +660,9 @@ func isAitkState(path string) bool {
 // record is committed, so a broken attempt never lands in the history or in the next task's commit.
 func (r *runner) commitWork(rt *RunTask) error {
 	p := r.p
+	if again := r.guard.restore(p); len(again) > 0 { // anything still running could have changed them
+		rt.Note = strings.TrimPrefix(rt.Note+"; restored before the commit: "+strings.Join(again, ", "), "; ")
+	}
 	if len(worktreeChanges(p)) == 0 {
 		return nil
 	}
@@ -651,7 +709,13 @@ func (r *runner) commitWork(rt *RunTask) error {
 }
 
 func (r *runner) commit(rt *RunTask, subject string) error {
-	if out, err := literalGit(r.p, "commit", "-q", "-m", subject, "-m", "AI-Task: "+rt.ID+"\nAI-Tool: "+r.agentName); err != nil {
+	// The repository's hooks are files the agent could have written: commit without them.
+	noHooks, err := os.MkdirTemp("", "aitk-nohooks-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(noHooks)
+	if out, err := literalGit(r.p, "-c", "core.hooksPath="+noHooks, "commit", "--no-verify", "-q", "-m", subject, "-m", "AI-Task: "+rt.ID+"\nAI-Tool: "+r.agentName); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(checkSummary(out)))
 	}
 	out, err := gitx.RunRaw(r.p.Root, "rev-parse", "--short", "HEAD")
