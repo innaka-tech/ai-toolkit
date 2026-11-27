@@ -7,3 +7,4 @@
 - cobra StringVar silently keeps only the last value of a repeated flag; list-like flags must be StringArray <!-- aitk:k date=2026-11-26 task=T-cy5a tags=bug -->
 - A task's changes are measured from the newest merge base of local and origin default branch; gates.DefaultBase (CI) prefers origin/ on purpose <!-- aitk:k date=2026-11-27 task=T-5w2x tags=bug -->
 - Everything that must apply automatically to every agent goes into aitk brief: every tool starts there (AGENTS.md, SessionStart hook, MCP instructions) <!-- aitk:k date=2026-11-27 task=T-gt80 -->
+- Slop rules stay narrow and advisory: a repo-wide scan of aitk itself must stay at zero hits, or the rule is too broad <!-- aitk:k date=2026-11-27 task=T-yy6r -->

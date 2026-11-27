@@ -23,6 +23,7 @@ aitk debt                   # deliberate shortcuts recorded in code
 | `documentation` | Which document holds what, style |
 | `ai-agents` | Coding agents' permissions and oversight; building LLM features (OWASP LLM Top 10) |
 | `ux` | WCAG 2.1 AA and usability rules |
+| `anti-slop` | No generic AI output in code, text, or UI; `aitk slop` finds the mechanical cases |
 
 ## Your own standards
 

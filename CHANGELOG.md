@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- **Anti-slop**: `aitk slop [path…] [--all]` (and MCP `slop`) lists generic AI output in the change with file and line: filler phrases, assistant voice, emoji headings, comments that restate code, swallowed errors, placeholders. Advisory; `aitk-slop: ignore` marks a deliberate line. New standard `aitk standards anti-slop` and persona `/aitk-deslop [scope] [fix]`. With `auto_persona`, the brief adds aitk-deslop when the changed files have hits, naming the first one.
+- **`/aitk-creative <problem>`**: five options that differ in kind (or five visual directions), scored on explicit criteria, one pick proved with a small spike. The brief adds it for tasks tagged `spike`, `idea`, `creative`, or `design`.
+
 ## [2.9.0] - 2026-11-27
 
 Character, talk, and personas applied automatically in every agent session.

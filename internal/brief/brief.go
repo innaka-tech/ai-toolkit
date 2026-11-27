@@ -215,7 +215,7 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 	b.Rules = rules(b.Profile, p.Config.Check.Cmd != "")
 	b.Rules = append(b.Rules[:len(b.Rules)-1], append(characterRules(p.Config), b.Rules[len(b.Rules)-1])...)
 	if p.Config.AutoPersona() {
-		b.Personas, b.Standards = pickPersonas(t, b.Profile, b.Changed)
+		b.Personas, b.Standards = pickPersonas(p, t, b.Profile, b.Changed)
 	}
 	if active != "" && (t == nil || !strings.EqualFold(t.ID, active)) {
 		b.MissingActive = active
