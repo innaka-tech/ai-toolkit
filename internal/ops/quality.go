@@ -246,7 +246,7 @@ func UATAccept(p *project.Project, id, by, note string) (*UATDecision, error) {
 		} else if target == task.InReview {
 			switch {
 			case prof == "strict" && !reviewDone(t):
-				res.Missing = "strict task still needs ≥2 review passes (last with 0 findings, one by a tool that did not work on it): aitk review pass " + t.ID + " --findings N"
+				res.Missing = "strict task still needs ≥2 review passes (last with 0 findings, one clean (0 findings) by a tool that did not work on it): aitk review pass " + t.ID + " --findings N"
 			case !reviewSatisfied(p, t, prof):
 				res.Missing = "review until clean is not finished: aitk review pass " + t.ID + " --findings N, fix, repeat until a pass on the current code finds 0"
 			}

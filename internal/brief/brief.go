@@ -308,7 +308,7 @@ func rules(prof string, hasCheck bool) []string {
 	case "strict":
 		r = append(r, "Every acceptance criterion must be satisfied: aitk task update <id> --ac-done N.",
 			"Fill the task's Risk section: Impact, Security (STRIDE), Rollback, Validation.",
-			"Done needs ≥2 review passes (last with 0 findings), one by a different tool: aitk review pass --findings N.")
+			"Done needs ≥2 review passes (last with 0 findings), one clean (0 findings) by a different tool: aitk review pass --findings N.")
 	}
 	r = append(r, "If unsure, blocked, or the check fails twice: stop and ask the user.")
 	return r

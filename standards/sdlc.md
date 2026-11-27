@@ -24,7 +24,7 @@ Every piece of work moves through the same phases; each phase has an entry gate,
 - Every criterion satisfied; `aitk check` passes on the final code.
 - Reviewed until clean: record each pass (`aitk review pass --findings N`), fix, repeat until a pass finds 0 (`[quality] review`). One task at a time: finish or block it before starting another.
 - Bug fixes carry a regression test; `aitk impact` shows no uncovered reference left unexplained.
-- Strict profile: risk analysis filled, `aitk audit` clean or accepted, two review passes (last with 0 findings, one by a different tool).
+- Strict profile: risk analysis filled, `aitk audit` clean or accepted, two review passes (last with 0 findings, one clean (0 findings) by a different tool).
 - Handoff written with `--summary` and `--knowledge`.
 
 ## Change classes (ITIL-style)

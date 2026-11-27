@@ -15,4 +15,5 @@ Steps:
 4. List each confirmed defect in the finding format of `aitk standards review` (severity, file:line, what it does, what goes wrong, fix, cost of skipping). Leave out style opinions; end with **Skipped:** and **Risk:**.
 5. Record the pass on that task with the number of defects: `aitk review pass <id> --findings N` (0 when you found none; MCP: `review_pass` with id). Naming the task is what keeps you independent: never start it to record a pass.
 
-A strict task needs two passes, the last with 0 findings, at least one by a tool that did not work on it.
+A strict task needs two passes, the last with 0 findings, at least one clean (0 findings) by a tool that did not work on it.
+If you recorded findings, review again after they are fixed: only your clean pass (0 findings) counts as the independent review.
