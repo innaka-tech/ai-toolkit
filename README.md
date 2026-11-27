@@ -69,6 +69,8 @@ Besides working on their own, agents take commands. `aitk setup` and `aitk adapt
 
 **Standards built in**: `aitk standards` serves 13 development standards to every project and every agent (character, SDLC with Definition of Ready/Done, engineering, testing, security on OWASP/ASVS, API, database, operations and DR, git, review and finding format, documentation, AI agents, UX/WCAG). A project overrides or extends any topic with `docs/ai/standards/<topic>.md`. `aitk debt` lists the `shortcut:` comments that record deliberate limits. See [standards](docs/how-to/standards.md).
 
+**Automatic**: `[assistant]` in `aitk.toml` sets the character (`lite|full|ultra|off`) and reply style (`normal|lite|caveman`) for every agent session, and the brief picks the personas a task needs (migrations → `aitk-dba`, UI → `aitk-ux`, CI/Docker → `aitk-devops`, bug → `aitk-fix`, strict → `aitk-security`, code without tests → `aitk-qa`) and tells the agent to run them before close. See [automatic assistant](docs/how-to/assistant.md).
+
 Your own: a markdown file in `docs/ai/commands/` becomes a slash command in every tool your team uses. `aitk prompt <name> <text>` prints any command for scripting (`aitk prompt aitk-hunt payments | claude -p`). See [slash commands and personas](docs/how-to/commands.md).
 
 ## How it works
@@ -140,7 +142,7 @@ One static binary, no runtime dependencies besides git. The script also installs
 ## Documentation
 
 - [Tutorial: your first project in 10 minutes](docs/tutorial.md)
-- How-to: [set up AI tools](docs/how-to/ai-tools.md) · [slash commands and personas](docs/how-to/commands.md) · [autopilot: aitk run](docs/how-to/autopilot.md) · [security, UAT, conventions](docs/how-to/quality.md) · [release your project](docs/how-to/release.md) · [Spec Kit, BMAD, Superpowers](docs/how-to/planning-tools.md) · [work in parallel](docs/how-to/parallel.md) · [gates and CI](docs/how-to/ci.md) · [migrate from v1](docs/how-to/migrate-v1.md) · [write a plugin](docs/how-to/plugins.md)
+- How-to: [set up AI tools](docs/how-to/ai-tools.md) · [slash commands and personas](docs/how-to/commands.md) · [automatic assistant](docs/how-to/assistant.md) · [autopilot: aitk run](docs/how-to/autopilot.md) · [security, UAT, conventions](docs/how-to/quality.md) · [release your project](docs/how-to/release.md) · [Spec Kit, BMAD, Superpowers](docs/how-to/planning-tools.md) · [work in parallel](docs/how-to/parallel.md) · [gates and CI](docs/how-to/ci.md) · [migrate from v1](docs/how-to/migrate-v1.md) · [write a plugin](docs/how-to/plugins.md)
 - Reference: [CLI](docs/reference/cli.md) · [specification](docs/spec/README.md) · [JSON Schemas](schemas/) · [changelog](CHANGELOG.md)
 - Explanation: [architecture decisions](docs/adr/README.md)
 

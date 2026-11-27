@@ -39,6 +39,8 @@ type Brief struct {
 	Goal                *GoalInfo          `json:"goal,omitempty"`
 	MissingActive       string             `json:"missing_active_task,omitempty"` // active task not found on this branch
 	Plugins             []PluginSection    `json:"plugin_sections,omitempty"`
+	Personas            []Persona          `json:"personas,omitempty"`
+	Standards           []string           `json:"standards,omitempty"`
 	PluginErr           []string           `json:"plugin_errors,omitempty"`
 	Markdown            string             `json:"markdown"`
 }
@@ -211,6 +213,10 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 		b.Goal = goalInfo(p, t.Goal, tasks)
 	}
 	b.Rules = rules(b.Profile, p.Config.Check.Cmd != "")
+	b.Rules = append(b.Rules[:len(b.Rules)-1], append(characterRules(p.Config), b.Rules[len(b.Rules)-1])...)
+	if p.Config.AutoPersona() {
+		b.Personas, b.Standards = pickPersonas(t, b.Profile, b.Changed)
+	}
 	if active != "" && (t == nil || !strings.EqualFold(t.ID, active)) {
 		b.MissingActive = active
 		b.Rules = append([]string{"The active task " + active + " does not exist on this branch (switched branches?): run `aitk doctor --fix`, then `aitk task next`."}, b.Rules...)
@@ -297,8 +303,6 @@ func rules(prof string, hasCheck bool) []string {
 			"Fill the task's Risk section: Impact, Security (STRIDE), Rollback, Validation.",
 			"Done needs ≥2 review passes (last with 0 findings), one by a different tool: aitk review pass --findings N.")
 	}
-	r = append(r, "Smallest change that fully works; never cut validation, error handling, security, or what was asked (aitk standards character).",
-		"Correct defects you find: fix in scope test-first, otherwise file a task. End with Skipped: and Risk: lines.")
 	r = append(r, "If unsure, blocked, or the check fails twice: stop and ask the user.")
 	return r
 }
@@ -412,6 +416,16 @@ func render(b *Brief) string {
 	}
 	for _, ps := range b.Plugins {
 		fmt.Fprintf(&s, "\n## %s (plugin %s)\n%s\n", ps.Title, ps.Plugin, strings.TrimSpace(ps.Body))
+	}
+	if len(b.Personas) > 0 {
+		s.WriteString("\n## Personas this task needs (run them yourself, before close)\n")
+		s.WriteString("Print each prompt with the command and follow it; use a subagent if your tool can start one. A review pass still needs a different tool.\n")
+		for _, ps := range b.Personas {
+			fmt.Fprintf(&s, "- `%s`: %s\n", ps.Run, ps.Why)
+		}
+	}
+	if len(b.Standards) > 0 {
+		s.WriteString("\nStandards to follow: " + "`aitk standards " + strings.Join(b.Standards, "`, `aitk standards ") + "`\n")
 	}
 	s.WriteString("\n## Rules\n")
 	for _, r := range b.Rules {
