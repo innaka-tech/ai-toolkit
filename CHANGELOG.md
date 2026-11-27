@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-11-27
+
+Character, talk, and personas applied automatically in every agent session.
+
 ### Added
 - **Automatic assistant** (`[assistant]` in `aitk.toml`): `character` (lite, full, ultra, off; default full) and `talk` (normal, lite, caveman; default normal) are applied in every `aitk brief`, so no slash command is needed; `AITK_CHARACTER` and `AITK_TALK` override them per person. With `auto_persona` (default true) the brief lists the personas the active task needs, picked from its tags, risk profile, and changed files, with the command to run each and the standards to follow. Invalid values fail with `E_SCHEMA`.
 
