@@ -273,6 +273,39 @@
           "description": "Tasks tagged bug must change a test file before they can be done"
         }
       }
+    },
+    "assistant": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How agents work and talk in this project; applied by aitk brief. AITK_CHARACTER and AITK_TALK override per person.",
+      "properties": {
+        "character": {
+          "type": "string",
+          "enum": [
+            "lite",
+            "full",
+            "ultra",
+            "off"
+          ],
+          "default": "full",
+          "description": "lite: propose the smaller option; full: smallest change that fully works; ultra: also challenge the request; off: no character rules"
+        },
+        "talk": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "lite",
+            "caveman"
+          ],
+          "default": "normal",
+          "description": "Reply style; code, commands, errors, warnings and Skipped/Risk lines are never shortened"
+        },
+        "auto_persona": {
+          "type": "boolean",
+          "default": true,
+          "description": "The brief picks the personas and standards the active task needs and tells the agent to run them"
+        }
+      }
     }
   }
 }

@@ -30,6 +30,7 @@ type Config struct {
 	Security  SecurityCfg  `toml:"security,omitempty" json:"security,omitempty"`
 	Run       *RunCfg      `toml:"run,omitempty" json:"run,omitempty"`
 	Quality   QualityCfg   `toml:"quality,omitempty" json:"quality,omitempty"`
+	Assistant AssistantCfg `toml:"assistant,omitempty" json:"assistant,omitempty"`
 }
 
 type RunCfg struct {
@@ -41,6 +42,40 @@ type RunCfg struct {
 	TimeoutMinutes int      `toml:"timeout_minutes,omitempty" json:"timeout_minutes,omitempty"`
 	Commit         bool     `toml:"commit,omitempty" json:"commit,omitempty"`
 }
+
+// AssistantCfg sets how agents work and talk in this project, applied through aitk brief.
+type AssistantCfg struct {
+	Character   string `toml:"character,omitempty" json:"character,omitempty"`
+	Talk        string `toml:"talk,omitempty" json:"talk,omitempty"`
+	AutoPersona *bool  `toml:"auto_persona,omitempty" json:"auto_persona,omitempty"`
+}
+
+// CharacterMode is lite, full (default), ultra, or off; AITK_CHARACTER overrides it per person.
+func (c Config) CharacterMode() string {
+	return pick(os.Getenv("AITK_CHARACTER"), c.Assistant.Character, "full", "lite", "full", "ultra", "off")
+}
+
+// TalkMode is normal (default), lite, or caveman; AITK_TALK overrides it per person.
+func (c Config) TalkMode() string {
+	return pick(os.Getenv("AITK_TALK"), c.Assistant.Talk, "normal", "normal", "lite", "caveman")
+}
+
+// AutoPersona reports whether the brief picks personas for the active task (default true).
+func (c Config) AutoPersona() bool { return c.Assistant.AutoPersona == nil || *c.Assistant.AutoPersona }
+
+// pick returns the first of env and cfg that is an allowed value, else def. An invalid
+// environment value is ignored rather than failing every command.
+func pick(env, cfg, def string, allowed ...string) string {
+	for _, v := range []string{strings.ToLower(strings.TrimSpace(env)), cfg} {
+		for _, a := range allowed {
+			if v == a {
+				return v
+			}
+		}
+	}
+	return def
+}
+
 type QualityCfg struct {
 	RegressionTests *bool `toml:"regression_tests,omitempty" json:"regression_tests,omitempty"`
 }

@@ -183,6 +183,7 @@ func Init(dir, name, check string, dryRun bool) (*InitResult, error) {
 		cfg += "\n# [check]\n# cmd = \"make test\"   # required for the Definition of Done to verify work\n"
 	}
 	cfg += "\n[risk]\n# Changes matching these globs make a task \"strict\" (risk analysis + independent review).\nsensitive_paths = []\n"
+	cfg += "\n# How agents work and talk here, applied in every aitk brief (docs/how-to/assistant.md).\n# [assistant]\n# character = \"full\"    # lite | full | ultra | off\n# talk = \"normal\"       # normal | lite | caveman\n# auto_persona = true   # the brief picks the personas the task needs\n"
 	state := map[string]any{"schema_version": 2, "project": map[string]any{"name": project.Slug(name, 62)}}
 	stateJSON, _ := json.MarshalIndent(state, "", "  ")
 	files := []struct {

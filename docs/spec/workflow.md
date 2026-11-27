@@ -148,10 +148,11 @@ User acceptance is recorded only by a person: `aitk uat accept|reject` refuses t
 2. Task: the session's active task, or the most recently updated `in_progress` task, or a list of up to 5 open tasks. Includes status, profile, unchecked acceptance criteria, and next steps. When the project has no tasks but `_legacy/current-task.md` exists (free-form v1), the first 40 lines of it are shown instead, labeled as legacy.
 3. Last handoff: the newest handoff for that task (or for the project), summary and `next`.
 4. Knowledge: up to 15 entries ranked by (a) pinned, (b) topic or tag overlap with the task and with paths changed on the current branch, (c) recency. Plugins with the `brief.sections` hook MAY add entries here.
-5. Rules: the profile's Definition of Done (§5) as ≤ 10 lines.
-6. Next commands: 3–5 commands that fit the current state.
+5. Personas (when `assistant.auto_persona`, default true): the personas the active task needs, each with the `aitk prompt` command that runs it and the reason, plus the standards topics to follow. Picked from the task's tags (`bug` → aitk-fix, `security` → aitk-security), its profile (strict → aitk-security), and changed paths (migrations or `.sql` → aitk-dba; UI files → aitk-ux; Docker, CI, infrastructure → aitk-devops; OpenAPI or routes → aitk-architect; code without a test change outside lite → aitk-qa). Without an active task: aitk-team.
+6. Rules: the profile's Definition of Done (§5) as ≤ 12 lines, including the `assistant.character` and `assistant.talk` modes (`AITK_CHARACTER` and `AITK_TALK` override them per person; invalid environment values are ignored).
+7. Next commands: 3–5 commands that fit the current state.
 
-Budget: tokens are estimated as `ceil(utf8_bytes / 4)`. When over budget, aitk removes knowledge entries from the lowest rank first, then shortens the handoff body, then truncates notes. Sections 1, 2, 5, and 6 are never removed. Output MUST be deterministic for identical repository state.
+Budget: tokens are estimated as `ceil(utf8_bytes / 4)`. When over budget, aitk removes knowledge entries from the lowest rank first, then shortens the handoff body, then truncates notes. Sections 1, 2, 5, 6, and 7 are never removed. Output MUST be deterministic for identical repository state.
 
 ## 8. Knowledge
 
