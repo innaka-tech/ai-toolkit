@@ -326,3 +326,23 @@ func TestStrictOwnPassIsExplainedToInteractiveAgents(t *testing.T) {
 		t.Fatalf("with review = standard the brief must explain the own pass on strict work:\n%s", md)
 	}
 }
+
+func TestStrictCloseNoteAsksForTheOwnPassFirst(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), "sensitive_paths = []", `sensitive_paths = ["db/**"]`, 1))
+	newStarted(t, dir, "Add payments table", "--ac", "migration applies")
+	write(t, dir, "db/001.sql", "create table payments(id int);\n")
+	write(t, dir, "ok.txt", "1")
+	f := fillRisk(t, dir)
+	mustOK(t, aitk(t, dir, "security", "checklist"))
+	write(t, dir, f, strings.ReplaceAll(read(t, dir, f), "- [ ] V", "- [x] V"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "audit"))
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	r := aitk(t, dir, "close", "--summary", "payments", "--knowledge", "none")
+	mustOK(t, r)
+	if !strings.Contains(r.stdout, "first review your own change") {
+		t.Fatalf("with review = standard, closing strict work without an own pass must ask for it first:\n%s", r.stdout)
+	}
+}

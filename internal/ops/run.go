@@ -269,7 +269,11 @@ func (r *runner) one(c Candidate) RunTask {
 			rt.Status, rt.Note = target, "" // an earlier attempt's note no longer applies
 			if target == task.InReview {
 				rt.Note = "waiting for a person's acceptance (aitk uat accept " + t.ID + ")"
-				if t.Profile == "strict" && !reviewDone(t) {
+				kept := t.Review
+				t.Review = snap.review // the same test decide used: passes from outside the attempt
+				independent := reviewDone(t)
+				t.Review = kept
+				if t.Profile == "strict" && (!reviewDone(t) || !independent) {
 					rt.Note = "waiting for an independent review pass by another tool (aitk review pass " + t.ID + " --findings N)"
 				}
 			}

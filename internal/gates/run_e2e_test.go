@@ -875,7 +875,10 @@ func TestRunStrictAfterIndependentFindingsWaitsForTheReviewer(t *testing.T) {
 		must(t, dir, bin, "task", "update", id, "--status", "todo")
 		must(t, dir, "git", "add", "-A")
 		must(t, dir, "git", "commit", "-qm", "chore: task")
-		aitkRun(t, dir, "--cmd", "set -e\n"+strictSetup+"aitk review pass --findings 0\naitk close --summary auth --knowledge none\n", "--max-attempts", "1", "--max-tasks", "1")
+		r := aitkRun(t, dir, "--cmd", "set -e\n"+strictSetup+"aitk review pass --findings 0\naitk close --summary auth --knowledge none\n", "--max-attempts", "1", "--max-tasks", "1")
+		if len(r.Data.Tasks) != 1 || !strings.Contains(r.Data.Tasks[0].Note, "independent review pass by another tool") {
+			t.Fatalf("loop=%v: the note must name the wait for another tool, not a person: %+v", loop, r.Data.Tasks)
+		}
 		if st := statusOf(t, dir, id); st == "done" {
 			t.Fatalf("loop=%v: strict work done on the agent's own pass after the reviewer's findings: %+v", loop, passesOf(t, dir, id))
 		}
