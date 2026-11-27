@@ -34,6 +34,8 @@ export AITK_TALK=caveman AITK_CHARACTER=ultra
 | Dockerfile, compose, CI workflows, Terraform, Helm, k8s changed | `aitk-devops` | operations |
 | OpenAPI/Swagger or `routes/` changed | `aitk-architect` | api |
 | Code changed with no test change (standard or strict profile) | `aitk-qa` | testing |
+| Task tagged `spike`, `idea`, `creative`, or `design` | `aitk-creative` | |
+| `aitk slop` finds hits in the changed files | `aitk-deslop` (shows the first hit) | anti-slop |
 
 The brief shows each one as a command, for example `aitk prompt aitk-dba fix`. The agent prints the prompt and follows it, in a subagent if its tool can start one. The signals are simple file and tag rules, so you can predict them; turn the list off with `auto_persona = false`.
 
