@@ -1247,3 +1247,73 @@ echo x > feature.txt
 		t.Fatalf("a commit was made although the guard could not restore the tasks folder: %+v", r)
 	}
 }
+
+// Security review pass 4 scenarios.
+func TestRunGuardFourthPass(t *testing.T) {
+	close := "touch ok.txt\naitk task update --ac-done 1\naitk check\naitk close --summary done --knowledge none\n"
+	head := func(dir string) string { return strings.TrimSpace(must(t, dir, "git", "rev-parse", "HEAD")) }
+
+	// A change the guard cannot restore ends the task and the run at once, also without
+	// --commit: a second attempt must not start from it, nor the next task.
+	for _, mode := range [][]string{nil, {"--commit"}} {
+		dir := newRunProject(t, "")
+		_, _, bFile, _ := twoTasks(t, dir)
+		out := t.TempDir()
+		agent := `sed -i.bak 's/^status: .*/status: cancelled/' ` + bFile + ` && rm -f ` + bFile + `.bak
+mv docs/ai ` + out + `/ai && ln -s ` + out + `/ai docs/ai
+`
+		before := head(dir)
+		r := aitkRun(t, dir, append([]string{"--cmd", agent, "--max-attempts", "2", "--max-tasks", "3"}, mode...)...)
+		if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Attempts != 1 || !strings.Contains(r.Data.Stopped, "could not restore") ||
+			!strings.Contains(r.Data.Tasks[0].Note, "docs/ai") {
+			t.Fatalf("mode %v: an unrestorable change must stop the task and the run: %+v", mode, r)
+		}
+		if head(dir) != before {
+			t.Fatalf("mode %v: nothing may be committed", mode)
+		}
+	}
+
+	// A symlinked parent of the tasks folder (docs/ai) stops the commit.
+	dir := newRunProject(t, "")
+	twoTasks(t, dir)
+	out := t.TempDir()
+	agent := close + `cp -r docs/ai/. ` + out + `/ && rm -rf docs/ai && ln -s ` + out + ` docs/ai
+echo x > feature.txt
+`
+	before := head(dir)
+	r := aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if head(dir) != before || !strings.Contains(r.Data.Stopped, "could not restore") {
+		t.Fatalf("a symlinked docs/ai must stop the commit: %+v", r)
+	}
+
+	// A .git directory replaced by a gitdir: file stops the commit.
+	dir = newRunProject(t, "")
+	twoTasks(t, dir)
+	gd := t.TempDir()
+	agent = close + `mv .git ` + gd + `/g && echo "gitdir: ` + gd + `/g" > .git
+echo x > feature.txt
+`
+	before = head(dir)
+	r = aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if head(dir) != before || !strings.Contains(r.Data.Stopped, "could not restore") {
+		t.Fatalf("a replaced .git directory must stop the commit: %+v", r)
+	}
+
+	// A config file in the working tree that git includes is guarded: a filter the agent
+	// defines there cannot rewrite another task in aitk's own commit.
+	dir = newRunProject(t, "")
+	write(t, dir, "repo.gitconfig", "[core]\n\tautocrlf = false\n")
+	must(t, dir, "git", "config", "include.path", "../repo.gitconfig")
+	_, _, bFile, bWas := twoTasks(t, dir)
+	agent = `printf '[filter "x"]\n\tclean = sed s/^status:.*/status:\\\\ cancelled/\n' >> repo.gitconfig
+echo 'docs/ai/tasks/*.md filter=x' > .gitattributes
+echo x > feature.txt
+` + close
+	aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if got, _ := sh(t, dir, "git", "show", "HEAD:"+bFile); got != string(bWas) {
+		t.Fatalf("an included config's filter rewrote another task in the commit:\n%s", got)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "repo.gitconfig")); strings.Contains(string(b), "filter") {
+		t.Fatalf("the included config must be restored:\n%s", b)
+	}
+}

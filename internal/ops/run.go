@@ -176,6 +176,15 @@ func Run(p *project.Project, in RunInput, log io.Writer) (*RunResult, error) {
 		c := nx.Ready[0]
 		filter.Skip[c.ID] = true
 		rt := r.one(c)
+		if r.guard != nil {
+			r.guard.checkGitDirs(p)
+			if len(r.guard.failed) > 0 { // in every mode: the next task must not start from a forged baseline
+				rt.Note = strings.TrimPrefix(rt.Note+"; could not restore "+strings.Join(dedupe(r.guard.failed), ", "), "; ")
+				res.Tasks = append(res.Tasks, rt)
+				res.Stopped = "aitk could not restore what the agent changed outside its task: put those files back by hand (git status), then run again"
+				break
+			}
+		}
 		if rt.AgentError {
 			res.Tasks = append(res.Tasks, rt)
 			res.Stopped = "the agent failed to start: fix the agent command or its login, then run again (" + rt.ID + " stays " + rt.Status + ")"
@@ -213,7 +222,7 @@ type runner struct {
 	timeout          time.Duration
 	attempts         int
 	log              io.Writer
-	guard            *attemptGuard // the latest attempt's guard, re-applied before verification and commits
+	guard            *attemptGuard // the current task's guard, re-applied before verification and commits
 }
 
 func (r *runner) one(c Candidate) (rt RunTask) {
@@ -225,11 +234,16 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 			rt.Note = strings.TrimPrefix(rt.Note+"; restored what the agent changed outside its task: "+strings.Join(dedupe(tampered), ", "), "; ")
 		}
 	}()
+	r.guard = nil
 	t, err := TaskStart(p, c.ID)
 	if err != nil {
 		rt.Status, rt.Note = c.Status, "could not start: "+err.Error()
 		return rt
 	}
+	// One guard for the whole task: a later attempt must not take an earlier attempt's
+	// unrestorable change as its baseline.
+	guard := guardOf(p, t, r.agentName)
+	r.guard = guard
 	for rt.Attempts < r.attempts {
 		rt.Attempts++
 		fmt.Fprintf(r.log, "aitk run: %s %q, attempt %d of %d\n", t.ID, t.Title, rt.Attempts, r.attempts)
@@ -243,8 +257,6 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 		if rt.Attempts > 1 && rt.Note != "" {
 			prompt = "The previous attempt did not finish: " + rt.Note + "\n\n" + prompt
 		}
-		guard := guardOf(p, t, r.agentName)
-		r.guard = guard
 		before := profile.Fingerprint(p)
 		ar := r.runAgent(prompt, t.ID)
 		tampered = append(tampered, guard.restore(p)...) // before verification and any commit
@@ -255,6 +267,9 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 			return rt
 		}
 		t = cur
+		if len(guard.failed) > 0 {
+			return r.guardFailed(t, snap, rt)
+		}
 		// An agent that fails at once without touching anything is broken (not installed, bad
 		// flags, not logged in): stop the run instead of blaming the task.
 		if (code != 0 || runErr != nil) && ar.duration < agentStartupWindow && t.Status == task.InProgress && profile.Fingerprint(p) == before {
@@ -273,6 +288,9 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 			claimed := t.Status
 			target, why := r.decide(t, snap, started)
 			tampered = append(tampered, guard.restore(p)...) // the check ran project code: look again
+			if len(guard.failed) > 0 {
+				return r.guardFailed(t, snap, rt)
+			}
 			if why != "" {
 				t.Status, t.Closed, t.Updated = task.InProgress, "", task.Now()
 				WithLock(p, func() error { return task.Save(p, t) })
@@ -314,6 +332,20 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 		}
 	}
 	return r.handOver(t, rt)
+}
+
+// guardFailed ends the task when the guard could not put something back: nothing the agent
+// did can be verified, so the task stays open and keeps no grants. Run then stops.
+func (r *runner) guardFailed(t *task.Task, snap protected, rt RunTask) RunTask {
+	r.restore(t, snap)
+	if t.Status == task.Done || t.Status == task.InReview {
+		t.Status, t.Closed = task.InProgress, ""
+	}
+	t.Updated = task.Now()
+	WithLock(r.p, func() error { return task.Save(r.p, t) })
+	rt.Status = t.Status
+	rt.Note = "stopped: could not restore what the agent changed outside its task"
+	return rt
 }
 
 // protected holds the fields an agent must not be able to grant itself: a person's acceptance,
@@ -384,6 +416,8 @@ type attemptGuard struct {
 	failed  []string // what could not be restored
 	// Where git must still resolve to before a commit.
 	gitDir, commonDir string
+	realRoot          string            // the repository root with symlinks resolved
+	gitWasDir         bool              // .git was a directory (not a gitdir: file)
 	accepted          map[string]string // new task files kept so far (path -> id): not duplicates of themselves
 }
 
@@ -410,7 +444,14 @@ func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
 		}
 		keep(f)
 	}
+	for _, f := range worktreeConfigs(p) { // config files git reads from the working tree (include.path)
+		keep(f)
+	}
 	g.gitDir, g.commonDir = p.GitDir, common
+	g.realRoot, _ = filepath.EvalSymlinks(p.Root)
+	if fi, err := os.Lstat(filepath.Join(p.Root, ".git")); err == nil && fi.IsDir() {
+		g.gitWasDir = true
+	}
 	tasks, _ := task.List(p)
 	for _, o := range tasks {
 		g.ids = append(g.ids, o.ID)
@@ -463,10 +504,9 @@ func (g *attemptGuard) put(abs string, want []byte) bool {
 
 func (g *attemptGuard) restoreLocked(p *project.Project) []string {
 	var changed []string
-	for _, dir := range []string{p.Path(project.TasksDir)} {
-		if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-			g.failed = append(g.failed, dir+" (a symlink)")
-		}
+	if moved := g.moved(p); moved != "" {
+		g.failed = append(g.failed, moved)
+		return nil // writing now would follow the agent's links out of the repository
 	}
 	for abs, want := range g.files {
 		fi, lerr := os.Lstat(abs)
@@ -537,6 +577,75 @@ func (g *attemptGuard) restoreLocked(p *project.Project) []string {
 		}
 	}
 	return changed
+}
+
+// moved names the first part of the layout that no longer resolves inside the repository: any
+// existing component of docs/ai/tasks that is (or sits under) a symlink or junction, and a .git
+// directory that was replaced. Empty means the layout is intact.
+func (g *attemptGuard) moved(p *project.Project) string {
+	if g.realRoot == "" {
+		return p.Root + " (could not resolve the repository root)"
+	}
+	for d := filepath.FromSlash(project.TasksDir); d != "." && d != string(filepath.Separator); d = filepath.Dir(d) {
+		got, err := filepath.EvalSymlinks(filepath.Join(p.Root, d))
+		if err != nil {
+			if _, lerr := os.Lstat(filepath.Join(p.Root, d)); lerr != nil {
+				continue // missing: restored as a plain directory below
+			}
+			return filepath.ToSlash(d) + " (cannot be resolved)"
+		}
+		if got != filepath.Join(g.realRoot, d) {
+			return filepath.ToSlash(d) + " (a link out of the repository)"
+		}
+	}
+	if g.gitWasDir {
+		fi, err := os.Lstat(filepath.Join(p.Root, ".git"))
+		got, eerr := filepath.EvalSymlinks(filepath.Join(p.Root, ".git"))
+		if err != nil || !fi.IsDir() || eerr != nil || got != filepath.Join(g.realRoot, ".git") {
+			return ".git (no longer the repository's own directory)"
+		}
+	}
+	return ""
+}
+
+// worktreeConfigs lists the git config files inside the working tree that git reads for this
+// repository (a tracked file pulled in with include.path): the agent could otherwise define
+// filters or programs there that run during aitk's own git commands.
+func worktreeConfigs(p *project.Project) []string {
+	c := exec.Command("git", append(safeGitFlags(), "config", "--list", "--show-origin", "--includes", "-z")...)
+	c.Dir = p.Root
+	out, err := c.Output()
+	if err != nil {
+		return nil
+	}
+	root, _ := filepath.EvalSymlinks(p.Root)
+	seen := map[string]bool{}
+	var files []string
+	parts := strings.Split(string(out), "\x00")
+	for i := 0; i+1 < len(parts); i += 2 { // origin, then key and value
+		f, ok := strings.CutPrefix(parts[i], "file:")
+		if !ok {
+			continue
+		}
+		if !filepath.IsAbs(f) {
+			f = filepath.Join(p.Root, f)
+		}
+		f = filepath.Clean(f)
+		real := f
+		if r, err := filepath.EvalSymlinks(f); err == nil {
+			real = r
+		}
+		rel, err := filepath.Rel(root, real)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || seen[f] {
+			continue
+		}
+		if first := strings.Split(rel, string(filepath.Separator))[0]; first == ".git" {
+			continue // the git directory's own files are guarded already
+		}
+		seen[f] = true
+		files = append(files, f)
+	}
+	return files
 }
 
 // checkGitDirs fails the guard if git would now resolve to another git directory (an agent
