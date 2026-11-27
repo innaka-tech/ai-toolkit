@@ -7,10 +7,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [2.8.0] - 2026-11-27
 
-A talk mode for short, blunt replies.
+A talk mode for short, blunt replies, and an accurate change size on stale clones.
 
 ### Added
 - **`/aitk-caveman [lite|full|off]`**: a talk mode for short, blunt replies that use fewer tokens. It changes only how the agent talks: code, commands, paths, errors, safety warnings, questions for the user, and the Skipped/Risk lines are never shortened.
+
+### Fixed
+- A task's changes are measured from the newest merge base of the local and `origin/` default branch. With a stale local `main`, work already merged upstream was counted as the task's change: inflated "large change" notes and, when that work touched sensitive paths, a wrongly strict risk profile.
 
 ## [2.7.0] - 2026-11-26
 
