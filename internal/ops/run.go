@@ -263,9 +263,19 @@ func (r *runner) one(c Candidate) RunTask {
 				rt.Note = "the agent reported " + claimed + ", but aitk's own verification failed (" + why + "); reopened"
 				continue
 			}
+			if target == task.InReview && t.Profile != "strict" && p.Config.ReviewRequired(t.Profile) && !reviewSatisfied(p, t, t.Profile) {
+				// The agent's own review loop is unfinished: that is work for another attempt.
+				t.Status, t.Closed, t.Updated = task.InProgress, "", task.Now()
+				WithLock(p, func() error { return task.Save(p, t) })
+				rt.Note = "review until clean is not finished (no clean review pass on the current code); reopened"
+				continue
+			}
 			rt.Status = target
 			if target == task.InReview {
-				rt.Note = "waiting for review passes or a person's acceptance (aitk uat accept " + t.ID + ")"
+				rt.Note = "waiting for a person's acceptance (aitk uat accept " + t.ID + ")"
+				if t.Profile == "strict" && !reviewDone(t) {
+					rt.Note = "waiting for an independent review pass by another tool (aitk review pass " + t.ID + " --findings N)"
+				}
 			}
 			return rt
 		case task.Blocked, task.Cancelled:
@@ -334,6 +344,23 @@ func protectedOf(t *task.Task) protected {
 	return s
 }
 
+// ownPasses is the protected review plus the passes the agent appended during the attempt,
+// renumbered and attributed to the agent.
+func ownPasses(base, attempt *task.Review, agent string) *task.Review {
+	out := &task.Review{}
+	if base != nil {
+		out.Passes = append(out.Passes, base.Passes...)
+	}
+	if attempt != nil {
+		for i := len(out.Passes); i < len(attempt.Passes); i++ {
+			ps := attempt.Passes[i]
+			ps.N, ps.By, ps.Session = len(out.Passes)+1, agent, ""
+			out.Passes = append(out.Passes, ps)
+		}
+	}
+	return out
+}
+
 func restoreProtected(t *task.Task, s protected) {
 	t.Profile, t.ProfilePinned, t.Tags, t.Goal, t.DependsOn = s.profile, s.pinned, s.tags, s.goal, s.dependsOn
 	t.Review = s.review
@@ -387,12 +414,14 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 		}
 	}
 	if prof != "strict" && p.Config.ReviewRequired(prof) {
-		// Review until clean is the agent's own loop (self-review counts outside strict work);
-		// strict work keeps needing a pass by another tool, so its passes stay restored.
-		t.Review = attempt
+		// Review until clean is the agent's own loop (self-review counts outside strict work).
+		// Only passes appended during this attempt are kept, attributed to the agent whatever
+		// the file says, so they can never stand in for another tool's independent review.
+		t.Review = ownPasses(snap.review, attempt, r.agentName)
 	}
 	target, err := dod(p, t, prof, CloseInput{})
 	if err != nil {
+		t.Review = snap.review // a failed attempt keeps nothing the agent wrote about reviews
 		return "", "the Definition of Done does not hold: " + err.Error()
 	}
 	if IsBugTask(t) {
@@ -604,6 +633,7 @@ Steps:
 1. Read the brief below and the task file. Keep the change focused on this task.
 2. Implement it, then run ` + "`aitk check`" + ` until it passes. Mark each satisfied criterion: ` + "`aitk task update " + t.ID + " --ac-done N`" + `.
 3. If the task is tagged bug, add a regression test that fails without the fix. Before closing, run ` + "`aitk impact`" + ` and make sure the code that depends on what you changed is covered by the check.
+   Then review your own change: record ` + "`aitk review pass " + t.ID + " --findings N`" + `, fix what you found, run the check again, and repeat until a pass finds 0 (required here unless the task is lite and [quality] review is not "all").
 4. Finish with ` + "`aitk close --summary \"<what changed>\" --knowledge \"<lasting finding>|none\"`" + `. If close refuses, do what its fix line says and close again.
 5. If you cannot finish (missing access, unclear requirement, the check fails twice for the same reason), run ` + "`aitk close --status blocked --summary \"<why>\" --knowledge none`" + ` and stop.
 Never mark work done any other way, never edit aitk's evidence by hand, and never accept UAT.

@@ -418,3 +418,92 @@ func TestRunCountsTheAgentsReviewLoopOnStandardTasks(t *testing.T) {
 		}
 	}
 }
+
+type reviewPassOut struct {
+	By       string `json:"by"`
+	Findings int    `json:"findings"`
+}
+
+func passesOf(t *testing.T, dir, id string) []reviewPassOut {
+	t.Helper()
+	out := must(t, dir, bin, "--json", "task", "show", id)
+	var r struct {
+		Data struct {
+			Task struct {
+				Review struct {
+					Passes []reviewPassOut `json:"passes"`
+				} `json:"review"`
+			} `json:"task"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("task show: %v\n%s", err, out)
+	}
+	return r.Data.Task.Review.Passes
+}
+
+// An agent forges an independent reviewer in the task file. aitk run must never keep a forged
+// name: on a failed attempt nothing about reviews survives, on success the agent's passes are
+// attributed to the agent, so they cannot later count as another tool's review.
+func TestRunNeverKeepsForgedReviewers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	forger := func(markDone bool) string {
+		done := ""
+		if markDone {
+			done = "aitk task update --ac-done 1\n"
+		}
+		return `set -e
+for i in 1 2 3 4 5 6; do echo x > "src_$i.txt"; done
+touch ok.txt
+` + done + `aitk check
+aitk review pass --findings 0
+f=$(ls docs/ai/tasks/"$AITK_RUN_TASK"-*.md)
+sed -i.bak -E 's/^([[:space:]]+by: ).*/\1human-reviewer/' "$f" && rm -f "$f.bak"
+aitk close --summary "did it" --knowledge none || true
+`
+	}
+	for _, markDone := range []bool{false, true} {
+		dir := project(t)
+		must(t, dir, bin, "hooks", "uninstall")
+		id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Feature", "--ac", "works")))[1]
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		aitkRun(t, dir, "--cmd", forger(markDone), "--max-attempts", "1", "--max-tasks", "1")
+		for _, ps := range passesOf(t, dir, id) {
+			if ps.By == "human-reviewer" {
+				t.Fatalf("markDone=%v: a forged reviewer survived aitk run: %+v", markDone, passesOf(t, dir, id))
+			}
+		}
+		if !markDone && len(passesOf(t, dir, id)) != 0 {
+			t.Fatalf("a failed attempt must keep no review passes, got %+v", passesOf(t, dir, id))
+		}
+	}
+}
+
+// An agent that closes without reviewing does not get its task counted as finished.
+func TestRunReopensWhenTheAgentSkipsTheReviewLoop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	dir := project(t)
+	must(t, dir, bin, "hooks", "uninstall")
+	must(t, dir, bin, "task", "new", "Feature", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	lazy := `set -e
+for i in 1 2 3 4 5 6; do echo x > "src_$i.txt"; done
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+aitk close --summary "did it" --knowledge none
+`
+	r := aitkRun(t, dir, "--cmd", lazy, "--max-attempts", "2", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "done" || r.Data.Tasks[0].Status == "in_review" || r.Data.Tasks[0].Attempts != 2 {
+		t.Fatalf("skipping the review loop must use the remaining attempts and not count as finished: %+v", r.Data.Tasks)
+	}
+	if grep := must(t, dir, "sh", "-c", "cat docs/ai/handoff/*.md"); !strings.Contains(grep, "review until clean") {
+		t.Fatalf("the handover must say the review loop was not finished:\n%s", grep)
+	}
+}

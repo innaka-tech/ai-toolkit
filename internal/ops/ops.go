@@ -805,7 +805,12 @@ func reviewSatisfied(p *project.Project, t *task.Task, prof string) bool {
 	if !p.Config.ReviewRequired(prof) {
 		return true
 	}
-	return t.Review != nil && len(t.Review.Passes) > 0 && t.Review.Passes[len(t.Review.Passes)-1].Findings == 0
+	if t.Review == nil || len(t.Review.Passes) == 0 {
+		return false
+	}
+	last := t.Review.Passes[len(t.Review.Passes)-1]
+	// The clean pass must have reviewed the code as it is now: changes after it need a new pass.
+	return last.Findings == 0 && (last.Tree == profile.Fingerprint(p) || profile.Fresh(p, last.Tree))
 }
 
 // SwitchAllowed enforces one task at a time: an agent finishes the active task (review until
@@ -826,7 +831,7 @@ func SwitchAllowed(p *project.Project, next string) error {
 	case task.Done, task.Blocked, task.Cancelled:
 		return nil
 	case task.InReview:
-		if !ownReviewWorkLeft(p, t) {
+		if waitingOnOthers(p, t) {
 			return nil // it only waits for another tool's pass or a person's acceptance
 		}
 	}
@@ -835,17 +840,25 @@ func SwitchAllowed(p *project.Project, next string) error {
 		"task %s is still %s; one task at a time", t.ID, t.Status)
 }
 
-// ownReviewWorkLeft reports whether an in_review task still needs its own agent: the last
-// review pass found something to fix, or the review-until-clean rule has no clean pass yet.
-func ownReviewWorkLeft(p *project.Project, t *task.Task) bool {
-	if t.Review != nil && len(t.Review.Passes) > 0 && t.Review.Passes[len(t.Review.Passes)-1].Findings > 0 {
-		return true
-	}
+// waitingOnOthers reports whether an in_review task needs nothing more from its own agent: the
+// Definition of Done holds except for another tool's review pass or a person's acceptance. A
+// task with no review pass yet, a last pass with findings, an unmet review-until-clean rule, or
+// an open close requirement still needs its agent.
+func waitingOnOthers(p *project.Project, t *task.Task) bool {
 	prof := t.Profile
-	if prof == "" {
-		prof = "standard"
+	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
+		prof = computed
 	}
-	return prof != "strict" && !reviewSatisfied(p, t, prof)
+	if prof == "strict" || p.Config.ReviewRequired(prof) {
+		if t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0 {
+			return false
+		}
+		if prof != "strict" && !reviewSatisfied(p, t, prof) {
+			return false
+		}
+	}
+	target, err := dod(p, t, prof, CloseInput{})
+	return err == nil && target == task.InReview
 }
 
 // reviewDone: ≥2 passes, the last with 0 findings, and at least one pass by a tool that did
@@ -888,7 +901,7 @@ func ReviewPass(p *project.Project, id string, findings int) (*task.Task, error)
 		if t.Review == nil {
 			t.Review = &task.Review{}
 		}
-		t.Review.Passes = append(t.Review.Passes, task.Pass{N: len(t.Review.Passes) + 1, By: Tool(), At: task.Now(), Findings: findings})
+		t.Review.Passes = append(t.Review.Passes, task.Pass{N: len(t.Review.Passes) + 1, By: Tool(), At: task.Now(), Findings: findings, Tree: profile.Fingerprint(p)})
 		if t.Status == task.Implemented || t.Status == task.InProgress {
 			t.Status = task.InReview
 		}

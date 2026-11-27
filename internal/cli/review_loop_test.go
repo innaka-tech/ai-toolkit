@@ -114,18 +114,30 @@ func TestReviewFindingsFromTheLoopReview(t *testing.T) {
 		t.Fatalf("a quick lite close has no task to keep reviewing; it must be done: %s", r.stdout)
 	}
 
-	// Strict work waiting only for another tool does not lock the worktree; findings to fix do.
+	// Strict work: closed with no review pass yet, the agent still owes its own pass; once only
+	// another tool's pass is missing, the worktree is free. Findings to fix lock it again.
 	dir = repo(t)
 	initRepo(t, dir)
-	a := data(aitk(t, dir, "task", "new", "Auth change", "--profile", "strict", "--start"))["id"].(string)
-	b := data(aitk(t, dir, "task", "new", "Next one"))["id"].(string)
-	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "2"))
-	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
-	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), "sensitive_paths = []", `sensitive_paths = ["db/**"]`, 1))
+	a := newStarted(t, dir, "Add payments table", "--ac", "migration applies")
+	write(t, dir, "db/001.sql", "create table payments(id int);\n")
+	write(t, dir, "ok.txt", "1")
+	f := fillRisk(t, dir)
+	mustOK(t, aitk(t, dir, "security", "checklist"))
+	write(t, dir, f, strings.ReplaceAll(read(t, dir, f), "- [ ] V", "- [x] V"))
+	b := data(aitk(t, dir, "task", "new", "Next one"))["id"].(string) // after fillRisk, which expects one task file
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "audit"))
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "payments", "--knowledge", "none"))
 	if st := status(t, dir, a); st != "in_review" {
-		t.Fatalf("setup: strict task waits in_review for another tool, got %s", st)
+		t.Fatalf("setup: strict task waits in_review, got %s", st)
 	}
-	mustOK(t, aitk(t, dir, "task", "start", b)) // waiting for another tool is not work this agent can do
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE") // no pass yet: its own agent reviews first
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "2"))
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE") // findings to fix
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "task", "start", b)) // only another tool's pass is missing
 
 	// Demoting the active task to todo is not a way around one task at a time.
 	c := data(aitk(t, dir, "task", "new", "Third"))["id"].(string)
@@ -142,4 +154,38 @@ func TestReviewFindingsFromTheLoopReview(t *testing.T) {
 	if md, _ := briefMD(t, dir); !strings.Contains(md, "Review is not converging (3, 2, 2") {
 		t.Fatalf("a last pass that does not improve must trigger the stop-and-ask rule:\n%s", md)
 	}
+}
+
+func TestReviewLoopSecondPassFindings(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+
+	// The rule is in the brief from the start, before the diff grows past lite.
+	a := data(aitk(t, dir, "task", "new", "Alpha", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	if md, _ := briefMD(t, dir); !strings.Contains(md, "Review until clean") {
+		t.Fatalf("a standard task must see the review rule at task start:\n%s", md)
+	}
+
+	// A clean review pass without closing does not free the worktree.
+	b := data(aitk(t, dir, "task", "new", "Bravo"))["id"].(string)
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+
+	// A clean pass counts only for the code it reviewed: a later change needs a new pass.
+	standardChange(t, dir, "c")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	write(t, dir, "src/c_0.go", "package src\n\nvar changedAfterReview = 1\n")
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "alpha", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("code changed after the clean pass: the task must wait for a new pass, got %s", st)
+	}
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "alpha", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "done" {
+		t.Fatalf("a clean pass on the current code finishes the task, got %s", st)
+	}
+
 }

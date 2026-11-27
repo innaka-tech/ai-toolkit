@@ -213,7 +213,13 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 		b.Goal = goalInfo(p, t.Goal, tasks)
 	}
 	b.Rules = rules(b.Profile, p.Config.Check.Cmd != "")
-	extra := append(reviewRules(p.Config, t, b.Profile), characterRules(p.Config)...)
+	// The task's own profile counts from the start: at task start the diff is empty (lite),
+	// but the rules must already say how the task will be finished.
+	ruleProf := b.Profile
+	if t != nil && rank(t.Profile) > rank(ruleProf) {
+		ruleProf = t.Profile
+	}
+	extra := append(reviewRules(p.Config, t, ruleProf), characterRules(p.Config)...)
 	b.Rules = append(b.Rules[:len(b.Rules)-1], append(extra, b.Rules[len(b.Rules)-1])...)
 	if p.Config.AutoPersona() {
 		b.Personas, b.Standards = pickPersonas(t, b.Profile, b.Changed)
