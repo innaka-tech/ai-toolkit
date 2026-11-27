@@ -49,8 +49,8 @@ signs:
     args: ["sign-blob", "--output-certificate=${certificate}", "--output-signature=${signature}", "${artifact}", "--yes"]
     artifacts: checksum
 
-changelog:
-  disable: true # release notes come from CHANGELOG.md
+# No changelog block: release.yml passes CHANGELOG.md's section with --release-notes, and
+# changelog.disable would make GoReleaser skip that file too (empty release notes in every v2 release before this fix).
 
 release:
   github:
