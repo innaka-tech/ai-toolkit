@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-11-27
+
+A talk mode for short, blunt replies.
+
 ### Added
 - **`/aitk-caveman [lite|full|off]`**: a talk mode for short, blunt replies that use fewer tokens. It changes only how the agent talks: code, commands, paths, errors, safety warnings, questions for the user, and the Skipped/Risk lines are never shortened.
 
