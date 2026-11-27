@@ -4,7 +4,7 @@ title: Review until clean and one task at a time
 status: in_review
 profile: standard
 created: "2026-11-27T10:55:05Z"
-updated: "2026-11-27T12:01:54Z"
+updated: "2026-11-27T12:13:43Z"
 created_by: claude-code
 workers:
   - claude-code
@@ -35,6 +35,11 @@ review:
       at: "2026-11-27T12:00:00Z"
       findings: 4
       tree: ac550f1c577ca29bbb713dbf2e68ccecd18b7eff0afd5001c30e0cb2dc580b49
+    - "n": 6
+      by: claude-code
+      at: "2026-11-27T12:13:43Z"
+      findings: 4
+      tree: 4da3d3a0bc3d5763db1e6546dee0e85e5cdb60f0163ebe0ce6924f135f53055a
 evidence:
   check:
     cmd: go vet ./... && go test -short ./...
