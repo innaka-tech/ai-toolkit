@@ -350,6 +350,7 @@ func restoreProtected(t *task.Task, s protected) {
 // record, or why the task cannot leave in_progress.
 func (r *runner) decide(t *task.Task, snap protected, since string) (string, string) {
 	p := r.p
+	attempt := t.Review // the agent's own passes: they count for the non-strict review loop only
 	restoreProtected(t, snap)
 	cur := t.Criteria()
 	if len(cur) < len(snap.criteria) {
@@ -384,6 +385,11 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 		if !a.Passed {
 			return "", "the security audit fails when aitk runs it"
 		}
+	}
+	if prof != "strict" && p.Config.ReviewRequired(prof) {
+		// Review until clean is the agent's own loop (self-review counts outside strict work);
+		// strict work keeps needing a pass by another tool, so its passes stay restored.
+		t.Review = attempt
 	}
 	target, err := dod(p, t, prof, CloseInput{})
 	if err != nil {

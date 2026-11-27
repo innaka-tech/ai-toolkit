@@ -100,3 +100,46 @@ func TestReviewNotConvergingAndBackCompat(t *testing.T) {
 		t.Fatalf("without [quality] review a standard task must finish as before, got %s", st)
 	}
 }
+
+func TestReviewFindingsFromTheLoopReview(t *testing.T) {
+	// review = "all": a quick lite close with no active task must not leave orphaned in_review tasks.
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), `review = "standard"`, `review = "all"`, 1))
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "check"))
+	r := aitk(t, dir, "close", "--summary", "typo fix", "--knowledge", "none")
+	mustOK(t, r)
+	if id, _ := data(r)["task"].(string); id == "" || status(t, dir, id) != "done" {
+		t.Fatalf("a quick lite close has no task to keep reviewing; it must be done: %s", r.stdout)
+	}
+
+	// Strict work waiting only for another tool does not lock the worktree; findings to fix do.
+	dir = repo(t)
+	initRepo(t, dir)
+	a := data(aitk(t, dir, "task", "new", "Auth change", "--profile", "strict", "--start"))["id"].(string)
+	b := data(aitk(t, dir, "task", "new", "Next one"))["id"].(string)
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "2"))
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("setup: strict task waits in_review for another tool, got %s", st)
+	}
+	mustOK(t, aitk(t, dir, "task", "start", b)) // waiting for another tool is not work this agent can do
+
+	// Demoting the active task to todo is not a way around one task at a time.
+	c := data(aitk(t, dir, "task", "new", "Third"))["id"].(string)
+	mustOK(t, aitk(t, dir, "task", "update", b, "--status", "todo"))
+	expect(t, aitk(t, dir, "task", "start", c), 3, "E_TASK_ACTIVE")
+
+	// Convergence: 3, 2, 2 did not improve in the last pass.
+	dir = repo(t)
+	initRepo(t, dir)
+	mustOK(t, aitk(t, dir, "task", "new", "Hard", "--start"))
+	for _, n := range []string{"3", "2", "2"} {
+		mustOK(t, aitk(t, dir, "review", "pass", "--findings", n))
+	}
+	if md, _ := briefMD(t, dir); !strings.Contains(md, "Review is not converging (3, 2, 2") {
+		t.Fatalf("a last pass that does not improve must trigger the stop-and-ask rule:\n%s", md)
+	}
+}

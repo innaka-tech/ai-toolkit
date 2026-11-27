@@ -420,7 +420,11 @@ func render(b *Brief) string {
 	}
 	if len(b.Personas) > 0 {
 		s.WriteString("\n## Personas this task needs (run them yourself, before close)\n")
-		s.WriteString("Print each prompt with the command and follow it; use a subagent if your tool can start one. A review pass still needs a different tool.\n")
+		s.WriteString("Print each prompt with the command and follow it; use a subagent if your tool can start one.")
+		if b.Profile == "strict" {
+			s.WriteString(" The independent review pass still needs a different tool.")
+		}
+		s.WriteString("\n")
 		for _, ps := range b.Personas {
 			fmt.Fprintf(&s, "- `%s`: %s\n", ps.Run, ps.Why)
 		}

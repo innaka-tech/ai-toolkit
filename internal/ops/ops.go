@@ -528,6 +528,7 @@ type CloseInput struct {
 	Next      []string
 	Status    string // optional: in_progress or blocked to close a session without finishing
 	Tags      []string
+	implicit  bool // a quick lite close with no active task: there is no task to keep reviewing
 }
 
 // CloseResult reports what close did.
@@ -591,6 +592,7 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			now := task.Now()
 			t = &task.Task{Meta: task.Meta{ID: task.NewID(p), Title: implicitTitle(in.Summary), Status: task.InProgress, Profile: "lite",
 				Created: now, Updated: now, CreatedBy: Tool()}, Body: task.NewBody(in.Summary, nil)}
+			in.implicit = true
 			if s.LastCheck != nil {
 				c := *s.LastCheck
 				t.Evidence = &task.Evidence{Check: &c}
@@ -785,7 +787,7 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 			return "", apperr.New("E_DOD_AUDIT", apperr.ExitGate, "aitk audit", "files changed after the last passing audit")
 		}
 	}
-	if !reviewSatisfied(p, t, prof) {
+	if !(in.implicit && prof != "strict") && !reviewSatisfied(p, t, prof) {
 		return task.InReview, nil
 	}
 	if p.Config.UATRequired(prof) && (t.Evidence == nil || t.Evidence.UAT == nil || t.Evidence.UAT.Status != "accepted") {
@@ -821,12 +823,29 @@ func SwitchAllowed(p *project.Project, next string) error {
 		return nil // a stale pointer is healed elsewhere; it must not block work
 	}
 	switch t.Status {
-	case task.InProgress, task.Implemented, task.InReview:
-		return apperr.New("E_TASK_ACTIVE", apperr.ExitGate,
-			fmt.Sprintf("finish it (review until a pass finds 0, then aitk close), or park it: aitk task block %s --reason \"<why>\"", t.ID),
-			"task %s is still %s; one task at a time", t.ID, t.Status)
+	case task.Done, task.Blocked, task.Cancelled:
+		return nil
+	case task.InReview:
+		if !ownReviewWorkLeft(p, t) {
+			return nil // it only waits for another tool's pass or a person's acceptance
+		}
 	}
-	return nil
+	return apperr.New("E_TASK_ACTIVE", apperr.ExitGate,
+		fmt.Sprintf("finish it (review until a pass finds 0, then aitk close), or park it: aitk task block %s --reason \"<why>\"", t.ID),
+		"task %s is still %s; one task at a time", t.ID, t.Status)
+}
+
+// ownReviewWorkLeft reports whether an in_review task still needs its own agent: the last
+// review pass found something to fix, or the review-until-clean rule has no clean pass yet.
+func ownReviewWorkLeft(p *project.Project, t *task.Task) bool {
+	if t.Review != nil && len(t.Review.Passes) > 0 && t.Review.Passes[len(t.Review.Passes)-1].Findings > 0 {
+		return true
+	}
+	prof := t.Profile
+	if prof == "" {
+		prof = "standard"
+	}
+	return prof != "strict" && !reviewSatisfied(p, t, prof)
 }
 
 // reviewDone: ≥2 passes, the last with 0 findings, and at least one pass by a tool that did

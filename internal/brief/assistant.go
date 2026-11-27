@@ -140,7 +140,7 @@ func reviewRules(c project.Config, t *task.Task, prof string) []string {
 	}
 	if t != nil && t.Review != nil {
 		ps := t.Review.Passes
-		if n := len(ps); n >= 3 && ps[n-1].Findings > 0 && ps[n-1].Findings >= ps[n-2].Findings && ps[n-2].Findings >= ps[n-3].Findings {
+		if n := len(ps); n >= 3 && ps[n-1].Findings > 0 && ps[n-1].Findings >= ps[n-2].Findings {
 			r = append(r, fmt.Sprintf("Review is not converging (%d, %d, %d findings in the last passes): stop and ask the user whether to split the task or change the approach.", ps[n-3].Findings, ps[n-2].Findings, ps[n-1].Findings))
 		}
 	}

@@ -380,3 +380,41 @@ awk '/^updated:/ {print; print "evidence:"; print "  uat:"; print "    status: a
 		t.Fatalf("the forged acceptance survived the handover:\n%s", body)
 	}
 }
+
+// A standard-sized task in a new project (review = "standard"): the agent reviews its own work
+// until a pass finds 0, and aitk run counts that loop, so dependent tasks are not left waiting.
+const reviewingAgent = `set -e
+for i in 1 2 3 4 5 6; do echo "$AITK_RUN_TASK" > "src_${AITK_RUN_TASK}_$i.txt"; done
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+aitk review pass --findings 1
+aitk review pass --findings 0
+aitk close --summary "did $AITK_RUN_TASK" --knowledge none
+`
+
+func TestRunCountsTheAgentsReviewLoopOnStandardTasks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	dir := project(t)
+	if b, _ := os.ReadFile(filepath.Join(dir, "aitk.toml")); !strings.Contains(string(b), `review = "standard"`) {
+		t.Fatal("setup: aitk init must write review = \"standard\"")
+	}
+	must(t, dir, bin, "hooks", "uninstall")
+	first := strings.TrimSpace(must(t, dir, bin, "task", "new", "First feature", "--ac", "first works"))
+	id := strings.Fields(first)[1]
+	must(t, dir, bin, "task", "new", "Second feature", "--ac", "second works", "--depends", id)
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: tasks")
+
+	r := aitkRun(t, dir, "--cmd", reviewingAgent)
+	if !r.OK || len(r.Data.Tasks) != 2 {
+		t.Fatalf("both tasks (the second depends on the first) must run: %+v", r)
+	}
+	for _, x := range r.Data.Tasks {
+		if x.Status != "done" {
+			t.Fatalf("a standard task whose agent reviewed until clean must be done in aitk run: %+v", x)
+		}
+	}
+}

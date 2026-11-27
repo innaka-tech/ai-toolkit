@@ -281,7 +281,7 @@
             "all"
           ],
           "default": "strict",
-          "description": "Profiles whose tasks need review passes until one finds 0 before they are done; strict always needs two passes, one by a different tool"
+          "description": "Profiles whose tasks need review passes until one finds 0 before they are done. off and strict (default) are the same: only strict work, which always needs two passes with one by a different tool; standard adds standard tasks; all adds lite tasks (quick closes without a task are exempt)"
         },
         "one_task": {
           "type": "boolean",
