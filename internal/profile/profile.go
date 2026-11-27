@@ -142,12 +142,24 @@ func mergeBase(p *project.Project) string {
 	if head == "" {
 		return ""
 	}
+	// Of the local and remote-tracking default branch, use the merge base nearest HEAD: a
+	// stale local branch would otherwise count work already merged upstream as this change.
+	best := ""
 	for _, ref := range []string{p.Config.DefaultBranch(), "origin/" + p.Config.DefaultBranch()} {
-		if mb, err := gitx.Run(p.Root, "merge-base", ref, "HEAD"); err == nil && mb != "" {
-			return mb
+		mb, err := gitx.Run(p.Root, "merge-base", ref, "HEAD")
+		if err != nil || mb == "" {
+			continue
+		}
+		if best == "" {
+			best = mb
+		} else if _, err := gitx.Run(p.Root, "merge-base", "--is-ancestor", best, mb); err == nil {
+			best = mb
 		}
 	}
-	return head
+	if best == "" {
+		return head
+	}
+	return best
 }
 
 func countLines(path string) int {
