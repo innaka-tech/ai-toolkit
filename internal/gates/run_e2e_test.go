@@ -931,3 +931,128 @@ aitk close --summary "did it" --knowledge none
 		t.Fatalf("the run's commit must not carry a hook's change:\n%s", out)
 	}
 }
+
+func twoTasks(t *testing.T, dir string) (string, string, string, []byte) {
+	t.Helper()
+	a := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "First", "--ac", "works")))[1]
+	b := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Second", "--ac", "works", "--depends", a)))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: tasks")
+	bFile := strings.TrimSpace(must(t, dir, "sh", "-c", "ls docs/ai/tasks/"+b+"-*.md"))
+	bWas, _ := os.ReadFile(filepath.Join(dir, bFile))
+	return a, b, bFile, bWas
+}
+
+func sameFile(t *testing.T, dir, rel string, want []byte, what string) {
+	t.Helper()
+	if got, err := os.ReadFile(filepath.Join(dir, rel)); err != nil || string(got) != string(want) {
+		t.Fatalf("%s: %s must be restored (err %v):\n%s", what, rel, err, got)
+	}
+}
+
+// Security review pass 2 scenarios: each must leave the other task exactly as it was.
+func TestRunGuardSecondPass(t *testing.T) {
+	close := "touch ok.txt\naitk task update --ac-done 1\naitk check\naitk close --summary done --knowledge none\n"
+
+	// The agent rewrites its own task file to claim the other task's id.
+	dir := newRunProject(t, "")
+	a, b, bFile, bWas := twoTasks(t, dir)
+	aFile := strings.TrimSpace(must(t, dir, "sh", "-c", "ls docs/ai/tasks/"+a+"-*.md"))
+	aitkRun(t, dir, "--cmd", `sed -i.bak -e 's/^id: .*/id: `+b+`/' -e 's/^status: .*/status: done/' -e 's/^updated: .*/updated: "2099-01-01T00:00:00Z"/' `+aFile+` && rm -f `+aFile+`.bak`, "--max-attempts", "1", "--max-tasks", "1")
+	if out := must(t, dir, bin, "task", "show", b); strings.Contains(out, "status: done") {
+		t.Fatalf("own file claiming another id took the task over:\n%s", out)
+	}
+	sameFile(t, dir, bFile, bWas, "own-file id")
+
+	// A new task that fails validation (or uses a look-alike id) is removed, not kept as written.
+	dir = newRunProject(t, "")
+	_, b, bFile, bWas = twoTasks(t, dir)
+	// Written after the agent's last aitk call, so aitk's self-heal never sees them: the guard must.
+	agent := close + `f=$(ls docs/ai/tasks/` + b + `-*.md)
+sed -e 's/^id: .*/id: T-ſss1/' -e 's/^status: .*/status: done/' "$f" > docs/ai/tasks/zz-lookalike.md
+printf -- '---\nid: T-zz99\ntitle: ab\nstatus: done\nprofile: strict\ncreated: "2026-01-01T00:00:00Z"\nupdated: "2026-01-01T00:00:00Z"\nreview:\n  passes:\n    - n: 1\n      by: codex\n      at: "2026-01-01T00:00:00Z"\n      findings: 0\n---\nx\n' > docs/ai/tasks/zz-invalid.md
+`
+	aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	for _, f := range []string{"zz-lookalike.md", "zz-invalid.md"} {
+		if _, err := os.Stat(filepath.Join(dir, "docs/ai/tasks", f)); err == nil {
+			if out := must(t, dir, "sh", "-c", "cat docs/ai/tasks/"+f); strings.Contains(out, "codex") || strings.Contains(out, "status: done") {
+				t.Fatalf("%s survived with its seeded state:\n%s", f, out)
+			}
+		}
+	}
+	sameFile(t, dir, bFile, bWas, "look-alike id")
+
+	// git config written by the agent (fsmonitor) must not run when aitk commits.
+	dir = newRunProject(t, "")
+	_, b, bFile, bWas = twoTasks(t, dir)
+	agent = `printf '#!/bin/sh\nsed -i.bak "s/^status: .*/status: done/" ` + bFile + ` && rm -f ` + bFile + `.bak\n' > .git/fsm.sh
+chmod +x .git/fsm.sh
+git config core.fsmonitor "$PWD/.git/fsm.sh"
+echo x > feature.txt
+` + close
+	aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	sameFile(t, dir, bFile, bWas, "fsmonitor")
+	if out, _ := sh(t, dir, "git", "config", "--get-all", "core.fsmonitor"); strings.TrimSpace(out) != "" {
+		t.Fatalf("the agent's git config must be restored, core.fsmonitor = %q", out)
+	}
+
+	// A broken project lock must not switch the restore off; a directory in place of a task file
+	// is replaced by the file.
+	dir = newRunProject(t, "")
+	_, b, bFile, bWas = twoTasks(t, dir)
+	agent = `sed -i.bak 's/^status: .*/status: done/' ` + bFile + ` && rm -f ` + bFile + `.bak
+lock=$(git rev-parse --git-common-dir)/aitk/lock
+rm -rf "$lock"; mkdir -p "$lock"
+`
+	aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	sameFile(t, dir, bFile, bWas, "broken lock")
+	dir = newRunProject(t, "")
+	_, b, bFile, bWas = twoTasks(t, dir)
+	aitkRun(t, dir, "--cmd", "rm -f "+bFile+" && mkdir "+bFile+"\n"+close, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	sameFile(t, dir, bFile, bWas, "directory in place of a task file")
+
+	// Project code run by the check edits another task: restored after verification. And aitk
+	// review pass refuses another task inside a run.
+	dir = newRunProject(t, "")
+	cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+	os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(strings.Replace(string(cfg), `cmd = "`+check()+`"`, `cmd = "sh check.sh"`, 1)), 0o644)
+	if !strings.Contains(must(t, dir, "cat", "aitk.toml"), "sh check.sh") {
+		t.Skip("could not point the check at check.sh in this environment")
+	}
+	_, b, bFile, bWas = twoTasks(t, dir)
+	agent = `printf 'sed -i.bak "s/^status: .*/status: done/" ` + bFile + ` 2>/dev/null; rm -f ` + bFile + `.bak; exit 0\n' > check.sh
+aitk --json review pass ` + b + ` --findings 0 > review-other.json 2>&1
+aitk task update --ac-done 1
+aitk check
+aitk close --summary done --knowledge none
+`
+	aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	sameFile(t, dir, bFile, bWas, "check edits another task")
+	if out, _ := os.ReadFile(filepath.Join(dir, "review-other.json")); !strings.Contains(string(out), "E_RUN_SCOPE") {
+		t.Fatalf("aitk review pass on another task inside a run must fail with E_RUN_SCOPE:\n%s", out)
+	}
+}
+
+// Glob characters in the repository path must not switch the duplicate check off.
+func TestRunGuardWorksWithGlobCharactersInThePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	dir := filepath.Join(t.TempDir(), "proj[1]")
+	os.MkdirAll(dir, 0o755)
+	must(t, dir, "git", "init", "-q", "-b", "main")
+	must(t, dir, "git", "config", "user.email", "t@example.com")
+	must(t, dir, "git", "config", "user.name", "t")
+	must(t, dir, bin, "init", "--check", check())
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: init")
+	_, b, bFile, bWas := twoTasks(t, dir)
+	agent := `sed -e 's/^status: .*/status: cancelled/' -e 's/^updated: .*/updated: "2099-01-01T00:00:00Z"/' ` + bFile + ` > docs/ai/tasks/zz-copy.md
+aitk close --status blocked --summary probe --knowledge none
+`
+	aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if _, err := os.Stat(filepath.Join(dir, "docs/ai/tasks/zz-copy.md")); err == nil {
+		t.Fatalf("a copy claiming %s survived in a path with glob characters", b)
+	}
+	sameFile(t, dir, bFile, bWas, "glob characters in the path")
+}

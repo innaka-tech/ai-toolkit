@@ -361,79 +361,154 @@ func (r *runner) restore(t *task.Task, snap protected) {
 	t.AddWorker(r.agentName)
 }
 
-// attemptGuard holds what an agent must not change during an attempt: aitk.toml and the other
-// tasks' files. New task files are allowed (a persona may file follow-up tasks), but only as new
-// work: a file that claims an existing task's id is removed, and a new task keeps only its
-// description (no reviews, evidence, workers, pinned lower profile, or finished status).
+// attemptGuard holds what an agent must not change during an attempt: aitk.toml, the other
+// tasks' files, the identity of its own task file, and the git configuration aitk's own git
+// commands read afterwards. New task files are allowed (a persona may file follow-up tasks), but
+// only as new work: a file that claims an existing task's id (or no valid id) is removed, and a
+// new task keeps only its description. It fails closed: what it cannot restore stops the commit.
 type attemptGuard struct {
-	files   map[string][]byte
-	ids     map[string]bool // ids of the tasks that existed before the attempt
+	files   map[string][]byte // absolute path -> content before the attempt
+	present map[string]bool   // absolute path -> existed before the attempt
+	ids     []string          // ids of the tasks that existed before the attempt
 	curID   string
-	curFile string
+	curFile string // absolute
+	curWas  []byte
 	agent   string
+	failed  []string // what could not be restored
 }
 
 func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
-	g := &attemptGuard{files: map[string][]byte{}, ids: map[string]bool{strings.ToLower(t.ID): true}, curID: t.ID, curFile: filepath.ToSlash(t.File), agent: agent}
-	if b, err := os.ReadFile(p.Path(project.ConfigFile)); err == nil {
-		g.files[project.ConfigFile] = b
+	g := &attemptGuard{files: map[string][]byte{}, present: map[string]bool{}, ids: []string{t.ID}, curID: t.ID,
+		curFile: p.Path(filepath.ToSlash(t.File)), agent: agent}
+	g.curWas, _ = os.ReadFile(g.curFile)
+	keep := func(abs string) {
+		b, err := os.ReadFile(abs)
+		g.present[abs] = err == nil
+		if err == nil {
+			g.files[abs] = b
+		}
+	}
+	keep(p.Path(project.ConfigFile))
+	common := p.CommonDir
+	if common == "" {
+		common = filepath.Join(p.Root, ".git")
+	}
+	for _, f := range []string{filepath.Join(common, "config"), filepath.Join(common, "info", "attributes"), filepath.Join(p.GitDir, "config.worktree")} {
+		keep(f)
 	}
 	tasks, _ := task.List(p)
 	for _, o := range tasks {
-		g.ids[strings.ToLower(o.ID)] = true
-		rel := filepath.ToSlash(o.File)
-		if rel == g.curFile {
-			continue
-		}
-		if b, err := os.ReadFile(p.Path(rel)); err == nil {
-			g.files[rel] = b
+		g.ids = append(g.ids, o.ID)
+		if abs := p.Path(filepath.ToSlash(o.File)); abs != g.curFile {
+			keep(abs)
 		}
 	}
 	return g
 }
 
-// restore writes back every guarded file the agent changed or removed, removes new files that
-// claim an existing task's id, strips new tasks down to their description, and names it all.
+func (g *attemptGuard) knownID(id string) bool {
+	for _, k := range g.ids {
+		if strings.EqualFold(k, id) {
+			return true
+		}
+	}
+	return false
+}
+
+// restore puts the guarded state back and names what it changed. It runs under the project
+// lock when it can, and without it when the lock is broken (an agent must not be able to switch
+// the restore off by breaking the lock).
 func (g *attemptGuard) restore(p *project.Project) []string {
 	if g == nil {
 		return nil
 	}
 	var changed []string
-	WithLock(p, func() error {
-		for rel, want := range g.files {
-			if got, err := os.ReadFile(p.Path(rel)); err == nil && bytes.Equal(got, want) {
-				continue
-			}
-			if err := fsx.WriteFile(p.Path(rel), want, 0o644); err == nil {
-				changed = append(changed, rel)
-			}
-		}
-		files, _ := filepath.Glob(p.Path(project.TasksDir, "*.md"))
-		for _, f := range files {
-			rel := filepath.ToSlash(filepath.Join(project.TasksDir, filepath.Base(f)))
-			if _, guarded := g.files[rel]; guarded || rel == g.curFile {
-				continue
-			}
-			nt, err := task.Load(p, rel)
-			if err != nil {
-				continue // not a task file aitk can read; List skips it too
-			}
-			if g.ids[strings.ToLower(nt.ID)] {
-				if os.Remove(f) == nil {
-					changed = append(changed, rel+" (removed: duplicate of "+nt.ID+")")
-				}
-				continue
-			}
-			if sanitizeNewTask(nt, g.agent) {
-				if task.Save(p, nt) == nil {
-					changed = append(changed, rel+" (new task reset to its description)")
-				}
-			}
-		}
+	ran := false
+	work := func() error {
+		ran = true
+		changed = g.restoreLocked(p)
 		return nil
-	})
+	}
+	if err := WithLock(p, work); err != nil && !ran {
+		work()
+		changed = append(changed, "(the project lock was unavailable)")
+	}
 	sort.Strings(changed)
 	return changed
+}
+
+func (g *attemptGuard) put(abs string, want []byte) bool {
+	os.RemoveAll(abs) // whatever sits there now (a directory, a symlink) goes first
+	if err := fsx.WriteFile(abs, want, 0o644); err != nil {
+		g.failed = append(g.failed, abs)
+		return false
+	}
+	return true
+}
+
+func (g *attemptGuard) restoreLocked(p *project.Project) []string {
+	var changed []string
+	for abs, want := range g.files {
+		if got, err := os.ReadFile(abs); err == nil && bytes.Equal(got, want) {
+			continue
+		}
+		if g.put(abs, want) {
+			changed = append(changed, relTo(p, abs))
+		}
+	}
+	for abs, was := range g.present {
+		if !was { // git config files the agent created
+			if _, err := os.Lstat(abs); err == nil && os.RemoveAll(abs) == nil {
+				changed = append(changed, relTo(p, abs)+" (removed)")
+			}
+		}
+	}
+	// The agent's own task file keeps its identity: a changed id (or a missing file) is forgery.
+	if len(g.curWas) > 0 {
+		if cur, err := task.Load(p, relTo(p, g.curFile)); err != nil || !strings.EqualFold(cur.ID, g.curID) {
+			if g.put(g.curFile, g.curWas) {
+				changed = append(changed, relTo(p, g.curFile)+" (its id or file was changed)")
+			}
+		}
+	}
+	entries, _ := os.ReadDir(p.Path(project.TasksDir))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		abs := p.Path(project.TasksDir, e.Name())
+		if _, guarded := g.files[abs]; guarded || abs == g.curFile {
+			continue
+		}
+		r := relTo(p, abs)
+		nt, err := task.Load(p, r)
+		switch {
+		case err != nil || !task.IDPattern.MatchString(nt.ID):
+			if os.Remove(abs) == nil {
+				changed = append(changed, r+" (removed: not a valid task)")
+			}
+		case g.knownID(nt.ID):
+			if os.Remove(abs) == nil {
+				changed = append(changed, r+" (removed: duplicate of "+nt.ID+")")
+			}
+		case sanitizeNewTask(nt, g.agent):
+			if err := task.Save(p, nt); err != nil {
+				if os.Remove(abs) == nil { // fail closed: an invalid seeded task is not kept as written
+					changed = append(changed, r+" (removed: could not be reset to its description)")
+				}
+			} else {
+				changed = append(changed, r+" (new task reset to its description)")
+			}
+		}
+	}
+	return changed
+}
+
+func relTo(p *project.Project, abs string) string {
+	if r, err := filepath.Rel(p.Root, abs); err == nil {
+		return filepath.ToSlash(r)
+	}
+	return abs
 }
 
 // sanitizeNewTask keeps a task the agent filed as plain new work. It reports whether it changed.
@@ -625,7 +700,7 @@ func setEnv(k, v string) func() {
 
 // worktreeChanges lists changed and untracked paths.
 func worktreeChanges(p *project.Project) []string {
-	out, _ := gitx.RunRaw(p.Root, "status", "--porcelain", "-z", "--untracked-files=all")
+	out, _ := gitx.RunRaw(p.Root, append(safeGitFlags(), "status", "--porcelain", "-z", "--untracked-files=all")...)
 	var paths []string
 	toks := strings.Split(string(out), "\x00")
 	for i := 0; i < len(toks); i++ {
@@ -663,6 +738,9 @@ func (r *runner) commitWork(rt *RunTask) error {
 	if again := r.guard.restore(p); len(again) > 0 { // anything still running could have changed them
 		rt.Note = strings.TrimPrefix(rt.Note+"; restored before the commit: "+strings.Join(again, ", "), "; ")
 	}
+	if r.guard != nil && len(r.guard.failed) > 0 {
+		return fmt.Errorf("could not restore %s after the attempt; nothing committed", strings.Join(dedupe(r.guard.failed), ", "))
+	}
 	if len(worktreeChanges(p)) == 0 {
 		return nil
 	}
@@ -696,7 +774,7 @@ func (r *runner) commitWork(rt *RunTask) error {
 		if len(worktreeChanges(p)) > 0 {
 			msg := "aitk run: unfinished work on " + t.ID
 			// No pathspecs here, and not literalGit: stash uses pathspec magic internally.
-			if _, err := gitx.RunRaw(p.Root, "stash", "push", "--include-untracked", "-m", msg); err != nil {
+			if _, err := gitx.RunRaw(p.Root, append(safeGitFlags(), "stash", "push", "--include-untracked", "-m", msg)...); err != nil {
 				return fmt.Errorf("could not set the unfinished work aside: %w", err)
 			}
 			rt.Stash = msg
@@ -723,9 +801,15 @@ func (r *runner) commit(rt *RunTask, subject string) error {
 	return err
 }
 
+// safeGitFlags switch off git settings that run programs (an agent can write .git/config):
+// the fsmonitor hook and repository hooks. The guard also restores .git/config after attempts.
+func safeGitFlags() []string {
+	return []string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}
+}
+
 // literalGit runs git with pathspec magic off, so a file named ":x" is just a file.
 func literalGit(p *project.Project, args ...string) (string, error) {
-	c := exec.Command("git", args...)
+	c := exec.Command("git", append(safeGitFlags(), args...)...)
 	c.Dir = p.Root
 	c.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
 	out, err := c.CombinedOutput()
