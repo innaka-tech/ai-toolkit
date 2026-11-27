@@ -183,6 +183,7 @@ func Init(dir, name, check string, dryRun bool) (*InitResult, error) {
 		cfg += "\n# [check]\n# cmd = \"make test\"   # required for the Definition of Done to verify work\n"
 	}
 	cfg += "\n[risk]\n# Changes matching these globs make a task \"strict\" (risk analysis + independent review).\nsensitive_paths = []\n"
+	cfg += "\n[quality]\n# Tasks of these profiles need review passes until one finds 0 before they are done:\n# off | strict | standard | all (strict always needs two passes, one by a different tool).\nreview = \"standard\"\n"
 	cfg += "\n# How agents work and talk here, applied in every aitk brief (docs/how-to/assistant.md).\n# [assistant]\n# character = \"full\"    # lite | full | ultra | off\n# talk = \"normal\"       # normal | lite | caveman\n# auto_persona = true   # the brief picks the personas the task needs\n"
 	state := map[string]any{"schema_version": 2, "project": map[string]any{"name": project.Slug(name, 62)}}
 	stateJSON, _ := json.MarshalIndent(state, "", "  ")
@@ -691,9 +692,12 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			}
 		}
 		if target == task.InReview {
-			if prof == "strict" && !reviewDone(t) {
+			switch {
+			case prof == "strict" && !reviewDone(t):
 				res.Notes = append(res.Notes, "strict task needs ≥2 review passes (last with 0 findings, one by a tool that did not work on it) before it can be done: aitk review pass --findings N")
-			} else {
+			case !reviewSatisfied(p, t, prof):
+				res.Notes = append(res.Notes, "review until clean: review the change, record aitk review pass "+t.ID+" --findings N, fix what it found, and repeat until a pass finds 0; then run aitk close again")
+			default:
 				res.Notes = append(res.Notes, "waiting for user acceptance: a person runs aitk uat accept "+t.ID+" (script: aitk uat script "+t.ID+")")
 			}
 		}
@@ -781,13 +785,48 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 			return "", apperr.New("E_DOD_AUDIT", apperr.ExitGate, "aitk audit", "files changed after the last passing audit")
 		}
 	}
-	if prof == "strict" && !reviewDone(t) {
+	if !reviewSatisfied(p, t, prof) {
 		return task.InReview, nil
 	}
 	if p.Config.UATRequired(prof) && (t.Evidence == nil || t.Evidence.UAT == nil || t.Evidence.UAT.Status != "accepted") {
 		return task.InReview, nil
 	}
 	return task.Done, nil
+}
+
+// reviewSatisfied applies [quality] review: strict work needs the independent review
+// (reviewDone); other required profiles need at least one pass and the last one with 0 findings.
+func reviewSatisfied(p *project.Project, t *task.Task, prof string) bool {
+	if prof == "strict" {
+		return reviewDone(t)
+	}
+	if !p.Config.ReviewRequired(prof) {
+		return true
+	}
+	return t.Review != nil && len(t.Review.Passes) > 0 && t.Review.Passes[len(t.Review.Passes)-1].Findings == 0
+}
+
+// SwitchAllowed enforces one task at a time: an agent finishes the active task (review until
+// clean, then close) or blocks it before starting another in the same worktree.
+func SwitchAllowed(p *project.Project, next string) error {
+	if !p.Config.OneTaskAtATime() {
+		return nil
+	}
+	cur := session.Load(p).Active()
+	if cur == "" || strings.EqualFold(cur, next) {
+		return nil
+	}
+	t, err := task.Find(p, cur)
+	if err != nil {
+		return nil // a stale pointer is healed elsewhere; it must not block work
+	}
+	switch t.Status {
+	case task.InProgress, task.Implemented, task.InReview:
+		return apperr.New("E_TASK_ACTIVE", apperr.ExitGate,
+			fmt.Sprintf("finish it (review until a pass finds 0, then aitk close), or park it: aitk task block %s --reason \"<why>\"", t.ID),
+			"task %s is still %s; one task at a time", t.ID, t.Status)
+	}
+	return nil
 }
 
 // reviewDone: ≥2 passes, the last with 0 findings, and at least one pass by a tool that did

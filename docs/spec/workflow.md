@@ -129,8 +129,11 @@ The profile is computed from the diff between the merge base with `default_branc
 | Risk section filled (no placeholder text) | | | ✔ |
 | OWASP ASVS 4.0.3 checklist present and every item verified or marked N/A (`security.asvs_level` ≥ 1, default 1) | | | ✔ |
 | Security audit passed on the current tree (`security.audit`: `strict` by default, `all`, or `off`) | `all` | `all` | ✔ |
+| ≥ 1 review pass and the last with 0 findings, by any tool (`quality.review`: `strict` by default; `standard`, `all`, or `off`) | `all` | `standard`, `all` | — (see next row) for `done`; otherwise `in_review` |
 | ≥ 2 review passes, last with 0 findings, ≥ 1 by a tool that did not work on the task | | | ✔ for `done`; otherwise `in_review` |
 | A person accepted the task (`aitk uat accept`) when `uat.required` covers the profile (`none` by default; `strict`, `standard`, `all`) | as configured | as configured | as configured — otherwise `in_review` |
+
+**One task at a time** (`quality.one_task`, default true): `aitk task start`, `task new --start`, and `task next --start` (and their MCP tools) refuse with `E_TASK_ACTIVE` (exit 3) while this worktree's active task is `in_progress`, `implemented`, or `in_review`. The agent finishes it (review until a pass finds 0, then `close`) or parks it with `aitk task block <id> --reason`. `aitk run` is exempt: it leaves tasks that wait for a person in `in_review` and moves on. `aitk init` writes `review = "standard"` for new projects. The brief tells the agent to stop and ask when the last three review passes do not decrease.
 
 User acceptance is recorded only by a person: `aitk uat accept|reject` refuses to run when an AI agent's environment is detected. `aitk uat script <id>` writes `docs/ai/uat/<id>.md` with one scenario per criterion. A rejection sends the task back to `in_progress` with the reason in its notes and in a handoff, so the next agent sees it in the brief.
 

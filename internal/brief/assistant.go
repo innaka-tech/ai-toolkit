@@ -1,6 +1,7 @@
 package brief
 
 import (
+	"fmt"
 	"path"
 	"strings"
 
@@ -125,4 +126,23 @@ func contains(xs []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// reviewRules tell the agent to review until a pass finds 0 before moving on, and to stop and
+// ask when the passes are not converging.
+func reviewRules(c project.Config, t *task.Task, prof string) []string {
+	var r []string
+	if c.ReviewRequired(prof) && prof != "strict" {
+		r = append(r, "Review until clean: review your change, record aitk review pass --findings N, fix what it found, and repeat until a pass finds 0. Only then close.")
+	}
+	if c.OneTaskAtATime() {
+		r = append(r, "One task at a time: finish this task (or aitk task block <id> --reason \"…\") before starting another.")
+	}
+	if t != nil && t.Review != nil {
+		ps := t.Review.Passes
+		if n := len(ps); n >= 3 && ps[n-1].Findings > 0 && ps[n-1].Findings >= ps[n-2].Findings && ps[n-2].Findings >= ps[n-3].Findings {
+			r = append(r, fmt.Sprintf("Review is not converging (%d, %d, %d findings in the last passes): stop and ask the user whether to split the task or change the approach.", ps[n-3].Findings, ps[n-2].Findings, ps[n-1].Findings))
+		}
+	}
+	return r
 }

@@ -271,6 +271,22 @@
           "type": "boolean",
           "default": true,
           "description": "Tasks tagged bug must change a test file before they can be done"
+        },
+        "review": {
+          "type": "string",
+          "enum": [
+            "off",
+            "strict",
+            "standard",
+            "all"
+          ],
+          "default": "strict",
+          "description": "Profiles whose tasks need review passes until one finds 0 before they are done; strict always needs two passes, one by a different tool"
+        },
+        "one_task": {
+          "type": "boolean",
+          "default": true,
+          "description": "An agent must finish or block the active task before starting another in the same worktree"
         }
       }
     },

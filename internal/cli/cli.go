@@ -429,6 +429,11 @@ func (a *app) taskNew() *cobra.Command {
 		if in.Profile != "" && in.Profile != "lite" && in.Profile != "standard" && in.Profile != "strict" {
 			return nil, apperr.Usage("invalid --profile %q", in.Profile)
 		}
+		if start {
+			if err := ops.SwitchAllowed(p, ""); err != nil {
+				return nil, err
+			}
+		}
 		t, err := ops.TaskNew(p, in)
 		if err != nil {
 			return nil, err
@@ -453,6 +458,9 @@ func (a *app) taskStart() *cobra.Command {
 	c.RunE = a.wrap(func(_ *cobra.Command, args []string) (*result, error) {
 		p, err := a.openWrite()
 		if err != nil {
+			return nil, err
+		}
+		if err := ops.SwitchAllowed(p, args[0]); err != nil {
 			return nil, err
 		}
 		t, err := ops.TaskStart(p, args[0])
@@ -513,6 +521,9 @@ func (a *app) taskNext() *cobra.Command {
 		}
 		res := &result{data: nx}
 		if start && len(nx.Ready) > 0 {
+			if err := ops.SwitchAllowed(p, nx.Ready[0].ID); err != nil {
+				return nil, err
+			}
 			t, err := ops.TaskStart(p, nx.Ready[0].ID)
 			if err != nil {
 				return nil, err

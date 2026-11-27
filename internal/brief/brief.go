@@ -213,7 +213,8 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 		b.Goal = goalInfo(p, t.Goal, tasks)
 	}
 	b.Rules = rules(b.Profile, p.Config.Check.Cmd != "")
-	b.Rules = append(b.Rules[:len(b.Rules)-1], append(characterRules(p.Config), b.Rules[len(b.Rules)-1])...)
+	extra := append(reviewRules(p.Config, t, b.Profile), characterRules(p.Config)...)
+	b.Rules = append(b.Rules[:len(b.Rules)-1], append(extra, b.Rules[len(b.Rules)-1])...)
 	if p.Config.AutoPersona() {
 		b.Personas, b.Standards = pickPersonas(t, b.Profile, b.Changed)
 	}
