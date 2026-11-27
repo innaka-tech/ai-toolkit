@@ -231,6 +231,9 @@ func (r *runner) one(c Candidate) RunTask {
 		snap := protectedOf(t)
 		started := task.Now()
 		prompt := runPrompt(p, t, rt.Attempts, r.attempts)
+		if rt.Attempts > 1 && rt.Note != "" {
+			prompt = "The previous attempt did not finish: " + rt.Note + "\n\n" + prompt
+		}
 		before := profile.Fingerprint(p)
 		ar := r.runAgent(prompt, t.ID)
 		code, runErr := ar.code, ar.err
@@ -433,7 +436,7 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 		t.Review = snap.review // the agent's own loop is unfinished: work for the next attempt
 		return "", "review until clean is not finished (no clean review pass on the current code)"
 	}
-	if target == task.InReview && prof == "strict" && !reviewDone(t) && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0) {
+	if target == task.InReview && prof == "strict" && p.Config.ReviewLoop() && !reviewDone(t) && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0) {
 		t.Review = snap.review // strict work waits for another tool only after the agent's own clean pass
 		return "", "your own review pass is missing or found something to fix (strict work needs it before another tool's pass)"
 	}
@@ -762,11 +765,15 @@ func reviewStep(p *project.Project, t *task.Task) string {
 	if prof == "lite" && !t.ProfilePinned {
 		prof = "standard" // the diff may still grow past lite
 	}
+	strictHint := ""
+	if len(p.Config.Risk.SensitivePaths) > 0 && !t.ProfilePinned && prof != "strict" && p.Config.ReviewLoop() {
+		strictHint = " If your change touches a sensitive path (aitk.toml [risk] sensitive_paths), the task becomes strict: your clean pass is still needed, and another tool's independent pass follows."
+	}
 	switch {
-	case prof == "strict":
+	case prof == "strict" && p.Config.ReviewLoop():
 		return "\n   Then review your own change: record `aitk review pass " + t.ID + " --findings N`, fix what you found, run the check again, and repeat until a pass finds 0. Strict work also needs an independent pass by another tool after yours; your own passes never count as that one."
-	case p.Config.ReviewRequired(prof):
-		return "\n   Then review your own change: record `aitk review pass " + t.ID + " --findings N`, fix what you found, run the check again, and repeat until a pass finds 0."
+	case prof != "strict" && p.Config.ReviewRequired(prof):
+		return "\n   Then review your own change: record `aitk review pass " + t.ID + " --findings N`, fix what you found, run the check again, and repeat until a pass finds 0." + strictHint
 	}
 	return ""
 }

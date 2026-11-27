@@ -13,7 +13,8 @@ aitk run --agent claude-code --commit --max-tasks 5
 | Agent outcome | Task afterwards | The run |
 |---|---|---|
 | `aitk close` passes the Definition of Done, and aitk's own verification agrees | `done` (with `--commit`: one Conventional Commit with `AI-Task`/`AI-Tool` trailers) | next task |
-| Needs review passes or a person's acceptance (strict tasks, `uat.required`) | `in_review`: a person runs `aitk uat accept <id>` | next task |
+| Needs another tool's review pass or a person's acceptance (strict tasks, `uat.required`) | `in_review`: another tool runs `aitk review pass <id>`, a person runs `aitk uat accept <id>` | next task |
+| The agent closed without its own clean review pass (`[quality] review = "standard"`: standard tasks, and strict tasks before another tool's pass) | reopened; the next attempt's prompt says why | same task, next attempt |
 | The agent hands over with `aitk close --status blocked` | `blocked`, with the agent's handoff | next task |
 | Not finished after `--max-attempts` runs (default 2), or the check keeps failing | `blocked`, with a handoff written by aitk (with `--commit`: its unfinished changes go to `git stash`, named after the task) | next task |
 | The agent cannot start (exits at once without changing anything: not installed, bad flags, not logged in) | unchanged | the run stops |
@@ -61,7 +62,7 @@ Together with the check on the final tree, the risk profiles, the security audit
 
 Agents run as your user, so they can write any file in the repository, aitk's records included. `aitk run` therefore does not believe a task file that says `done`. It re-derives the outcome itself:
 
-- The fields an agent must not change for itself go back to their values from before the attempt: user acceptance, review passes, audit results, regression evidence, the risk profile and its pin, tags, goal, and dependencies. Acceptance criteria may be added and checked, but a removed or reworded criterion fails the task.
+- The fields an agent must not change for itself go back to their values from before the attempt: user acceptance, audit results, regression evidence, the risk profile and its pin, tags, goal, dependencies, `created_by`, and `workers` (the agent is added as a worker; nobody is removed). Review passes the agent recorded during the attempt are kept under the agent's name, whatever the file says: they count for the review loop, never as another tool's independent review; a failed attempt keeps none. Acceptance criteria may be added and checked, but a removed or reworded criterion fails the task.
 - If the agent did not record a handoff with `aitk close`, aitk writes one, so every finished task has a record.
 - aitk runs the check itself, and the audit too when the profile requires one.
 - It recomputes the regression evidence from the task's own commits and uncommitted changes. Deleted tests do not count, and neither do other tasks' commits, which are recognized by their `AI-Task` trailer.

@@ -3,6 +3,7 @@ package gates_test
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -780,4 +781,71 @@ func TestRunStrictRetriesWithoutTheAgentsOwnCleanPass(t *testing.T) {
 			t.Fatalf("review %q: strict work without the agent's own clean pass must be retried, not left waiting: %+v", review, r.Data.Tasks)
 		}
 	}
+}
+
+// Projects without [quality] review keep the old strict behaviour in aitk run: a change that
+// becomes strict waits for another tool after one attempt; no own-pass retry is imposed.
+func TestRunStrictWithoutReviewLoopKeepsOldBehaviour(t *testing.T) {
+	dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+	cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+	os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(strings.Replace(string(cfg), `review = "standard"`, "", 1)), 0o644)
+	must(t, dir, bin, "task", "new", "Auth", "--ac", "works") // unpinned: the diff makes it strict
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	r := aitkRun(t, dir, "--cmd", "set -e\n"+strictSetup+"aitk close --summary auth --knowledge none\n", "--max-attempts", "1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status != "in_review" || r.Data.Tasks[0].Attempts != 1 {
+		t.Fatalf("without the review loop, strict work waits for another tool after one attempt: %+v", r.Data.Tasks)
+	}
+}
+
+// A failed attempt keeps none of the agent's passes, also when the standard loop is retried.
+func TestRunFailedStandardAttemptKeepsNoPasses(t *testing.T) {
+	dir := newRunProject(t, "")
+	id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Feature", "--ac", "works")))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	stale := `set -e
+for i in 1 2 3 4 5 6; do echo x > "src_$i.txt"; done
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+aitk review pass --findings 0
+echo changed > src_1.txt
+aitk check
+aitk close --summary "did it" --knowledge none
+`
+	aitkRun(t, dir, "--cmd", stale, "--max-attempts", "1", "--max-tasks", "1")
+	if ps := passesOf(t, dir, id); len(ps) != 0 {
+		t.Fatalf("a failed attempt (stale clean pass) must keep no passes: %+v", ps)
+	}
+}
+
+// created_by is protected: the task's creator (codex) reviewed it, which never counts as
+// independent; the run agent cannot rewrite created_by to make that pass count.
+func TestRunCreatedByIsProtected(t *testing.T) {
+	dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+	id := strings.Fields(strings.TrimSpace(mustEnv(t, dir, []string{"AITK_TOOL=codex"}, bin, "task", "new", "Auth", "--ac", "works", "--profile", "strict")))[1]
+	mustEnv(t, dir, []string{"AITK_TOOL=codex"}, bin, "review", "pass", id, "--findings", "0")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent := "set -e\n" + strictSetup + `aitk review pass --findings 0
+aitk close --summary auth --knowledge none || true
+sed -i.bak -E 's/^created_by: .*/created_by: human/; s/^status: .*/status: done/' "$f" && rm -f "$f.bak"
+`
+	aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if st := statusOf(t, dir, id); st == "done" {
+		t.Fatalf("the creator's own pass counted as independent after created_by was rewritten: %+v", passesOf(t, dir, id))
+	}
+}
+
+func mustEnv(t *testing.T, dir string, env []string, name string, args ...string) string {
+	t.Helper()
+	c := exec.Command(name, args...)
+	c.Dir = dir
+	c.Env = append(os.Environ(), env...)
+	out, err := c.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
+	}
+	return string(out)
 }
