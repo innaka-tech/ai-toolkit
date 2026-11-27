@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -213,9 +215,15 @@ type runner struct {
 	log              io.Writer
 }
 
-func (r *runner) one(c Candidate) RunTask {
+func (r *runner) one(c Candidate) (rt RunTask) {
 	p := r.p
-	rt := RunTask{ID: c.ID, Title: c.Title}
+	rt = RunTask{ID: c.ID, Title: c.Title}
+	var tampered []string // what the agent changed outside its own task, restored by aitk
+	defer func() {
+		if len(tampered) > 0 {
+			rt.Note = strings.TrimPrefix(rt.Note+"; restored what the agent changed outside its task: "+strings.Join(dedupe(tampered), ", "), "; ")
+		}
+	}()
 	t, err := TaskStart(p, c.ID)
 	if err != nil {
 		rt.Status, rt.Note = c.Status, "could not start: "+err.Error()
@@ -231,8 +239,10 @@ func (r *runner) one(c Candidate) RunTask {
 		snap := protectedOf(t)
 		started := task.Now()
 		prompt := runPrompt(p, t, rt.Attempts, r.attempts)
+		guard := guardOf(p, t)
 		before := profile.Fingerprint(p)
 		ar := r.runAgent(prompt, t.ID)
+		tampered = append(tampered, guard.restore(p)...) // before verification and any commit
 		code, runErr := ar.code, ar.err
 		cur, ferr := task.Find(p, t.ID)
 		if ferr != nil {
@@ -272,13 +282,13 @@ func (r *runner) one(c Candidate) RunTask {
 			}
 			return rt
 		case task.Blocked, task.Cancelled:
-			restoreProtected(t, snap) // whatever else the agent wrote, it cannot grant itself UAT or reviews
+			r.restore(t, snap) // whatever else the agent wrote, it cannot grant itself UAT or reviews
 			WithLock(p, func() error { return task.Save(p, t) })
 			rt.Status, rt.Note = t.Status, "the agent stopped the task; see its handoff"
 			return rt
 		}
 		// Still unfinished: whatever the agent wrote, it cannot keep grants it gave itself.
-		restoreProtected(t, snap)
+		r.restore(t, snap)
 		WithLock(p, func() error { return task.Save(p, t) })
 		switch {
 		case runErr != nil:
@@ -341,6 +351,62 @@ func protectedOf(t *task.Task) protected {
 	return s
 }
 
+// restore puts back what the agent may not change and records the agent as a worker: aitk does
+// this on every path an attempt can end on, so the agent's own passes are never independent.
+func (r *runner) restore(t *task.Task, snap protected) {
+	restoreProtected(t, snap)
+	t.AddWorker(r.agentName)
+}
+
+// attemptGuard holds files an agent must not change during an attempt: aitk.toml and the other
+// tasks' files. New task files are allowed (a persona may file follow-up tasks).
+type attemptGuard map[string][]byte
+
+func guardOf(p *project.Project, t *task.Task) attemptGuard {
+	g := attemptGuard{}
+	if b, err := os.ReadFile(p.Path(project.ConfigFile)); err == nil {
+		g[project.ConfigFile] = b
+	}
+	files, _ := filepath.Glob(p.Path(project.TasksDir, "*.md"))
+	for _, f := range files {
+		rel := filepath.ToSlash(filepath.Join(project.TasksDir, filepath.Base(f)))
+		if rel == filepath.ToSlash(t.File) || strings.HasPrefix(filepath.Base(f), t.ID+"-") {
+			continue
+		}
+		if b, err := os.ReadFile(f); err == nil {
+			g[rel] = b
+		}
+	}
+	return g
+}
+
+// restore writes back every guarded file the agent changed or removed and names them.
+func (g attemptGuard) restore(p *project.Project) []string {
+	var changed []string
+	for rel, want := range g {
+		if got, err := os.ReadFile(p.Path(rel)); err == nil && bytes.Equal(got, want) {
+			continue
+		}
+		if err := fsx.WriteFile(p.Path(rel), want, 0o644); err == nil {
+			changed = append(changed, rel)
+		}
+	}
+	sort.Strings(changed)
+	return changed
+}
+
+func dedupe(xs []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, x := range xs {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
 // ownPasses is the protected review plus the passes the agent appended during the attempt,
 // renumbered and attributed to the agent.
 func ownPasses(base, attempt *task.Review, agent string) *task.Review {
@@ -383,8 +449,7 @@ func restoreProtected(t *task.Task, s protected) {
 func (r *runner) decide(t *task.Task, snap protected, since string) (string, string) {
 	p := r.p
 	attempt := t.Review // the agent's own passes: they count for the non-strict review loop only
-	restoreProtected(t, snap)
-	t.AddWorker(r.agentName) // aitk records this, not the agent: its own passes are never independent
+	r.restore(t, snap)
 	cur := t.Criteria()
 	if len(cur) < len(snap.criteria) {
 		return "", "acceptance criteria were removed"

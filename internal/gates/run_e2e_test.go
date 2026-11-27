@@ -781,3 +781,63 @@ func TestRunStrictRetriesWithoutTheAgentsOwnCleanPass(t *testing.T) {
 		}
 	}
 }
+
+// A blocked attempt still records the agent as a worker (it wrote code for the task).
+func TestRunBlockedAttemptRecordsTheAgentAsWorker(t *testing.T) {
+	dir := newRunProject(t, "")
+	id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Feature", "--ac", "works")))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent := `echo x > half_done.txt
+aitk task block "$AITK_RUN_TASK" --reason stuck
+`
+	aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	var r struct {
+		Data struct {
+			Task struct {
+				Status  string   `json:"status"`
+				Workers []string `json:"workers"`
+			} `json:"task"`
+		} `json:"data"`
+	}
+	json.Unmarshal([]byte(must(t, dir, bin, "--json", "task", "show", id)), &r)
+	if r.Data.Task.Status != "blocked" || !strings.Contains(strings.Join(r.Data.Task.Workers, ","), "custom") {
+		t.Fatalf("a blocked attempt must record the agent as a worker: %+v", r.Data.Task)
+	}
+}
+
+// Changes an agent makes outside its own task during an attempt (aitk.toml, other existing
+// tasks) are restored and reported; new task files it files are kept.
+func TestRunRestoresChangesOutsideTheAgentsTask(t *testing.T) {
+	dir := newRunProject(t, "")
+	a := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "First", "--ac", "works")))[1]
+	b := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Second", "--ac", "works", "--depends", a)))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: tasks")
+	cfgBefore, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+	bFile := strings.TrimSpace(must(t, dir, "sh", "-c", "ls docs/ai/tasks/"+b+"-*.md"))
+	bBefore, _ := os.ReadFile(filepath.Join(dir, bFile))
+	agent := `set -e
+sed -i.bak 's/^review = "standard"/review = "off"/' aitk.toml && rm -f aitk.toml.bak
+aitk review pass ` + b + ` --findings 0 || true
+sed -i.bak 's/^title: .*/title: Hijacked/' ` + bFile + ` && rm -f ` + bFile + `.bak
+aitk task new "Follow-up the agent found" > /dev/null
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+aitk close --summary "did it" --knowledge none
+`
+	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml")); string(cfg) != string(cfgBefore) {
+		t.Fatalf("aitk.toml must be restored:\n%s", cfg)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, bFile)); string(got) != string(bBefore) {
+		t.Fatalf("another task's file must be restored:\n%s", got)
+	}
+	if len(r.Data.Tasks) != 1 || !strings.Contains(r.Data.Tasks[0].Note, "aitk.toml") || !strings.Contains(r.Data.Tasks[0].Note, bFile) {
+		t.Fatalf("the run must report what it restored: %+v", r.Data.Tasks)
+	}
+	if out := must(t, dir, bin, "task", "list", "--all"); !strings.Contains(out, "Follow-up the agent found") {
+		t.Fatalf("a new task the agent filed must be kept:\n%s", out)
+	}
+}
