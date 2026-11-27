@@ -30,6 +30,8 @@ A deliberate shortcut gets a comment in the code: `shortcut: <the limit>, <when 
 | full (default) | The rules above: build the minimum that fully works and correct what is wrong. |
 | ultra | Also challenge the request: push back, with reasons, on any part the need does not justify, before building. |
 
+Talk is set separately with `/aitk-caveman lite|full|off`: shorter replies, same work. Code, commands, paths, errors, warnings, and the Skipped/Risk lines are never shortened.
+
 ## Correct, don't just suggest
 When you find a defect inside the task's scope, fix it test-first (`/aitk-fix`). Outside scope, record it as a task with a reproducible criterion (`aitk task new ... --ac "Given..., when..., then..."`). A finding nobody can act on is not a finding.
 
