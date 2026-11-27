@@ -140,6 +140,10 @@ func TestReviewFindingsFromTheLoopReview(t *testing.T) {
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "2"))
 	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE") // findings to fix
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "payments", "--knowledge", "none")) // closed after its last pass
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("setup: strict task waits for another tool, got %s", st)
+	}
 	mustOK(t, aitk(t, dir, "task", "start", b)) // only another tool's pass is missing
 
 	// Demoting the active task to todo is not a way around one task at a time.
@@ -296,4 +300,20 @@ func TestBriefSaysDifferentToolOnlyForStrict(t *testing.T) {
 	if !strings.Contains(md, "## Personas") || strings.Contains(md, "different tool") {
 		t.Fatalf("a standard task's personas section must not say a different tool is needed:\n%s", md)
 	}
+}
+
+func TestLiteTaskWaitingForUATDoesNotHoldTheWorktree(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir) // review = "standard"
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"all\"\n")
+	a := data(aitk(t, dir, "task", "new", "Lite one", "--ac", "x", "--start"))["id"].(string)
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "lite", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("setup: waits for UAT, got %s", st)
+	}
+	mustOK(t, aitk(t, dir, "task", "start", b)) // lite never needs the loop; only the person is missing
 }

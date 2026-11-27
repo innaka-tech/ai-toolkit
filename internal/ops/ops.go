@@ -871,7 +871,7 @@ func waitingOnOthers(p *project.Project, t *task.Task) bool {
 		}
 		lastPass = last.At
 	}
-	if p.Config.ReviewLoop() { // opted in: the agent owes its own clean pass, on strict work too
+	if p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) { // opted in: own clean pass, strict work too; never lite
 		if lastPass == "" || (prof != "strict" && !reviewSatisfied(p, t, prof)) {
 			return false
 		}

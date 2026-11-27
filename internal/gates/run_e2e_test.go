@@ -776,9 +776,20 @@ func TestRunStrictRetriesWithoutTheAgentsOwnCleanPass(t *testing.T) {
 		must(t, dir, "git", "add", "-A")
 		must(t, dir, "git", "commit", "-qm", "chore: task")
 		agent := "set -e\n" + strictSetup + review + "aitk close --summary auth --knowledge none\n"
-		r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "2", "--max-tasks", "1")
+		probe := `if [ -f .attempted ]; then grep -c "The previous attempt did not finish: .*own review pass" "$AITK_RUN_PROMPT_FILE" > reason.txt || true; fi
+touch .attempted
+`
+		r := aitkRun(t, dir, "--cmd", probe+agent, "--max-attempts", "2", "--max-tasks", "1")
 		if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Attempts != 2 || r.Data.Tasks[0].Status == "in_review" || r.Data.Tasks[0].Status == "done" {
 			t.Fatalf("review %q: strict work without the agent's own clean pass must be retried, not left waiting: %+v", review, r.Data.Tasks)
+		}
+		if b, _ := os.ReadFile(filepath.Join(dir, "reason.txt")); strings.TrimSpace(string(b)) != "1" {
+			t.Fatalf("review %q: the second attempt's prompt must say why the first failed (got %q)", review, b)
+		}
+		if review != "" {
+			if ps := passesOf(t, dir, r.Data.Tasks[0].ID); len(ps) != 0 {
+				t.Fatalf("failed strict attempts must keep none of the agent's passes: %+v", ps)
+			}
 		}
 	}
 }
