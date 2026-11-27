@@ -105,7 +105,7 @@ todo → in_progress → implemented → in_review → done
 ```
 
 - `aitk close` moves a task to the furthest status its evidence supports (§5).
-- `in_review` → `done` requires review passes (§5, strict) or, for other profiles, a passing check.
+- `in_review` → `done` requires review passes (§5: strict always; standard too with `quality.review = "standard"`) and, where configured, user acceptance; otherwise a passing check.
 
 ## 5. Risk profiles and Definition of Done
 

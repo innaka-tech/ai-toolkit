@@ -280,7 +280,7 @@
             "standard"
           ],
           "default": "strict",
-          "description": "Profiles whose tasks need review passes until one finds 0 before they are done. off and strict (default) are the same: only strict work, which always needs two passes with one by a different tool; standard adds standard tasks. Lite work never needs it."
+          "description": "Profiles whose tasks need review passes until one finds 0 before they are done. off and strict (default) are the same: only strict work, which always needs two passes, one clean (0 findings) by a different tool; standard adds standard tasks. Lite work never needs it."
         },
         "one_task": {
           "type": "boolean",
