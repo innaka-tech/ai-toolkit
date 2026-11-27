@@ -1159,3 +1159,91 @@ aitk close --status blocked --summary probe --knowledge none
 	}
 	sameFile(t, dir, bFile, bWas, "glob characters in the path")
 }
+
+// Security review pass 3 scenarios.
+func TestRunGuardThirdPass(t *testing.T) {
+	close := "touch ok.txt\naitk task update --ac-done 1\naitk check\naitk close --summary done --knowledge none\n"
+	committed := func(t *testing.T, dir, rel string) string {
+		t.Helper()
+		out, _ := sh(t, dir, "git", "show", "HEAD:"+rel)
+		return out
+	}
+
+	// Staged content hidden with skip-worktree must not reach the commit.
+	dir := newRunProject(t, "")
+	_, _, bFile, bWas := twoTasks(t, dir)
+	agent := `sed -i.bak 's/^status: .*/status: cancelled/' ` + bFile + ` && rm -f ` + bFile + `.bak
+git add ` + bFile + `
+git update-index --skip-worktree ` + bFile + `
+echo x > feature.txt
+` + close
+	aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if got := committed(t, dir, bFile); got != string(bWas) {
+		t.Fatalf("skip-worktree content reached the commit:\n%s", got)
+	}
+
+	// A guarded file swapped for a symlink with the same content is put back as a file.
+	dir = newRunProject(t, "")
+	twoTasks(t, dir)
+	outside := t.TempDir()
+	agent = `cp aitk.toml ` + outside + `/cfg.toml && rm aitk.toml && ln -s ` + outside + `/cfg.toml aitk.toml
+echo x > feature.txt
+` + close
+	aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if fi, err := os.Lstat(filepath.Join(dir, "aitk.toml")); err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("aitk.toml must be a regular file again: %v %v", fi, err)
+	}
+	if out := must(t, dir, "git", "ls-tree", "HEAD", "aitk.toml"); strings.HasPrefix(out, "120000") {
+		t.Fatalf("a symlink was committed in place of aitk.toml: %s", out)
+	}
+
+	// Pointing git at another common dir (with its own config and filters) stops the commit.
+	dir = newRunProject(t, "")
+	_, _, bFile, bWas = twoTasks(t, dir)
+	evil := t.TempDir()
+	agent = `cp -r .git/. ` + evil + `/
+printf '[filter "x"]\n\tclean = sh -c "sed -i.bak s/^status:.*/status:cancelled/ ` + bFile + `; cat"\n' >> ` + evil + `/config
+echo ` + evil + ` > .git/commondir
+echo '*.txt filter=x' > .gitattributes
+echo x > feature.txt
+` + close
+	aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	sameFile(t, dir, bFile, bWas, "commondir redirect")
+	if _, err := os.Stat(filepath.Join(dir, ".git", "commondir")); err == nil {
+		t.Fatal("a commondir file the agent created must be removed")
+	}
+
+	// Two new files with the same new id: the second is a duplicate. A case-variant of an
+	// existing id is a duplicate too (ids compare like task lookup).
+	dir = newRunProject(t, "")
+	_, b, bFile, bWas := twoTasks(t, dir)
+	agent = `n=$(aitk task new "Follow up" | awk 'NR==1{print $2}')
+f=$(ls docs/ai/tasks/"$n"-*.md)
+` + close + `sed 's/^title: .*/title: Twin of the follow up/' "$f" > docs/ai/tasks/zz-twin.md
+sed -e 's/^id: .*/id: ` + strings.ToLower(b) + `/' -e 's/^status: .*/status: cancelled/' -e 's/^updated: .*/updated: "2099-01-01T00:00:00Z"/' ` + bFile + ` > docs/ai/tasks/zz-case.md
+`
+	aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if _, err := os.Stat(filepath.Join(dir, "docs/ai/tasks/zz-twin.md")); err == nil {
+		t.Fatal("a second new file with the same new id must be removed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs/ai/tasks/zz-case.md")); err == nil {
+		t.Fatal("a case-variant of an existing id must be removed")
+	}
+	sameFile(t, dir, bFile, bWas, "case-variant id")
+	if out := must(t, dir, bin, "task", "list", "--all"); !strings.Contains(out, "Follow up") {
+		t.Fatalf("the first new task must be kept:\n%s", out)
+	}
+
+	// What the guard cannot restore stops the commit: the tasks folder replaced by a symlink.
+	dir = newRunProject(t, "")
+	twoTasks(t, dir)
+	moved := t.TempDir()
+	agent = close + `cp -r docs/ai/tasks/. ` + moved + `/ && rm -rf docs/ai/tasks && ln -s ` + moved + ` docs/ai/tasks
+echo x > feature.txt
+`
+	before := strings.TrimSpace(must(t, dir, "git", "rev-parse", "HEAD"))
+	r := aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if after := strings.TrimSpace(must(t, dir, "git", "rev-parse", "HEAD")); after != before {
+		t.Fatalf("a commit was made although the guard could not restore the tasks folder: %+v", r)
+	}
+}

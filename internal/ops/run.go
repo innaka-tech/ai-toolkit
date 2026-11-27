@@ -382,6 +382,9 @@ type attemptGuard struct {
 	curWas  []byte
 	agent   string
 	failed  []string // what could not be restored
+	// Where git must still resolve to before a commit.
+	gitDir, commonDir string
+	accepted          map[string]string // new task files kept so far (path -> id): not duplicates of themselves
 }
 
 func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
@@ -400,9 +403,14 @@ func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
 	if common == "" {
 		common = filepath.Join(p.Root, ".git")
 	}
-	for _, f := range []string{filepath.Join(common, "config"), filepath.Join(common, "info", "attributes"), filepath.Join(p.GitDir, "config.worktree")} {
+	for _, f := range []string{filepath.Join(common, "config"), filepath.Join(common, "info", "attributes"), filepath.Join(p.GitDir, "config.worktree"),
+		filepath.Join(p.GitDir, "commondir"), filepath.Join(p.GitDir, "gitdir"), filepath.Join(p.Root, ".git")} {
+		if fi, err := os.Lstat(f); err == nil && fi.IsDir() {
+			continue // the .git directory itself: its contents are guarded file by file
+		}
 		keep(f)
 	}
+	g.gitDir, g.commonDir = p.GitDir, common
 	tasks, _ := task.List(p)
 	for _, o := range tasks {
 		g.ids = append(g.ids, o.ID)
@@ -455,8 +463,15 @@ func (g *attemptGuard) put(abs string, want []byte) bool {
 
 func (g *attemptGuard) restoreLocked(p *project.Project) []string {
 	var changed []string
+	for _, dir := range []string{p.Path(project.TasksDir)} {
+		if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			g.failed = append(g.failed, dir+" (a symlink)")
+		}
+	}
 	for abs, want := range g.files {
-		if got, err := os.ReadFile(abs); err == nil && bytes.Equal(got, want) {
+		fi, lerr := os.Lstat(abs)
+		regular := lerr == nil && fi.Mode().IsRegular()
+		if got, err := os.ReadFile(abs); regular && err == nil && bytes.Equal(got, want) {
 			continue
 		}
 		if g.put(abs, want) {
@@ -494,11 +509,24 @@ func (g *attemptGuard) restoreLocked(p *project.Project) []string {
 			if os.Remove(abs) == nil {
 				changed = append(changed, r+" (removed: not a valid task)")
 			}
+		case g.accepted[abs] != "" && strings.EqualFold(g.accepted[abs], nt.ID):
+			// kept by an earlier restore: only reset it again below
+			if sanitizeNewTask(nt, g.agent) && task.Save(p, nt) != nil && os.Remove(abs) == nil {
+				changed = append(changed, r+" (removed: could not be reset to its description)")
+			}
 		case g.knownID(nt.ID):
 			if os.Remove(abs) == nil {
 				changed = append(changed, r+" (removed: duplicate of "+nt.ID+")")
 			}
-		case sanitizeNewTask(nt, g.agent):
+		default:
+			g.ids = append(g.ids, nt.ID) // a second new file with this id is a duplicate too
+			if g.accepted == nil {
+				g.accepted = map[string]string{}
+			}
+			g.accepted[abs] = nt.ID
+			if !sanitizeNewTask(nt, g.agent) {
+				continue
+			}
 			if err := task.Save(p, nt); err != nil {
 				if os.Remove(abs) == nil { // fail closed: an invalid seeded task is not kept as written
 					changed = append(changed, r+" (removed: could not be reset to its description)")
@@ -509,6 +537,33 @@ func (g *attemptGuard) restoreLocked(p *project.Project) []string {
 		}
 	}
 	return changed
+}
+
+// checkGitDirs fails the guard if git would now resolve to another git directory (an agent
+// pointing commondir or the .git file elsewhere, to bring its own config and filters).
+func (g *attemptGuard) checkGitDirs(p *project.Project) {
+	out, err := literalGit(p, "rev-parse", "--absolute-git-dir", "--git-common-dir")
+	if err != nil {
+		g.failed = append(g.failed, "git directory (rev-parse failed)")
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	same := func(a, b string) bool {
+		ra, _ := filepath.EvalSymlinks(a)
+		rb, _ := filepath.EvalSymlinks(b)
+		return ra != "" && ra == rb
+	}
+	if len(lines) < 2 {
+		g.failed = append(g.failed, "git directory (unexpected rev-parse output)")
+		return
+	}
+	common := lines[1]
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(p.Root, common)
+	}
+	if !same(lines[0], g.gitDir) || !same(common, g.commonDir) {
+		g.failed = append(g.failed, "git directory (points elsewhere)")
+	}
 }
 
 func relTo(p *project.Project, abs string) string {
@@ -756,6 +811,9 @@ func (r *runner) commitWork(rt *RunTask) error {
 	if again := r.guard.restore(p); len(again) > 0 { // anything still running could have changed them
 		rt.Note = strings.TrimPrefix(rt.Note+"; restored before the commit: "+strings.Join(again, ", "), "; ")
 	}
+	if r.guard != nil {
+		r.guard.checkGitDirs(p)
+	}
 	if r.guard != nil && len(r.guard.failed) > 0 {
 		return fmt.Errorf("could not restore %s after the attempt; nothing committed", strings.Join(dedupe(r.guard.failed), ", "))
 	}
@@ -768,6 +826,11 @@ func (r *runner) commitWork(rt *RunTask) error {
 	}
 	finished := rt.Status == task.Done || rt.Status == task.InReview
 	if finished {
+		// The index is a file the agent can write (skip-worktree, assume-unchanged, staged
+		// content): rebuild it from HEAD so only the working tree aitk restored is committed.
+		if _, err := literalGit(p, "read-tree", "HEAD"); err != nil {
+			return err
+		}
 		if _, err := literalGit(p, "add", "-A"); err != nil {
 			return err
 		}
@@ -778,7 +841,7 @@ func (r *runner) commitWork(rt *RunTask) error {
 		// Commit aitk's handover record alone, then set everything else aside. Unstaging first
 		// means a rename or a staged change by the agent cannot ride along in the commit; stashing
 		// without pathspecs keeps renames and odd file names intact.
-		if _, err := literalGit(p, "reset", "-q"); err != nil {
+		if _, err := literalGit(p, "read-tree", "HEAD"); err != nil { // also drops index flags
 			return err
 		}
 		if _, err := literalGit(p, "add", "-A", "--", project.DocsAI, "ai-state.json"); err != nil {
