@@ -317,3 +317,12 @@ func TestLiteTaskWaitingForUATDoesNotHoldTheWorktree(t *testing.T) {
 	}
 	mustOK(t, aitk(t, dir, "task", "start", b)) // lite never needs the loop; only the person is missing
 }
+
+func TestStrictOwnPassIsExplainedToInteractiveAgents(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	mustOK(t, aitk(t, dir, "task", "new", "Auth", "--profile", "strict", "--start"))
+	if md, _ := briefMD(t, dir); !strings.Contains(md, "Strict work: review your own change") {
+		t.Fatalf("with review = standard the brief must explain the own pass on strict work:\n%s", md)
+	}
+}

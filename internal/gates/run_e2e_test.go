@@ -860,3 +860,24 @@ func mustEnv(t *testing.T, dir string, env []string, name string, args ...string
 	}
 	return string(out)
 }
+
+// Another tool found problems in strict work; the task was reopened and the run agent fixed it
+// and reviewed itself. That is not the other tool confirming the fix: the task waits for it.
+func TestRunStrictAfterIndependentFindingsWaitsForTheReviewer(t *testing.T) {
+	for _, loop := range []bool{false, true} {
+		dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+		if !loop {
+			cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+			os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(strings.Replace(string(cfg), `review = "standard"`, "", 1)), 0o644)
+		}
+		id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Auth", "--ac", "works", "--profile", "strict")))[1]
+		mustEnv(t, dir, []string{"AITK_TOOL=reviewer"}, bin, "review", "pass", id, "--findings", "2")
+		must(t, dir, bin, "task", "update", id, "--status", "todo")
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		aitkRun(t, dir, "--cmd", "set -e\n"+strictSetup+"aitk review pass --findings 0\naitk close --summary auth --knowledge none\n", "--max-attempts", "1", "--max-tasks", "1")
+		if st := statusOf(t, dir, id); st == "done" {
+			t.Fatalf("loop=%v: strict work done on the agent's own pass after the reviewer's findings: %+v", loop, passesOf(t, dir, id))
+		}
+	}
+}

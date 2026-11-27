@@ -693,6 +693,8 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 		}
 		if target == task.InReview {
 			switch {
+			case prof == "strict" && p.Config.ReviewLoop() && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0):
+				res.Notes = append(res.Notes, "strict task: first review your own change until a pass finds 0 (aitk review pass "+t.ID+" --findings N) and close again; then another tool records the independent pass")
 			case prof == "strict" && !reviewDone(t):
 				res.Notes = append(res.Notes, "strict task needs ≥2 review passes (last with 0 findings, one by a tool that did not work on it) before it can be done: aitk review pass --findings N")
 			case !reviewSatisfied(p, t, prof):

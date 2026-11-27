@@ -428,6 +428,17 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 	// the agent did its own pass, so a strict task left in_review does not hold the worktree.
 	t.Review = ownPasses(snap.review, attempt, r.agentName)
 	target, err := dod(p, t, prof, CloseInput{})
+	if err == nil && target == task.Done && prof == "strict" {
+		// The independent review must stand on passes recorded outside this attempt: the agent's
+		// own clean pass after another tool's findings is not that tool confirming the fix.
+		kept := t.Review
+		t.Review = snap.review
+		independent := reviewDone(t)
+		t.Review = kept
+		if !independent {
+			target = task.InReview
+		}
+	}
 	if err != nil {
 		t.Review = snap.review // a failed attempt keeps nothing the agent wrote about reviews
 		return "", "the Definition of Done does not hold: " + err.Error()
