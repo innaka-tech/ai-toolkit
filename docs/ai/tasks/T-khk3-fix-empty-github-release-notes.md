@@ -1,17 +1,23 @@
 ---
 id: T-khk3
 title: Fix empty GitHub release notes
-status: in_progress
+status: in_review
 profile: standard
 tags:
   - bug
 created: "2026-11-26T15:46:59Z"
-updated: "2026-11-26T15:53:40Z"
+updated: "2026-11-27T10:46:13Z"
 created_by: claude-code
 workers:
   - claude-code
 branch: fix/release-notes
 base: ef8eecdf068776b29cb6ed701bc3c7a57ad2d304
+review:
+  passes:
+    - "n": 1
+      by: claude-code
+      at: "2026-11-27T10:46:13Z"
+      findings: 1
 evidence:
   check:
     cmd: go vet ./... && go test -short ./...
