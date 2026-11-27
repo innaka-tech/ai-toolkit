@@ -140,6 +140,10 @@ func TestReviewFindingsFromTheLoopReview(t *testing.T) {
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "2"))
 	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE") // findings to fix
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "payments", "--knowledge", "none")) // closed after its last pass
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("setup: strict task waits for another tool, got %s", st)
+	}
 	mustOK(t, aitk(t, dir, "task", "start", b)) // only another tool's pass is missing
 
 	// Demoting the active task to todo is not a way around one task at a time.
@@ -250,5 +254,120 @@ func TestImplicitCloseStaysExemptAndBriefWithoutTask(t *testing.T) {
 	mustOK(t, acc)
 	if st := status(t, dir, id); st != "done" {
 		t.Fatalf("after acceptance a quick lite close must be done (lite needs no review loop), got %s: %s", st, acc.stdout)
+	}
+}
+
+func TestWaitingOnOthersNeedsAClose(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"standard\"\n")
+	a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	standardChange(t, dir, "w")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+
+	// A clean pass alone (task in_review, never closed) does not free the worktree.
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+
+	// in_review with findings: task next --start must refuse too (not switch to b).
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "1"))
+	expect(t, aitk(t, dir, "task", "next", "--start"), 3, "E_TASK_ACTIVE")
+
+	// Clean pass, then the code changes, then close: the pass is stale, so it does not wait on others.
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	write(t, dir, "src/w_0.go", "package src\n\nvar later = 1\n")
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+
+	// A clean pass on the current code and a close: only the person's acceptance is missing.
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("setup: waits for UAT, got %s", st)
+	}
+	mustOK(t, aitk(t, dir, "task", "start", b))
+}
+
+func TestBriefSaysDifferentToolOnlyForStrict(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	mustOK(t, aitk(t, dir, "task", "new", "Standard work", "--ac", "Given x, when y, then z", "--start"))
+	standardChange(t, dir, "d") // code without tests: the brief lists aitk-qa
+	md, _ := briefMD(t, dir)
+	if !strings.Contains(md, "## Personas") || strings.Contains(md, "different tool") {
+		t.Fatalf("a standard task's personas section must not say a different tool is needed:\n%s", md)
+	}
+}
+
+func TestLiteTaskWaitingForUATDoesNotHoldTheWorktree(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir) // review = "standard"
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"all\"\n")
+	a := data(aitk(t, dir, "task", "new", "Lite one", "--ac", "x", "--start"))["id"].(string)
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "lite", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("setup: waits for UAT, got %s", st)
+	}
+	mustOK(t, aitk(t, dir, "task", "start", b)) // lite never needs the loop; only the person is missing
+}
+
+func TestStrictOwnPassIsExplainedToInteractiveAgents(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	mustOK(t, aitk(t, dir, "task", "new", "Auth", "--profile", "strict", "--start"))
+	if md, _ := briefMD(t, dir); !strings.Contains(md, "Strict work: review your own change") {
+		t.Fatalf("with review = standard the brief must explain the own pass on strict work:\n%s", md)
+	}
+}
+
+func TestStrictCloseNoteAsksForTheOwnPassFirst(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), "sensitive_paths = []", `sensitive_paths = ["db/**"]`, 1))
+	newStarted(t, dir, "Add payments table", "--ac", "migration applies")
+	write(t, dir, "db/001.sql", "create table payments(id int);\n")
+	write(t, dir, "ok.txt", "1")
+	f := fillRisk(t, dir)
+	mustOK(t, aitk(t, dir, "security", "checklist"))
+	write(t, dir, f, strings.ReplaceAll(read(t, dir, f), "- [ ] V", "- [x] V"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "audit"))
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	r := aitk(t, dir, "close", "--summary", "payments", "--knowledge", "none")
+	mustOK(t, r)
+	if !strings.Contains(r.stdout, "first review your own change") {
+		t.Fatalf("with review = standard, closing strict work without an own pass must ask for it first:\n%s", r.stdout)
+	}
+}
+
+func TestStrictIndependentPassMustBeClean(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), "sensitive_paths = []", `sensitive_paths = ["db/**"]`, 1)+"\n[uat]\nrequired = \"strict\"\n")
+	id := newStarted(t, dir, "Add payments table", "--ac", "migration applies")
+	write(t, dir, "db/001.sql", "create table payments(id int);\n")
+	write(t, dir, "ok.txt", "1")
+	f := fillRisk(t, dir)
+	mustOK(t, aitk(t, dir, "security", "checklist"))
+	write(t, dir, f, strings.ReplaceAll(read(t, dir, f), "- [ ] V", "- [x] V"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "audit"))
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	t.Setenv("AITK_TOOL", "codex")
+	mustOK(t, aitk(t, dir, "review", "pass", id, "--findings", "2")) // another tool finds problems
+	t.Setenv("AITK_TOOL", "claude-code")
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0")) // the implementer reviews its fix
+	mustOK(t, aitk(t, dir, "close", "--summary", "payments", "--knowledge", "none"))
+	asPerson(t)
+	mustOK(t, aitk(t, dir, "uat", "accept", id, "--by", "alice"))
+	if st := status(t, dir, id); st == "done" {
+		t.Fatal("another tool's findings followed by the implementer's own clean pass must not count as the independent review, not even after acceptance")
 	}
 }

@@ -108,6 +108,10 @@ func (c Config) ReviewRequired(profile string) bool {
 	}
 }
 
+// ReviewLoop reports whether the project opted in to the review loop ([quality] review =
+// "standard"): agents then review their own work until a pass finds 0, on strict work too.
+func (c Config) ReviewLoop() bool { return c.Quality.Review == "standard" }
+
 // OneTaskAtATime reports whether an agent must finish (or block) the active task before it
 // starts another in the same worktree (default true).
 func (c Config) OneTaskAtATime() bool { return c.Quality.OneTask == nil || *c.Quality.OneTask }

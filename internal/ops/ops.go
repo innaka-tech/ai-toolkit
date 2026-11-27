@@ -696,6 +696,8 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 		}
 		if target == task.InReview {
 			switch {
+			case prof == "strict" && p.Config.ReviewLoop() && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0):
+				res.Notes = append(res.Notes, "strict task: first review your own change until a pass finds 0 (aitk review pass "+t.ID+" --findings N) and close again; then another tool records the independent pass")
 			case prof == "strict" && !reviewDone(t):
 				res.Notes = append(res.Notes, "strict task needs ≥2 review passes (last with 0 findings, one by a tool that did not work on it) before it can be done: aitk review pass --findings N")
 			case !reviewSatisfied(p, t, prof):
@@ -866,20 +868,39 @@ func waitingOnOthers(p *project.Project, t *task.Task) bool {
 	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
 		prof = computed
 	}
-	if prof == "strict" || p.Config.ReviewRequired(prof) {
-		if t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0 {
+	var lastPass string
+	if t.Review != nil && len(t.Review.Passes) > 0 {
+		last := t.Review.Passes[len(t.Review.Passes)-1]
+		if last.Findings > 0 {
+			return false // something to fix
+		}
+		lastPass = last.At
+	}
+	if p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) { // opted in: own clean pass, strict work too; never lite
+		if lastPass == "" || (prof != "strict" && !reviewSatisfied(p, t, prof)) {
 			return false
 		}
-		if prof != "strict" && !reviewSatisfied(p, t, prof) {
-			return false
-		}
+	}
+	if !closedSince(p, t.ID, lastPass) {
+		return false // never closed after its last pass: its agent still has to run aitk close
 	}
 	target, err := dod(p, t, prof, CloseInput{})
 	return err == nil && target == task.InReview
 }
 
-// reviewDone: ≥2 passes, the last with 0 findings, and at least one pass by a tool that did
-// not work on the task (workers, the creator, and the tool closing it).
+// closedSince reports whether a handoff for the task was written at or after at (aitk close
+// writes one), so a review pass alone never counts as finishing the agent's part.
+func closedSince(p *project.Project, id, at string) bool {
+	for _, h := range handoff.List(p) {
+		if strings.EqualFold(h.Task, id) && h.At >= at && h.Outcome != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// reviewDone: ≥2 passes, the last with 0 findings, and at least one clean pass by a tool that
+// did not work on the task (workers, the creator, and the tool closing it).
 func reviewDone(t *task.Task) bool {
 	if t.Review == nil || len(t.Review.Passes) < 2 || t.Review.Passes[len(t.Review.Passes)-1].Findings != 0 {
 		return false
@@ -892,7 +913,9 @@ func reviewDone(t *task.Task) bool {
 		implementers[w] = true
 	}
 	for _, pass := range t.Review.Passes {
-		if pass.By != "" && pass.By != "unknown" && !implementers[pass.By] {
+		// The independent pass must itself be clean: another tool's findings followed by the
+		// implementer's own clean pass is not that tool confirming the fix.
+		if pass.By != "" && pass.By != "unknown" && !implementers[pass.By] && pass.Findings == 0 {
 			return true
 		}
 	}

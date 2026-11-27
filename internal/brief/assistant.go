@@ -138,6 +138,9 @@ func reviewRules(c project.Config, t *task.Task, prof string) []string {
 	if c.ReviewRequired(prof) && prof != "strict" {
 		r = append(r, "Review until clean: review your change, record aitk review pass --findings N, fix what it found, and repeat until a pass finds 0. Only then close.")
 	}
+	if c.ReviewLoop() && prof == "strict" {
+		r = append(r, "Strict work: review your own change until a pass finds 0 and close again; then another tool records the independent pass.")
+	}
 	if c.OneTaskAtATime() {
 		r = append(r, "One task at a time: finish this task (or aitk task block <id> --reason \"…\") before starting another.")
 	}
