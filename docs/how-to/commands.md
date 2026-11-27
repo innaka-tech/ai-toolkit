@@ -35,6 +35,7 @@ Each persona works in the aitk character (`aitk standards character`: smallest c
 | `/aitk-devops [scope] [fix]` | Release / Operate | **DevOps/SRE**: deploy, observability, backup and restore readiness; never touches production itself |
 | `/aitk-auditor [topics] [fix]` | Operate | **Auditor**: scorecard of the project against every standard with evidence, ranked fix plan as tasks, report in `docs/ai/audit-<date>.md`; with `fix` closes the top quick wins |
 | `/aitk-writer [scope]` | any | **Technical writer**: verifies documented commands and paths, corrects docs, records decisions as ADRs |
+| `/aitk-caveman [lite\|full\|off]` | any | **Talk mode**: caveman replies (short, blunt, fewer tokens); code, commands, paths, errors, warnings, and Skipped/Risk stay exact |
 | `/aitk-lean [lite\|full\|ultra\|off]` | any | **Character mode** for the session: lite proposes the smaller option, full builds the minimum, ultra challenges the request first |
 
 The character is adapted from [Ponytail](https://github.com/DietrichGebert/ponytail) (MIT). Deliberate limits are recorded in code as `shortcut: <the limit>, <when to upgrade>` comments; `aitk debt` lists them.

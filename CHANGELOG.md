@@ -5,6 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-11-27
+
+Character, talk, and personas applied automatically in every agent session.
+
+### Added
+- **Automatic assistant** (`[assistant]` in `aitk.toml`): `character` (lite, full, ultra, off; default full) and `talk` (normal, lite, caveman; default normal) are applied in every `aitk brief`, so no slash command is needed; `AITK_CHARACTER` and `AITK_TALK` override them per person. With `auto_persona` (default true) the brief lists the personas the active task needs, picked from its tags, risk profile, and changed files, with the command to run each and the standards to follow. Invalid values fail with `E_SCHEMA`.
+
+## [2.8.0] - 2026-11-27
+
+A talk mode for short, blunt replies, and an accurate change size on stale clones.
+
+### Added
+- **`/aitk-caveman [lite|full|off]`**: a talk mode for short, blunt replies that use fewer tokens. It changes only how the agent talks: code, commands, paths, errors, safety warnings, questions for the user, and the Skipped/Risk lines are never shortened.
+
+### Fixed
+- A task's changes are measured from the newest merge base of the local and `origin/` default branch. With a stale local `main`, work already merged upstream was counted as the task's change: inflated "large change" notes and, when that work touched sensitive paths, a wrongly strict risk profile.
+
 ## [2.7.0] - 2026-11-26
 
 aitk as a development assistant: standards, SDLC personas, and one working character.

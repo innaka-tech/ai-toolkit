@@ -10,7 +10,7 @@ import (
 )
 
 func TestBuiltinsAreComplete(t *testing.T) {
-	want := []string{"aitk-analyst", "aitk-architect", "aitk-auditor", "aitk-check", "aitk-close", "aitk-dba", "aitk-devops", "aitk-fix", "aitk-handover", "aitk-hunt", "aitk-impact", "aitk-lean", "aitk-next", "aitk-plan", "aitk-pm", "aitk-qa", "aitk-release", "aitk-review", "aitk-security", "aitk-start", "aitk-status", "aitk-team", "aitk-uat", "aitk-ux", "aitk-writer"}
+	want := []string{"aitk-analyst", "aitk-architect", "aitk-auditor", "aitk-caveman", "aitk-check", "aitk-close", "aitk-dba", "aitk-devops", "aitk-fix", "aitk-handover", "aitk-hunt", "aitk-impact", "aitk-lean", "aitk-next", "aitk-plan", "aitk-pm", "aitk-qa", "aitk-release", "aitk-review", "aitk-security", "aitk-start", "aitk-status", "aitk-team", "aitk-uat", "aitk-ux", "aitk-writer"}
 	got := map[string]Command{}
 	for _, c := range Builtins() {
 		got[c.Name] = c
@@ -25,6 +25,9 @@ func TestBuiltinsAreComplete(t *testing.T) {
 		}
 	}
 	// The reviewer must not become a worker of the task it reviews.
+	if c := got["aitk-caveman"]; !strings.Contains(c.Body, "Never shorten") || !strings.Contains(c.Body, "**Skipped:** and **Risk:**") || !strings.Contains(c.Body, "error messages") {
+		t.Errorf("aitk-caveman must keep code, errors, warnings, and Skipped/Risk exact: %s", c.Body)
+	}
 	if r := got["aitk-review"]; !strings.Contains(r.Body, "Do NOT run `aitk task start`") {
 		t.Error("the review persona must forbid starting the task")
 	}
