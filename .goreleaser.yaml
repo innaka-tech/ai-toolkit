@@ -50,7 +50,7 @@ signs:
     artifacts: checksum
 
 # No changelog block: release.yml passes CHANGELOG.md's section with --release-notes, and
-# changelog.disable would make GoReleaser skip that file too (empty release notes in 2.6.0/2.7.0).
+# changelog.disable would make GoReleaser skip that file too (empty release notes in every v2 release before this fix).
 
 release:
   github:
