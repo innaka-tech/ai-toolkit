@@ -884,3 +884,17 @@ func TestRunStrictAfterIndependentFindingsWaitsForTheReviewer(t *testing.T) {
 		}
 	}
 }
+
+// A lite-sized task whose last pass found something is not finished inside aitk run either.
+func TestRunLiteTaskWithFindingsIsReopened(t *testing.T) {
+	dir := newRunProject(t, "")
+	must(t, dir, bin, "task", "new", "Small", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent := "touch ok.txt\necho x > a.txt\naitk task update --ac-done 1\naitk review pass --findings 2\naitk check\naitk close --summary done --knowledge none\n"
+	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "in_review" || r.Data.Tasks[0].Status == "done" ||
+		!strings.Contains(r.Data.Tasks[0].Note, "review until clean") {
+		t.Fatalf("a lite task with findings must be reopened, not left waiting: %+v", r)
+	}
+}

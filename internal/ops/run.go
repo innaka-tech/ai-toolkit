@@ -447,7 +447,7 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 		t.Review = snap.review // a failed attempt keeps nothing the agent wrote about reviews
 		return "", "the Definition of Done does not hold: " + err.Error()
 	}
-	if target == task.InReview && prof != "strict" && p.Config.ReviewRequired(prof) && !reviewSatisfied(p, t, prof) {
+	if target == task.InReview && prof != "strict" && !reviewSatisfied(p, t, prof) { // lite too, once it has a pass
 		t.Review = snap.review // the agent's own loop is unfinished: work for the next attempt
 		return "", "review until clean is not finished (no clean review pass on the current code)"
 	}

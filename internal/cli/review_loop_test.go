@@ -389,6 +389,9 @@ func TestLiteDiffWithFindingsIsNotDone(t *testing.T) {
 	if st := status(t, dir, a); st == "done" {
 		t.Fatal("a lite-sized task must not close as done while its last pass has findings")
 	}
+	if md, _ := briefMD(t, dir); !strings.Contains(md, "Review until clean") {
+		t.Fatalf("the brief must state the rule close enforces on a lite task with findings:\n%s", md)
+	}
 	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
 	// Fixed and reviewed clean: done, and the worktree is free.
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
