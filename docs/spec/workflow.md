@@ -105,7 +105,7 @@ todo → in_progress → implemented → in_review → done
 ```
 
 - `aitk close` moves a task to the furthest status its evidence supports (§5).
-- `in_review` → `done` requires review passes (§5: strict always; standard too with `quality.review = "standard"`) and, where configured, user acceptance; otherwise a passing check.
+- `in_review` → `done` requires review passes (§5: strict always; standard too unless `quality.review` is `strict` or `off`) and, where configured, user acceptance; otherwise a passing check.
 
 ## 5. Risk profiles and Definition of Done
 
@@ -129,7 +129,7 @@ The profile is computed from the diff between the merge base with `default_branc
 | Risk section filled (no placeholder text) | | | ✔ |
 | OWASP ASVS 4.0.3 checklist present and every item verified or marked N/A (`security.asvs_level` ≥ 1, default 1) | | | ✔ |
 | Security audit passed on the current tree (`security.audit`: `strict` by default, `all`, or `off`) | `all` | `all` | ✔ |
-| ≥ 1 review pass and the last with 0 findings, by any tool (`quality.review`: `strict` by default, `off` is the same; `standard`) | | `standard` | — (see next row) for `done`; otherwise `in_review` |
+| ≥ 1 review pass and the last with 0 findings, by any tool (`quality.review`: `standard` by default; `strict` or `off` limit it to strict work) | | `standard` | — (see next row) for `done`; otherwise `in_review` |
 | ≥ 2 review passes, last with 0 findings, ≥ 1 clean (0 findings) pass by a tool that did not work on the task | | | ✔ for `done`; otherwise `in_review` |
 | A person accepted the task (`aitk uat accept`) when `uat.required` covers the profile (`none` by default; `strict`, `standard`, `all`) | as configured | as configured | as configured — otherwise `in_review` |
 

@@ -90,15 +90,15 @@ func TestReviewNotConvergingAndBackCompat(t *testing.T) {
 	}
 	mustOK(t, aitk(t, dir, "task", "block", id, "--reason", "split it"))
 
-	// Projects without the setting keep the v2 behaviour: only strict work needs reviews.
-	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), `review = "standard"`, "", 1))
+	// review = "strict" keeps the old behaviour: only strict work needs reviews.
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), `review = "standard"`, `review = "strict"`, 1))
 	id2 := data(aitk(t, dir, "task", "new", "Old project task", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
 	standardChange(t, dir, "b")
 	mustOK(t, aitk(t, dir, "task", "update", id2, "--ac-done", "1"))
 	mustOK(t, aitk(t, dir, "check"))
 	mustOK(t, aitk(t, dir, "close", "--summary", "x", "--knowledge", "none"))
 	if st := status(t, dir, id2); st != "done" {
-		t.Fatalf("without [quality] review a standard task must finish as before, got %s", st)
+		t.Fatalf("with review = strict a standard task must finish as before, got %s", st)
 	}
 }
 
@@ -457,7 +457,7 @@ func TestUpstreamChangeDoesNotTakeTheWorktreeBack(t *testing.T) {
 		initRepo(t, dir)
 		cfg := read(t, dir, "aitk.toml") + "\n[uat]\nrequired = \"standard\"\n"
 		if legacy {
-			cfg = strings.Replace(cfg, `review = "standard"`, "", 1)
+			cfg = strings.Replace(cfg, `review = "standard"`, `review = "strict"`, 1)
 		}
 		write(t, dir, "aitk.toml", cfg)
 		a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
@@ -598,4 +598,22 @@ func TestTheLatestOfTwoClosesInOneSecondDecides(t *testing.T) {
 		mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0")) // try again in a fresh second
 	}
 	mustOK(t, aitk(t, dir, "task", "start", b))
+}
+
+// A project that never set [quality] review gets the review loop too: it is the default.
+func TestReviewLoopIsTheDefault(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), `review = "standard"`, "", 1))
+	id := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	standardChange(t, dir, "d")
+	mustOK(t, aitk(t, dir, "task", "update", id, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "x", "--knowledge", "none"))
+	if st := status(t, dir, id); st != "in_review" {
+		t.Fatalf("without the key a standard task still reviews until clean, got %s", st)
+	}
+	if md, _ := briefMD(t, dir); !strings.Contains(md, "Review until clean") {
+		t.Fatalf("the brief states the loop by default:\n%s", md)
+	}
 }

@@ -89,7 +89,7 @@ Your own: a markdown file in `docs/ai/commands/` becomes a slash command in ever
 | Profile | When | Requires |
 |---|---|---|
 | `lite` | ≤ 3 files and ≤ 100 lines | passing check on the final code, summary, knowledge; criteria optional, but any written must be met |
-| `standard` | default | + every acceptance criterion satisfied, and review passes until one finds 0 (`[quality] review = "standard"`, on in new projects) |
+| `standard` | default | + every acceptance criterion satisfied, and review passes until one finds 0 (`[quality] review = "standard"`, on by default; `strict` restores the old behaviour) |
 | `strict` | touches `risk.sensitive_paths` (auth, migrations, infra…) | + risk analysis (STRIDE), OWASP ASVS checklist, passing security audit, and two review passes (the last with zero findings, one clean pass by a tool that did not work on the task) |
 
 On every profile, a task tagged `bug` needs a test file among its changes, and user acceptance by a person can be required (`uat.required`). When `close` refuses, the error says exactly what to run next (`fix: aitk task update T-k3m9 --ac-done 2`), so even small models recover on their own.

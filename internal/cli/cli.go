@@ -806,7 +806,7 @@ func (a *app) closeCmd() *cobra.Command {
 }
 
 func (a *app) reviewCmd() *cobra.Command {
-	c := &cobra.Command{Use: "review", Short: "Record review passes (strict tasks; standard ones too with [quality] review = \"standard\")"}
+	c := &cobra.Command{Use: "review", Short: "Record review passes (standard and strict tasks; only strict with [quality] review = \"strict\")"}
 	var findings int
 	pass := &cobra.Command{Use: "pass [id]", Short: "Record one review pass on a task (default: the active task); a reviewer names the task instead of starting it", Args: cobra.MaximumNArgs(1)}
 	pass.Flags().IntVar(&findings, "findings", -1, "number of problems found in this pass (required)")

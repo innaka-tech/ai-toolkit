@@ -96,21 +96,19 @@ func (c Config) RegressionTestsRequired() bool {
 }
 
 // ReviewRequired reports whether a task of this profile needs review passes until one finds 0
-// before it is done. [quality] review: "strict" (default, the v2 behaviour) or its alias "off"
-// (only strict work, which always needs its independent review), or "standard" (standard and
-// strict work). Lite work never needs it, so a quick close without a task stays quick.
+// before it is done. [quality] review: "standard" (the default: standard and strict work), or
+// "strict" or its alias "off" (the old behaviour: only strict work, which always needs its
+// independent review). Lite work never needs it, so a quick close without a task stays quick.
 func (c Config) ReviewRequired(profile string) bool {
-	switch c.Quality.Review {
-	case "standard":
+	if c.ReviewLoop() {
 		return profile == "standard" || profile == "strict"
-	default:
-		return profile == "strict"
 	}
+	return profile == "strict"
 }
 
-// ReviewLoop reports whether the project opted in to the review loop ([quality] review =
-// "standard"): agents then review their own work until a pass finds 0, on strict work too.
-func (c Config) ReviewLoop() bool { return c.Quality.Review == "standard" }
+// ReviewLoop reports whether agents review their own work until a pass finds 0 (on strict work
+// too): on by default; [quality] review = "strict" or "off" turns it off.
+func (c Config) ReviewLoop() bool { return c.Quality.Review == "" || c.Quality.Review == "standard" }
 
 // OneTaskAtATime reports whether an agent must finish (or block) the active task before it
 // starts another in the same worktree (default true).
