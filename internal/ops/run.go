@@ -498,18 +498,17 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (target, why
 	if err := WithLock(p, func() error { return task.Save(p, t) }); err != nil {
 		return "", err.Error()
 	}
-	// Close writes the record of what was done; if the agent never ran it, aitk run writes one.
-	recorded := false
-	for _, h := range handoff.List(p) {
-		if strings.EqualFold(h.Task, t.ID) && h.At >= since {
-			recorded = true
-			break
-		}
+	// Close writes the record of what was done. When the agent did not close after this attempt
+	// started and after its last pass (it closed before reviewing, or switched instead), aitk run
+	// records the close itself: the rule closedSince uses, so the verified task frees the worktree.
+	from := since
+	if t.Review != nil && len(t.Review.Passes) > 0 && t.Review.Passes[len(t.Review.Passes)-1].At > from {
+		from = t.Review.Passes[len(t.Review.Passes)-1].At
 	}
-	if !recorded {
+	if !closedSince(p, t.ID, from) {
 		outcome := map[string]string{task.Done: "done", task.InReview: "progress"}[target]
 		handoff.Write(p, handoff.Meta{Task: t.ID, At: task.Now(), By: r.agentName, Outcome: outcome, TaskStatus: target, Check: t.Evidence.Check},
-			"## "+t.Title+"\n\nVerified by aitk run (check, Definition of Done). The agent did not record a summary with aitk close.\n")
+			"## "+t.Title+"\n\nVerified by aitk run (check, Definition of Done). The agent did not close the task after its last change or review pass.\n")
 	}
 	return target, ""
 }

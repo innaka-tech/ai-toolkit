@@ -403,7 +403,7 @@ func TestLiteDiffWithFindingsIsNotDone(t *testing.T) {
 }
 
 // A person's own aitk close counts as closing: the next task starts while this one waits for
-// acceptance. (A person's uat accept/reject is not a close; see TestWaitingOnOthersNeedsAClose.)
+// acceptance. (A person's uat accept/reject is not a close; see TestUATAcceptIsNotAClose.)
 func TestPersonsCloseFreesTheWorktree(t *testing.T) {
 	dir := repo(t)
 	asPerson(t) // after repo(), which sets claude-code
@@ -420,4 +420,30 @@ func TestPersonsCloseFreesTheWorktree(t *testing.T) {
 		t.Fatalf("setup: waits for UAT, got %s", st)
 	}
 	mustOK(t, aitk(t, dir, "task", "start", b))
+}
+
+// A person's uat accept is not a close: strict work whose agent never closed still holds the
+// worktree when acceptance comes before the independent pass.
+func TestUATAcceptIsNotAClose(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), "sensitive_paths = []", `sensitive_paths = ["db/**"]`, 1)+"\n[uat]\nrequired = \"strict\"\n")
+	id := newStarted(t, dir, "Add payments table", "--ac", "migration applies")
+	write(t, dir, "db/001.sql", "create table payments(id int);\n")
+	write(t, dir, "ok.txt", "1")
+	f := fillRisk(t, dir)
+	mustOK(t, aitk(t, dir, "security", "checklist"))
+	write(t, dir, f, strings.ReplaceAll(read(t, dir, f), "- [ ] V", "- [x] V"))
+	other := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "audit"))
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0")) // the agent's own pass; it never closes
+	asPerson(t)
+	mustOK(t, aitk(t, dir, "uat", "accept", id, "--by", "alice"))
+	t.Setenv("AITK_TOOL", "claude-code")
+	if st := status(t, dir, id); st != "in_review" {
+		t.Fatalf("setup: the independent pass is still missing, got %s", st)
+	}
+	expect(t, aitk(t, dir, "task", "start", other), 3, "E_TASK_ACTIVE")
 }

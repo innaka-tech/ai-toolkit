@@ -954,3 +954,26 @@ func TestRunFailedStartKeepsNoForgedPasses(t *testing.T) {
 		t.Fatalf("passes written by an agent that \"failed to start\" must not stay: %+v", ps)
 	}
 }
+
+// A task aitk run verified frees the worktree even when the agent closed before its last pass,
+// or switched instead of closing: aitk run records the close itself.
+func TestRunVerifiedTaskFreesTheWorktree(t *testing.T) {
+	work := "for i in 1 2 3 4 5 6; do echo x > \"src_$i.txt\"; done\ntouch ok.txt\naitk task update --ac-done 1\naitk check\n"
+	cases := map[string]string{
+		"closed before the last pass": work + "aitk close --summary s --knowledge none\nsleep 1.1\naitk review pass --findings 0\n",
+		"switched instead of closing": work + "aitk review pass --findings 0\naitk switch codex --print >/dev/null\n",
+	}
+	for name, agent := range cases {
+		dir := newRunProject(t, "\n[uat]\nrequired = \"standard\"\n")
+		must(t, dir, bin, "task", "new", "Feature", "--ac", "works")
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+		if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status != "in_review" {
+			t.Fatalf("%s: setup: the run must verify the task as waiting for acceptance: %+v", name, r)
+		}
+		if out, err := sh(t, dir, bin, "task", "new", "Next", "--start"); err != nil {
+			t.Fatalf("%s: a task the run verified must not hold the worktree:\n%s", name, out)
+		}
+	}
+}
