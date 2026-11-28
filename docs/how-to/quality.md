@@ -51,7 +51,7 @@ review = "standard"   # off | strict (default) | standard
 one_task = true       # default
 ```
 
-- `review = "standard"` (written by `aitk init` for new projects): a standard task is done only after a review pass finds 0 on the current code; a strict task also needs your own clean pass before another tool's. The agent reviews, records `aitk review pass --findings N`, fixes, and repeats; `aitk close` leaves the task `in_review` until then. Strict work still needs two passes, one clean (0 findings) by a tool that did not work on it. Lite work never needs the loop.
+- `review = "standard"` (written by `aitk init` for new projects): a standard task is done only after a review pass finds 0 on the current code; a strict task also needs your own clean pass before another tool's. The agent reviews, records `aitk review pass --findings N`, fixes, and repeats; `aitk close` leaves the task `in_review` until then. Strict work still needs two passes, one clean (0 findings) by a tool that did not work on it. Lite work never needs the loop, but once a pass is recorded its findings must reach 0 before `done`.
 - `one_task`: while the active task still needs its agent, `aitk task start` (and `task new --start`, `task next --start`) for another task fails with `E_TASK_ACTIVE`. Finish it, or park it with `aitk task block <id> --reason "…"`. A task that only waits for another tool's pass or a person's acceptance does not hold the worktree.
 - When three or more passes stop improving, the brief tells the agent to stop and ask you.
 

@@ -803,7 +803,10 @@ func reviewSatisfied(p *project.Project, t *task.Task, prof string) bool {
 		return reviewDone(t)
 	}
 	if !p.Config.ReviewRequired(prof) {
-		return true
+		// A lite close stays quick, but once the loop has started its findings must reach 0:
+		// a small diff is no reason to leave a review's findings unfixed.
+		return !p.Config.ReviewLoop() || t.Review == nil || len(t.Review.Passes) == 0 ||
+			t.Review.Passes[len(t.Review.Passes)-1].Findings == 0
 	}
 	if t.Review == nil || len(t.Review.Passes) == 0 {
 		return false
@@ -885,11 +888,12 @@ func waitingOnOthers(p *project.Project, t *task.Task) bool {
 	return err == nil && target == task.InReview
 }
 
-// closedSince reports whether a handoff for the task was written at or after at (aitk close
-// writes one), so a review pass alone never counts as finishing the agent's part.
+// closedSince reports whether the agent closed the task at or after at: a handoff from aitk
+// close (or aitk run) records the status it closed to. A review pass alone, aitk switch, or a
+// person's uat accept/reject never counts as finishing the agent's part.
 func closedSince(p *project.Project, id, at string) bool {
 	for _, h := range handoff.List(p) {
-		if strings.EqualFold(h.Task, id) && h.At >= at && h.Outcome != "" {
+		if strings.EqualFold(h.Task, id) && h.At >= at && h.TaskStatus != "" && h.By != "human" && h.Outcome != "switched" {
 			return true
 		}
 	}

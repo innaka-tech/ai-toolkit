@@ -270,6 +270,9 @@ func TestWaitingOnOthersNeedsAClose(t *testing.T) {
 	// A clean pass alone (task in_review, never closed) does not free the worktree.
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
 	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+	// Handing the task to another tool is not closing it.
+	aitk(t, dir, "switch", "codex", "--print")
+	expect(t, aitk(t, dir, "task", "next", "--start"), 3, "E_TASK_ACTIVE")
 
 	// in_review with findings: task next --start must refuse too (not switch to b).
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "1"))
@@ -370,4 +373,28 @@ func TestStrictIndependentPassMustBeClean(t *testing.T) {
 	if st := status(t, dir, id); st == "done" {
 		t.Fatal("another tool's findings followed by the implementer's own clean pass must not count as the independent review, not even after acceptance")
 	}
+}
+
+// A started task with a small (lite) diff still fixes its review's findings before done.
+func TestLiteDiffWithFindingsIsNotDone(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	a := data(aitk(t, dir, "task", "new", "Small", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "2"))
+	aitk(t, dir, "close", "--summary", "small", "--knowledge", "none")
+	if st := status(t, dir, a); st == "done" {
+		t.Fatal("a lite-sized task must not close as done while its last pass has findings")
+	}
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+	// Fixed and reviewed clean: done, and the worktree is free.
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "small", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "done" {
+		t.Fatalf("after a clean pass the lite task closes as done, got %s", st)
+	}
+	mustOK(t, aitk(t, dir, "task", "start", b))
 }
