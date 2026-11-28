@@ -453,6 +453,7 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 		if ps := t.Review.Passes; len(ps) > 0 && ps[len(ps)-1].Findings > 0 {
 			return "", fmt.Sprintf("review until clean is not finished (the last review pass found %d to fix)", ps[len(ps)-1].Findings)
 		}
+		t.Review = snap.review // no findings to carry: a stale clean pass is simply redone
 		return "", "review until clean is not finished (no clean review pass on the current code)"
 	}
 	if target == task.InReview && prof == "strict" && p.Config.ReviewLoop() && !reviewDone(t) && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0) {
