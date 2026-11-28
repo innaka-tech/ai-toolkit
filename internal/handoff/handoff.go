@@ -96,20 +96,42 @@ func List(p *project.Project) []*Handoff {
 		h.seq = seqOf(e.Name(), h.Meta)
 		out = append(out, h)
 	}
+	// A total order first (time, then mtime, then name), then, within one second, each task's
+	// handoffs put back in the order Write numbered them, in the positions they already hold.
+	// Mixing the two in one comparator is not transitive (task ids can share a prefix).
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].At != out[j].At {
 			return out[i].At > out[j].At
 		}
-		// Same second, same task: Write numbers the files in write order, which survives a git
-		// checkout (that gives every file the same mtime, written in index order).
-		if a, b := out[i], out[j]; a.seq > 0 && b.seq > 0 && strings.EqualFold(a.Task, b.Task) && a.seq != b.seq {
-			return a.seq > b.seq
-		}
-		if out[i].written != out[j].written { // otherwise the later write is newer
+		if out[i].written != out[j].written { // same second: the later write is newer
 			return out[i].written > out[j].written
 		}
 		return out[i].File > out[j].File
 	})
+	for start := 0; start < len(out); {
+		end := start
+		for end < len(out) && out[end].At == out[start].At {
+			end++
+		}
+		byTask := map[string][]int{} // positions in this second, per task, of numbered files
+		for i := start; i < end; i++ {
+			if out[i].seq > 0 {
+				k := strings.ToLower(out[i].Task)
+				byTask[k] = append(byTask[k], i)
+			}
+		}
+		for _, pos := range byTask {
+			hs := make([]*Handoff, len(pos))
+			for n, i := range pos {
+				hs[n] = out[i]
+			}
+			sort.SliceStable(hs, func(a, b int) bool { return hs[a].seq > hs[b].seq })
+			for n, i := range pos {
+				out[i] = hs[n]
+			}
+		}
+		start = end
+	}
 	return out
 }
 

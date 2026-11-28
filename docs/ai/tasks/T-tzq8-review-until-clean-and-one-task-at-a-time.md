@@ -4,7 +4,7 @@ title: Review until clean and one task at a time
 status: in_review
 profile: standard
 created: "2026-11-27T10:55:05Z"
-updated: "2026-11-28T10:06:39Z"
+updated: "2026-11-28T10:12:03Z"
 created_by: claude-code
 workers:
   - claude-code
@@ -135,11 +135,16 @@ review:
       at: "2026-11-28T10:05:43Z"
       findings: 1
       tree: e0e87b400b9a6c388dc3df7bc137c9f7428ef18c2ec59d505b5236021429794f
+    - "n": 26
+      by: claude-code
+      at: "2026-11-28T10:11:18Z"
+      findings: 1
+      tree: b0b9a8d3f73cab4e42979ee63b0b9eb1a3710d6ecbded286f36855e7452973a0
 evidence:
   check:
     cmd: go vet ./... && go test -short ./...
     exit_code: 0
-    duration_ms: 30059
+    duration_ms: 32391
     summary: |-
       …ternal/compat	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/conv	[no test files]
@@ -148,14 +153,14 @@ evidence:
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/fsx	(cached)
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/gitx	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/handoff	0.085s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/handoff	0.441s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/heal	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/jsonedit	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/knowledge	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	0.581s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	0.709s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/migrate	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	(cached)
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	1.453s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	1.566s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/proc	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/profile	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/project	[no test files]
@@ -170,8 +175,8 @@ evidence:
       ?   	github.com/innaka-tech/ai-toolkit/v2/schemas	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/skills	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/standards	[no test files]
-    at: "2026-11-28T10:06:39Z"
-    tree: b0b9a8d3f73cab4e42979ee63b0b9eb1a3710d6ecbded286f36855e7452973a0
+    at: "2026-11-28T10:12:03Z"
+    tree: e9342343e5efd7e74ea5f39505c5f84c953661b4d2278a304379ba6e64d1373b
 ---
 
 ## Objective
