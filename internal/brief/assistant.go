@@ -7,6 +7,7 @@ import (
 
 	"github.com/innaka-tech/ai-toolkit/v2/internal/profile"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/project"
+	"github.com/innaka-tech/ai-toolkit/v2/internal/slop"
 	"github.com/innaka-tech/ai-toolkit/v2/internal/task"
 )
 
@@ -43,7 +44,7 @@ func characterRules(c project.Config) []string {
 
 // pickPersonas chooses the personas the active task needs. Signals are deliberately simple and
 // visible (tags, profile, file patterns) so a person can predict and override them.
-func pickPersonas(t *task.Task, prof string, changed []profile.Change) ([]Persona, []string) {
+func pickPersonas(p *project.Project, t *task.Task, prof string, changed []profile.Change) ([]Persona, []string) {
 	if t == nil {
 		return []Persona{{Name: "aitk-team", Why: "no active task: find the SDLC phase of the request", Run: "aitk prompt aitk-team <request>"}}, []string{"sdlc"}
 	}
@@ -107,6 +108,16 @@ func pickPersonas(t *task.Task, prof string, changed []profile.Change) ([]Person
 	}
 	if code && !tests && prof != "lite" {
 		add("aitk-qa", "code changed without a test change: add the missing tests", "fix", "testing")
+	}
+	if tags["spike"] || tags["idea"] || tags["creative"] || tags["design"] {
+		add("aitk-creative", "spike/idea/design task: several different options, explicit criteria, a small proof", t.Title)
+	}
+	paths := make([]string, 0, len(changed))
+	for _, c := range changed {
+		paths = append(paths, c.Path)
+	}
+	if hits := slop.Scan(p, paths); len(hits) > 0 {
+		add("aitk-deslop", fmt.Sprintf("%d AI-slop hit(s), first %s:%d [%s]", len(hits), hits[0].File, hits[0].Line, hits[0].Rule), "fix", "anti-slop")
 	}
 	if prof == "strict" {
 		topics = append(topics, "review")

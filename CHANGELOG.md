@@ -15,6 +15,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Inside `aitk run` the agent can start only its own task (`E_RUN_SCOPE`); aitk records it as a worker and protects `created_by` and `workers`, so its passes never count as another tool's review.
 - Review passes record the working-tree fingerprint; a clean pass counts for the review loop only while the code is unchanged.
 
+## [2.10.0] - 2026-11-27
+
+Anti-slop and creative personas; README in Indonesian.
+
+### Added
+- **Anti-slop**: `aitk slop [path…] [--all]` (and MCP `slop`) lists generic AI output in the change with file and line: filler phrases, assistant voice, emoji headings, comments that restate code, swallowed errors, placeholders. Advisory; `aitk-slop: ignore` marks a deliberate line. New standard `aitk standards anti-slop` and persona `/aitk-deslop [scope] [fix]`. With `auto_persona`, the brief adds aitk-deslop when the changed files have hits, naming the first one.
+- **`/aitk-creative <problem>`**: five options that differ in kind (or five visual directions), scored on explicit criteria, one pick proved with a small spike. The brief adds it for tasks tagged `spike`, `idea`, `creative`, or `design`.
+
 ### Changed
 - README is in Indonesian and lists the current features (standards, SDLC personas, character and talk, the automatic assistant); the English README moved to `README.en.md`, linked from the top of both.
 

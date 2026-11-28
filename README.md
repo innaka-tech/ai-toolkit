@@ -22,9 +22,11 @@ Lalu cukup minta pekerjaannya ke agen ("tambahkan export CSV"). Agen membaca bri
 | Agen tidak lupa antar sesi | `aitk brief`: satu ringkasan terbatas (≤ 4k token) berisi task aktif, handoff terakhir, konvensi, dan knowledge yang relevan |
 | "Selesai" benar-benar selesai | `aitk close` menolak sampai check lolos di kode terakhir dan semua acceptance criteria terpenuhi |
 | Perbaikan tidak merusak bagian lain | Bug fix wajib punya test regresi; `aitk impact` menunjukkan kode yang terdampak dan yang belum tercakup test |
-| Standar development yang sama di semua proyek | `aitk standards`: 13 standar bawaan, bisa ditimpa per proyek |
+| Standar development yang sama di semua proyek | `aitk standards`: 14 standar bawaan, bisa ditimpa per proyek |
 | Peran SDLC seperti tim sungguhan | Persona PM, analyst, architect, DBA, UX, QA, security, DevOps, auditor, writer, dan team lead |
 | Mengoreksi, bukan hanya mengusulkan | Persona audit dengan `fix` langsung memperbaiki temuan (test dulu); sisanya jadi task |
+| Bebas output AI generik (AI-slop) | `aitk slop` menemukan frasa klise, komentar yang mengulang kode, error yang ditelan, placeholder; `/aitk-deslop` membersihkannya |
+| Ide yang benar-benar berbeda | `/aitk-creative`: lima opsi berbeda jenis, dinilai dengan kriteria, dibuktikan dengan spike kecil |
 | Otomatis tanpa slash command | `[assistant]` di `aitk.toml`: karakter, gaya bicara, dan persona dipilih sendiri di setiap sesi |
 | Agen paralel tidak bentrok | Klaim task, satu worktree dan branch per task |
 | Aturan tidak dilewati | Gate berjalan di git hooks, CI, server MCP, dan `aitk run`, bukan di prompt |
@@ -72,6 +74,7 @@ Di semua profil, task bertag `bug` wajib menyertakan perubahan file test, dan pe
 | `documentation` | Dokumen apa menyimpan apa |
 | `ai-agents` | Izin dan pengawasan agen, fitur LLM (OWASP LLM Top 10) |
 | `ux` | WCAG 2.1 AA dan aturan usability |
+| `anti-slop` | Tanpa output AI generik di kode, teks, dan UI |
 
 File `docs/ai/standards/<topik>.md` menimpa topik bawaan atau menambah topik baru (misalnya aturan domain logistik Anda). `aitk debt` mendaftar komentar `shortcut: <batasan>, <kapan upgrade>` yang mencatat utang teknis yang disengaja. Lihat [standar](docs/how-to/standards.md).
 
@@ -82,13 +85,13 @@ File `docs/ai/standards/<topik>.md` menimpa topik bawaan atau menambah topik bar
 | Semua | `/aitk-team`: menentukan fase permintaan lalu menjalankan persona yang tepat, fase demi fase |
 | Discover | `/aitk-pm`: masalah, metrik hasil (`aitk goal add`), scope MoSCoW |
 | Analyse | `/aitk-analyst`: alur, tabel status, aturan bisnis, kriteria Given/when/then |
-| Design | `/aitk-architect` (opsi dengan TCO, ADR), `/aitk-dba`, `/aitk-ux` |
+| Design | `/aitk-architect` (opsi dengan TCO, ADR), `/aitk-dba`, `/aitk-ux`, `/aitk-creative` (opsi berbeda jenis atau arah visual, spike) |
 | Plan dan Build | `/aitk-plan`, `/aitk-next`, `/aitk-fix` (test dulu) |
-| Verify | `/aitk-review` (reviewer independen), `/aitk-qa`, `/aitk-security`, `/aitk-hunt` |
+| Verify | `/aitk-review` (reviewer independen), `/aitk-qa`, `/aitk-security`, `/aitk-hunt`, `/aitk-deslop` (buang AI-slop) |
 | Accept | `/aitk-uat`: skrip UAT; hanya manusia yang menerima |
 | Release dan Operate | `/aitk-release`, `/aitk-devops`, `/aitk-auditor` (scorecard proyek terhadap semua standar), `/aitk-writer` |
 
-Persona audit (`dba`, `ux`, `qa`, `security`, `devops`, `auditor`) menerima kata `fix` di akhir argumen untuk langsung memperbaiki temuan; tanpa `fix`, setiap temuan menjadi task dengan kriteria yang bisa direproduksi. Perintah lain: `/aitk-start`, `/aitk-check`, `/aitk-impact`, `/aitk-close`, `/aitk-handover`, `/aitk-status`.
+Persona audit (`dba`, `ux`, `qa`, `security`, `devops`, `deslop`, `auditor`) menerima kata `fix` di akhir argumen untuk langsung memperbaiki temuan; tanpa `fix`, setiap temuan menjadi task dengan kriteria yang bisa direproduksi. Perintah lain: `/aitk-start`, `/aitk-check`, `/aitk-impact`, `/aitk-close`, `/aitk-handover`, `/aitk-status`.
 
 Semua perintah terpasang native di Claude Code, Codex, OpenCode, Gemini CLI, Qwen Code, Cursor, Copilot, dan Windsurf, dan disajikan sebagai prompt MCP. File markdown di `docs/ai/commands/` menjadi slash command Anda sendiri di semua tool tim. `aitk prompt <nama> <teks>` mencetak perintah apa pun untuk skrip (`aitk prompt aitk-hunt payments | claude -p`). Lihat [slash command dan persona](docs/how-to/commands.md).
 
@@ -96,6 +99,10 @@ Semua perintah terpasang native di Claude Code, Codex, OpenCode, Gemini CLI, Qwe
 
 - **Karakter lean senior engineer** (diadaptasi dari [Ponytail](https://github.com/DietrichGebert/ponytail), MIT): perubahan terkecil yang benar-benar berfungsi, tidak pernah memangkas validasi, error handling, keamanan, atau aksesibilitas, dan setiap jawaban ditutup dengan **Skipped:** dan **Risk:**. Mode: `lite`, `full`, `ultra`, `off` (`/aitk-lean`).
 - **Caveman**: jawaban singkat dan hemat token (`/aitk-caveman lite|full|off`). Kode, perintah, path, error, peringatan, pertanyaan untuk Anda, dan baris Skipped/Risk tidak pernah dipotong.
+
+### Anti-slop
+
+`aitk slop` memindai perubahan (atau `--all` untuk seluruh repo) dan melaporkan file:baris untuk: frasa klise (seamless, cutting-edge, delve), gaya chatbot ("Certainly!"), emoji di heading, komentar yang cuma mengulang kode, error yang ditelan (`catch {}`, `except: pass`), dan placeholder (lorem ipsum, `TODO: implement`). Hasilnya laporan, bukan gate; baris yang disengaja ditandai `aitk-slop: ignore`. `/aitk-deslop fix` membersihkan sisanya tanpa membuang validasi, error handling, atau keamanan.
 
 ### Otomatis di setiap sesi
 
@@ -119,6 +126,8 @@ auto_persona = true   # brief memilih persona dan standar yang dibutuhkan task
 | Dockerfile, compose, CI, Terraform, Helm, k8s berubah | `aitk-devops` |
 | OpenAPI/Swagger atau `routes/` berubah | `aitk-architect` |
 | Kode berubah tanpa perubahan test | `aitk-qa` |
+| Task bertag `spike`, `idea`, `creative`, atau `design` | `aitk-creative` |
+| `aitk slop` menemukan hit di file yang berubah | `aitk-deslop` |
 
 Satu orang bisa memakai gaya sendiri tanpa mengubah file tim: `AITK_TALK=caveman`, `AITK_CHARACTER=ultra`. Yang sengaja tetap manual: review independen untuk task strict (harus tool lain) dan penerimaan UAT (hanya manusia). Lihat [asisten otomatis](docs/how-to/assistant.md).
 
@@ -131,7 +140,7 @@ Tidak ada yang perlu menyuruh agen memakai aitk. Empat lapisan memastikannya:
 | **Instruksi tingkat user** | Bagian pendek di instruksi user setiap AI tool: repository dengan `aitk.toml` dikelola aitk dan agen mulai dari `aitk brief`. Berlaku di semua repository aitk di mesin itu, termasuk clone baru. | `aitk setup` (sekali per mesin; `--remove` membatalkan) |
 | **AGENTS.md** | Blok aitk di repository: lima langkah, hanya perintah shell, dibaca native oleh kebanyakan agen. | `aitk init` |
 | **File khusus tool** | Untuk tool yang tidak membaca AGENTS.md sendiri: file aturan yang menunjuk ke sana, server MCP, dan hook sesi yang menjalankan `aitk brief`. | `aitk adapters sync` |
-| **Server MCP** | 22 tool (`brief`, `task_next`, `check`, `impact`, `close`, `standards`, `debt`, …) dan setiap slash command sebagai prompt. Instruksinya menyuruh agen memanggil `brief` lebih dulu. | dipasang oleh kedua perintah di atas |
+| **Server MCP** | 23 tool (`brief`, `task_next`, `check`, `impact`, `close`, `standards`, `debt`, `slop`, …) dan setiap slash command sebagai prompt. Instruksinya menyuruh agen memanggil `brief` lebih dulu. | dipasang oleh kedua perintah di atas |
 
 | Tool | Repository (`adapters sync`) | Mesin (`setup`) |
 |---|---|---|
