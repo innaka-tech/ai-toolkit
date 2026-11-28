@@ -34,6 +34,8 @@ Each persona works in the aitk character (`aitk standards character`: smallest c
 | `/aitk-security [scope] [fix]` | Verify | **Security engineer**: `aitk audit --tasks`, threat model, OWASP review, proven findings fixed or filed |
 | `/aitk-devops [scope] [fix]` | Release / Operate | **DevOps/SRE**: deploy, observability, backup and restore readiness; never touches production itself |
 | `/aitk-auditor [topics] [fix]` | Operate | **Auditor**: scorecard of the project against every standard with evidence, ranked fix plan as tasks, report in `docs/ai/audit-<date>.md`; with `fix` closes the top quick wins |
+| `/aitk-creative <problem>` | Design | **Creative lead**: five options that differ in kind (reuse, remove the need, one unconventional, two strong) or five visual directions, scored on explicit criteria, one pick proved with a small spike |
+| `/aitk-deslop [scope] [fix]` | Verify | **De-slopper**: `aitk slop` plus a read for speculative abstraction, defensive noise, filler, and template UI; removes it without touching validation, error handling, or security |
 | `/aitk-writer [scope]` | any | **Technical writer**: verifies documented commands and paths, corrects docs, records decisions as ADRs |
 | `/aitk-caveman [lite\|full\|off]` | any | **Talk mode**: caveman replies (short, blunt, fewer tokens); code, commands, paths, errors, warnings, and Skipped/Risk stay exact |
 | `/aitk-lean [lite\|full\|ultra\|off]` | any | **Character mode** for the session: lite proposes the smaller option, full builds the minimum, ultra challenges the request first |

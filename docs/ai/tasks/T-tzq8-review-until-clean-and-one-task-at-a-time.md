@@ -1,15 +1,45 @@
 ---
 id: T-tzq8
 title: Review until clean and one task at a time
-status: in_review
+status: done
 profile: standard
 created: "2026-11-27T10:55:05Z"
-updated: "2026-11-28T09:44:58Z"
+updated: "2026-11-28T10:19:33Z"
+closed: "2026-11-28T10:19:33Z"
 created_by: claude-code
 workers:
   - claude-code
 branch: feat/review-until-clean
 base: f6c44b00e872b304a654175b6fd418a53c64a2ca
+paths:
+  - CHANGELOG.md
+  - README.en.md
+  - README.md
+  - commands/aitk-review.md
+  - docs/how-to/autopilot.md
+  - docs/how-to/quality.md
+  - docs/reference/cli.md
+  - docs/spec/cli.md
+  - docs/spec/workflow.md
+  - internal/brief/assistant.go
+  - internal/brief/brief.go
+  - internal/cli/autopilot_test.go
+  - internal/cli/cli.go
+  - internal/cli/review_loop_test.go
+  - internal/gates/run_e2e_test.go
+  - internal/handoff/handoff.go
+  - internal/handoff/handoff_test.go
+  - internal/mcpserver/server.go
+  - internal/ops/ops.go
+  - internal/ops/quality.go
+  - internal/ops/run.go
+  - internal/ops/work.go
+  - internal/project/project.go
+  - internal/task/task.go
+  - schemas/config.schema.json
+  - schemas/task.schema.json
+  - standards/review.md
+  - standards/sdlc.md
 review:
   passes:
     - "n": 1
@@ -120,29 +150,54 @@ review:
       at: "2026-11-28T09:44:58Z"
       findings: 2
       tree: 0b162c8729b65b5442a60d711069e63ba4affc3a56686aba5240980e466458de
+    - "n": 23
+      by: claude-code
+      at: "2026-11-28T09:52:07Z"
+      findings: 3
+      tree: 0b162c8729b65b5442a60d711069e63ba4affc3a56686aba5240980e466458de
+    - "n": 24
+      by: claude-code
+      at: "2026-11-28T10:00:01Z"
+      findings: 1
+      tree: ca058570454c9bcd1bf74149501985e34513c163f922b713500f6d73407ca938
+    - "n": 25
+      by: claude-code
+      at: "2026-11-28T10:05:43Z"
+      findings: 1
+      tree: e0e87b400b9a6c388dc3df7bc137c9f7428ef18c2ec59d505b5236021429794f
+    - "n": 26
+      by: claude-code
+      at: "2026-11-28T10:11:18Z"
+      findings: 1
+      tree: b0b9a8d3f73cab4e42979ee63b0b9eb1a3710d6ecbded286f36855e7452973a0
+    - "n": 27
+      by: claude-code
+      at: "2026-11-28T10:19:24Z"
+      findings: 0
+      tree: e9342343e5efd7e74ea5f39505c5f84c953661b4d2278a304379ba6e64d1373b
 evidence:
   check:
     cmd: go vet ./... && go test -short ./...
     exit_code: 0
-    duration_ms: 37327
+    duration_ms: 32391
     summary: |-
-      …al/compat	[no test files]
+      …ternal/compat	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/conv	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doc	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doctor	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/fsx	(cached)
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	35.950s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/gitx	[no test files]
-      ?   	github.com/innaka-tech/ai-toolkit/v2/internal/handoff	[no test files]
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/handoff	0.441s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/heal	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/jsonedit	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/knowledge	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	0.732s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	0.709s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/migrate	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	0.009s
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	1.567s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	(cached)
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	1.566s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/proc	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/profile	0.648s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/profile	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/project	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/release	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/schema	[no test files]
@@ -155,20 +210,90 @@ evidence:
       ?   	github.com/innaka-tech/ai-toolkit/v2/schemas	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/skills	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/standards	[no test files]
-    at: "2026-11-28T09:44:53Z"
-    tree: 0b162c8729b65b5442a60d711069e63ba4affc3a56686aba5240980e466458de
+    at: "2026-11-28T10:12:03Z"
+    tree: e9342343e5efd7e74ea5f39505c5f84c953661b4d2278a304379ba6e64d1373b
+  commits:
+    - 0ca2b01
+    - 0ca960f
+    - 1a7016d
+    - 1d9ae2e
+    - 1f1bcac
+    - 1fdc93e
+    - 2496d40
+    - 433cacd
+    - 469218a
+    - 4ed1ca1
+    - 55cf91d
+    - 6650ce0
+    - 6ae4851
+    - 7b4bd3b
+    - 823ee55
+    - 835cf8a
+    - 88582ea
+    - 892a156
+    - 8ac10dc
+    - 8bb70ee
+    - 8fd4b18
+    - 961f947
+    - 9aa0399
+    - b3aa2d8
+    - c2e801e
+    - c7e68ea
+    - d5ea5b1
+    - dad3cf3
+    - eb4bc02
+    - f0f9f97
+    - f11e69b
+    - f15ea21
+    - ff1cf8c
+  acceptance:
+    total: 4
+    done: 4
 ---
 
 ## Objective
 (describe the outcome in one paragraph)
 
 ## Acceptance criteria
-- [ ] Given [quality] review = standard and a standard task with no clean review pass, when aitk close runs, then the task goes to in_review with a note to review until a pass finds 0; after aitk review pass --findings 0 and close it is done
-- [ ] Given an active task that is in_progress or in_review, when an agent starts another task (task start, task next --start, task new --start), then it fails with E_TASK_ACTIVE and says to finish or block it; blocking it or finishing it allows the switch
-- [ ] Given review passes that stop decreasing, when aitk brief runs, then it says the review is not converging and to ask the user
-- [ ] Given a project without [quality] review, when a standard task closes, then behaviour is unchanged (only strict needs reviews); aitk init writes review = standard for new projects
+- [x] Given [quality] review = standard and a standard task with no clean review pass, when aitk close runs, then the task goes to in_review with a note to review until a pass finds 0; after aitk review pass --findings 0 and close it is done
+- [x] Given an active task that is in_progress or in_review, when an agent starts another task (task start, task next --start, task new --start), then it fails with E_TASK_ACTIVE and says to finish or block it; blocking it or finishing it allows the switch
+- [x] Given review passes that stop decreasing, when aitk brief runs, then it says the review is not converging and to ask the user
+- [x] Given a project without [quality] review, when a standard task closes, then behaviour is unchanged (only strict needs reviews); aitk init writes review = standard for new projects
 
 ## Risk
 (Required for strict profile. Impact:, Security (STRIDE):, Rollback:, Validation:)
 
 ## Notes
+
+## Evidence
+<!-- Generated by aitk close. -->
+- Check: `go vet ./... && go test -short ./...` → exit 0 at 2026-11-28T10:12:03Z (32391 ms)
+- Acceptance criteria: 4/4 satisfied
+- Commits: 0ca2b01, 0ca960f, 1a7016d, 1d9ae2e, 1f1bcac, 1fdc93e, 2496d40, 433cacd, 469218a, 4ed1ca1, 55cf91d, 6650ce0, 6ae4851, 7b4bd3b, 823ee55, 835cf8a, 88582ea, 892a156, 8ac10dc, 8bb70ee, 8fd4b18, 961f947, 9aa0399, b3aa2d8, c2e801e, c7e68ea, d5ea5b1, dad3cf3, eb4bc02, f0f9f97, f11e69b, f15ea21, ff1cf8c
+- Review pass 1 by claude-code: 4 findings
+- Review pass 2 by claude-code: 5 findings
+- Review pass 3 by claude-code: 5 findings
+- Review pass 4 by claude-code: 5 findings
+- Review pass 5 by claude-code: 4 findings
+- Review pass 6 by claude-code: 4 findings
+- Review pass 7 by claude-code: 6 findings
+- Review pass 8 by claude-code: 4 findings
+- Review pass 9 by claude-code: 2 findings
+- Review pass 10 by claude-code: 1 findings
+- Review pass 11 by claude-code: 1 findings
+- Review pass 12 by claude-code: 2 findings
+- Review pass 13 by claude-code: 4 findings
+- Review pass 14 by claude-code: 2 findings
+- Review pass 15 by claude-code: 2 findings
+- Review pass 16 by claude-code: 1 findings
+- Review pass 17 by claude-code: 2 findings
+- Review pass 18 by claude-code: 1 findings
+- Review pass 19 by claude-code: 1 findings
+- Review pass 20 by claude-code: 2 findings
+- Review pass 21 by claude-code: 1 findings
+- Review pass 22 by claude-code: 2 findings
+- Review pass 23 by claude-code: 3 findings
+- Review pass 24 by claude-code: 1 findings
+- Review pass 25 by claude-code: 1 findings
+- Review pass 26 by claude-code: 1 findings
+- Review pass 27 by claude-code: 0 findings

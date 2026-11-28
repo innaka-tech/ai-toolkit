@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // standardChange touches enough files that the task is not lite.
@@ -480,9 +481,9 @@ func TestUpstreamChangeDoesNotTakeTheWorktreeBack(t *testing.T) {
 	}
 }
 
-// The agent's own edits after its close (uncommitted) still hold the worktree: they are its
-// unreviewed work, not code from elsewhere.
-func TestEditsAfterTheCloseStillHoldTheWorktree(t *testing.T) {
+// Edits after the close never let unreviewed code reach done: the worktree is free (the close is
+// trusted), but acceptance re-checks the Definition of Done on the code as it is.
+func TestEditsAfterTheCloseAreCaughtAtAcceptance(t *testing.T) {
 	dir := repo(t)
 	initRepo(t, dir)
 	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"standard\"\n")
@@ -493,8 +494,13 @@ func TestEditsAfterTheCloseStillHoldTheWorktree(t *testing.T) {
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
 	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
 	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
-	write(t, dir, "src/e_9.go", "package src\n\nvar later = 1\n") // unreviewed, uncommitted
-	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+	write(t, dir, "src/e_9.go", "package src\n\nvar later = 1\n") // unreviewed
+	mustOK(t, aitk(t, dir, "task", "start", b))
+	asPerson(t)
+	aitk(t, dir, "uat", "accept", a, "--by", "alice")
+	if st := status(t, dir, a); st == "done" {
+		t.Fatal("acceptance must not finish a task whose code changed after its check and clean pass")
+	}
 }
 
 // Without a check command, a commit from elsewhere does not take the worktree back either.
@@ -538,4 +544,53 @@ func TestUnfinishedLoopHoldsAfterCommitting(t *testing.T) {
 	run(t, dir, "git", "add", "-A")
 	run(t, dir, "git", "commit", "-qm", "feat: export")
 	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+}
+
+// A pull that grows the diff (commits after the task's base) does not turn a waiting lite task
+// into standard: the profile the close saved stands. A stray untracked file changes nothing.
+func TestPullDoesNotRaiseTheProfileOfAWaitingTask(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"all\"\n")
+	a := data(aitk(t, dir, "task", "new", "Small", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "small", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("setup: waits for UAT, got %s", st)
+	}
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "feat: small")
+	for i := 0; i < 12; i++ { // stands in for a pull of a large change
+		write(t, dir, fmt.Sprintf("up/u%d.go", i), "package up\n"+strings.Repeat("var _ = 1\n", 30))
+	}
+	run(t, dir, "git", "add", "up")
+	run(t, dir, "git", "commit", "-qm", "feat: upstream")
+	write(t, dir, "notes.txt", "stray\n") // untracked
+	mustOK(t, aitk(t, dir, "task", "start", b))
+}
+
+// Two closes in the same second: the later one decides.
+func TestTheLatestOfTwoClosesInOneSecondDecides(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"standard\"\n")
+	a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	standardChange(t, dir, "s")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	for {
+		start := time.Now().Unix()
+		mustOK(t, aitk(t, dir, "close", "--status", "in_progress", "--summary", "wip", "--knowledge", "none"))
+		mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+		if time.Now().Unix() == start {
+			break // both in one second
+		}
+		mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0")) // try again in a fresh second
+	}
+	mustOK(t, aitk(t, dir, "task", "start", b))
 }

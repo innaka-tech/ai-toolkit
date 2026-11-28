@@ -80,7 +80,7 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{"brief": false, "task_new": false, "task_start": false, "task_update": false, "task_list": false, "task_show": false,
-		"check": false, "close": false, "review_pass": false, "knowledge_search": false, "knowledge_add": false, "adr_new": false, "doctor": false, "standards": false, "debt": false}
+		"check": false, "close": false, "review_pass": false, "knowledge_search": false, "knowledge_add": false, "adr_new": false, "doctor": false, "standards": false, "debt": false, "slop": false}
 	for _, tool := range res.Tools {
 		if _, ok := want[tool.Name]; ok {
 			want[tool.Name] = true

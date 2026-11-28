@@ -545,6 +545,18 @@ aitk setup [flags]
       --tool stringArray   only this tool (repeatable)
 ```
 
+## `aitk slop`
+
+Find AI-slop in the change: filler phrases, emoji headings, comments that restate code, swallowed errors, placeholders
+
+```
+aitk slop [path…] [flags]
+```
+
+```
+      --all   scan every tracked file, not only the change
+```
+
 ## `aitk standards`
 
 List the development standards, or print one topic (built-in, overridden by docs/ai/standards/*.md)

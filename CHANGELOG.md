@@ -16,6 +16,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `aitk run` records the agent as a worker on every path an attempt ends on, and restores (and reports) changes to `aitk.toml` or to other existing tasks during an attempt, again after verification and before commits; files claiming another task's id are removed, new tasks the agent files arrive as plain work, aitk refuses to write other tasks inside a run, and run commits skip the repository's git hooks. Files the repository's config includes are restored and its effective config and branch must stay as they were (a filter cannot arrive through an include), a symlinked `docs/ai` (or any new link in the tasks path), a replaced `.git`, a merge/cherry-pick/rebase left in progress, or a `.gitattributes` rule that would store any of aitk's files differently stops the commit; a task file left invalid is put back and stops the run; `base`, `created`, `branch` and `legacy` are protected like the profile (an agent cannot shrink its own diff to lower strict to lite), a failed start keeps nothing the agent wrote, and new tasks never carry a seeded `base` (a symlinked `.git` or config keeps working and stays a link, and a re-pointed link is never written through), and anything the guard cannot restore stops the run with or without `--commit`.
 - Review passes record the working-tree fingerprint; a clean pass counts for the review loop only while the code is unchanged.
 
+## [2.10.0] - 2026-11-27
+
+Anti-slop and creative personas; README in Indonesian.
+
+### Added
+- **Anti-slop**: `aitk slop [path…] [--all]` (and MCP `slop`) lists generic AI output in the change with file and line: filler phrases, assistant voice, emoji headings, comments that restate code, swallowed errors, placeholders. Advisory; `aitk-slop: ignore` marks a deliberate line. New standard `aitk standards anti-slop` and persona `/aitk-deslop [scope] [fix]`. With `auto_persona`, the brief adds aitk-deslop when the changed files have hits, naming the first one.
+- **`/aitk-creative <problem>`**: five options that differ in kind (or five visual directions), scored on explicit criteria, one pick proved with a small spike. The brief adds it for tasks tagged `spike`, `idea`, `creative`, or `design`.
+
 ### Changed
 - README is in Indonesian and lists the current features (standards, SDLC personas, character and talk, the automatic assistant); the English README moved to `README.en.md`, linked from the top of both.
 
