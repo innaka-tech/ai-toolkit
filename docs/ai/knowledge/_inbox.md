@@ -8,3 +8,4 @@
 - A task's changes are measured from the newest merge base of local and origin default branch; gates.DefaultBase (CI) prefers origin/ on purpose <!-- aitk:k date=2026-11-27 task=T-5w2x tags=bug -->
 - Everything that must apply automatically to every agent goes into aitk brief: every tool starts there (AGENTS.md, SessionStart hook, MCP instructions) <!-- aitk:k date=2026-11-27 task=T-gt80 -->
 - Slop rules stay narrow and advisory: a repo-wide scan of aitk itself must stay at zero hits, or the rule is too broad <!-- aitk:k date=2026-11-27 task=T-yy6r -->
+- Everything aitk generates for AI tools must be Managed, or installing it makes the next task look standard and the check stale. <!-- aitk:k date=2026-11-28 task=T-cc2p -->

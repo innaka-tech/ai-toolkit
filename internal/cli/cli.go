@@ -261,11 +261,12 @@ func (a *app) groupsAnswer(c *cobra.Command) {
 
 func (a *app) initCmd() *cobra.Command {
 	var name, check string
-	var dry bool
-	c := &cobra.Command{Use: "init", Short: "Create aitk.toml, the AGENTS.md block, ai-state.json, and docs/ai/ (idempotent)", Args: cobra.NoArgs}
+	var dry, noAdapters bool
+	c := &cobra.Command{Use: "init", Short: "Create aitk.toml, the AGENTS.md block, ai-state.json, docs/ai/, and the project files for detected AI tools (idempotent)", Args: cobra.NoArgs}
 	c.Flags().StringVar(&name, "name", "", "project name (default: directory name)")
 	c.Flags().StringVar(&check, "check", "", "check command, e.g. \"make test\" (default: detected)")
 	c.Flags().BoolVar(&dry, "dry-run", false, "show what would be created")
+	c.Flags().BoolVar(&noAdapters, "no-adapters", false, "skip the project files for AI tools (aitk adapters sync does it later)")
 	c.RunE = a.wrap(func(*cobra.Command, []string) (*result, error) {
 		dir := a.dir
 		if dir == "" {
@@ -294,7 +295,28 @@ func (a *app) initCmd() *cobra.Command {
 		} else {
 			b.WriteString("check: " + r.Check + "\n")
 		}
-		b.WriteString("next: aitk adapters sync (project files for your AI tools), then aitk brief\n      once per machine: aitk setup (every AI tool recognises aitk projects on its own)")
+		// The project files for detected AI tools (instructions, MCP server, session hook) make
+		// every agent start from aitk brief without another step.
+		if !noAdapters {
+			if pr, err := project.Repo(dir); err == nil {
+				if cs, skipped, err := adapters.PlanSkipping(adapters.DefaultEnv(pr.Root), nil, false); err != nil {
+					warns = append(warns, "adapters: "+err.Error())
+				} else {
+					for _, sk := range skipped {
+						warns = append(warns, "adapters: skipped "+sk)
+					}
+					for _, ch := range cs {
+						fmt.Fprintf(&b, "adapter %-10s %s (%s)\n", ch.Tool, adapters.Diff(ch), ch.What)
+					}
+					if len(cs) > 0 && !dry {
+						if err := adapters.Apply(cs, filepath.Join(stateDir(), "backups")); err != nil {
+							warns = append(warns, "adapters: "+err.Error())
+						}
+					}
+				}
+			}
+		}
+		b.WriteString("next: aitk brief\n      once per machine: aitk setup (every AI tool recognises aitk projects on its own)")
 		return &result{data: r, human: b.String(), warnings: warns}, nil
 	})
 	return c

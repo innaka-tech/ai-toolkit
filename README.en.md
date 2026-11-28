@@ -9,8 +9,7 @@ aitk keeps a project's working state in git as plain files that every agent can 
 curl -fsSL https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/install.sh | sh
 aitk setup             # once per machine: your AI tools recognise aitk projects on their own
 cd your-repo
-aitk init              # AGENTS.md block, aitk.toml, docs/ai/
-aitk adapters sync     # project files for the AI tools you use (commit them for your team)
+aitk init              # AGENTS.md block, aitk.toml, docs/ai/, and files for the AI tools it detects (commit them for your team)
 ```
 
 Then just ask your agent for the work ("add a CSV export"). It reads the brief, takes a task, runs the check, and closes the task through the Definition of Done.

@@ -8,7 +8,7 @@ aitk setup                    # Claude Code, Codex, OpenCode, Gemini CLI, Qwen C
 aitk setup --remove           # take it all out again
 ```
 
-Per repository, for the tools your team uses (commit the result):
+Per repository, for the tools your team uses (commit the result). `aitk init` already does this for the tools it detects (skip with `--no-adapters`); run it again after installing another tool:
 
 ```bash
 aitk adapters doctor          # which tools are installed and whether they are set up

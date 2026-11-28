@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- `aitk init` also installs the project files for the AI tools it detects (instructions, MCP server, session hook running `aitk brief`), so agents start from the brief with no extra step; `--no-adapters` skips it. The files `aitk adapters sync` writes for AI tools count as tool configuration, not code: they no longer raise the risk profile or make a passing check stale.
+
 ## [2.10.0] - 2026-11-27
 
 Anti-slop and creative personas; README in Indonesian.

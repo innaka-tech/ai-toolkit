@@ -320,7 +320,7 @@ aitk import superpowers [path ...] [flags]
 
 ## `aitk init`
 
-Create aitk.toml, the AGENTS.md block, ai-state.json, and docs/ai/ (idempotent)
+Create aitk.toml, the AGENTS.md block, ai-state.json, docs/ai/, and the project files for detected AI tools (idempotent)
 
 ```
 aitk init [flags]
@@ -330,6 +330,7 @@ aitk init [flags]
       --check string   check command, e.g. "make test" (default: detected)
       --dry-run        show what would be created
       --name string    project name (default: directory name)
+      --no-adapters    skip the project files for AI tools (aitk adapters sync does it later)
 ```
 
 ## `aitk knowledge`

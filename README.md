@@ -9,8 +9,7 @@ aitk menyimpan status kerja proyek di git sebagai file teks biasa yang bisa diba
 curl -fsSL https://raw.githubusercontent.com/innaka-tech/ai-toolkit/main/install.sh | sh
 aitk setup             # sekali per mesin: AI tool Anda langsung mengenali proyek aitk
 cd repo-anda
-aitk init              # blok AGENTS.md, aitk.toml, docs/ai/
-aitk adapters sync     # file proyek untuk AI tool yang Anda pakai (commit untuk tim)
+aitk init              # blok AGENTS.md, aitk.toml, docs/ai/, dan file untuk AI tool yang terdeteksi (commit untuk tim)
 ```
 
 Lalu cukup minta pekerjaannya ke agen ("tambahkan export CSV"). Agen membaca brief, mengambil task, menjalankan check, dan menutup task lewat Definition of Done.
