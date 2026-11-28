@@ -786,9 +786,15 @@ touch .attempted
 		if b, _ := os.ReadFile(filepath.Join(dir, "reason.txt")); strings.TrimSpace(string(b)) != "1" {
 			t.Fatalf("review %q: the second attempt's prompt must say why the first failed (got %q)", review, b)
 		}
-		if review != "" {
-			if ps := passesOf(t, dir, r.Data.Tasks[0].ID); len(ps) != 0 {
-				t.Fatalf("failed strict attempts must keep none of the agent's passes: %+v", ps)
+		if review != "" { // findings survive, under the agent's name only (never independent)
+			ps := passesOf(t, dir, r.Data.Tasks[0].ID)
+			if len(ps) == 0 || ps[len(ps)-1].Findings == 0 {
+				t.Fatalf("a failed strict attempt's findings must be kept: %+v", ps)
+			}
+			for _, p := range ps {
+				if p.By != "custom" {
+					t.Fatalf("kept passes are the agent's own: %+v", ps)
+				}
 			}
 		}
 	}
@@ -911,5 +917,27 @@ func TestRunLiteFindingsSurviveTheRetry(t *testing.T) {
 	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "2", "--max-tasks", "1")
 	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "done" || !strings.Contains(r.Data.Tasks[0].Note, "found 2 to fix") {
 		t.Fatalf("a lite task's findings must survive the retry: %+v", r)
+	}
+}
+
+// Findings the agent recorded survive every way an attempt can fail, not only an unfinished
+// review loop: a failing check, open criteria, a blocked hand-over, or no close at all.
+func TestRunFindingsSurviveEveryFailedAttempt(t *testing.T) {
+	cases := map[string]string{
+		"check fails":   "echo x > a.txt\naitk task update --ac-done 1\naitk review pass --findings 2\n",
+		"criteria open": "touch ok.txt\necho x > a.txt\naitk review pass --findings 2\naitk check\naitk close --summary s --knowledge none || true\n",
+		"blocked":       "touch ok.txt\necho x > a.txt\naitk review pass --findings 2\naitk close --status blocked --summary s --knowledge none\n",
+		"not closed":    "touch ok.txt\necho x > a.txt\naitk review pass --findings 2\naitk task update --status in_progress\n",
+	}
+	for name, agent := range cases {
+		dir := newRunProject(t, "")
+		id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Small", "--ac", "works")))[1]
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+		ps := passesOf(t, dir, id)
+		if len(ps) == 0 || ps[len(ps)-1].Findings != 2 || ps[len(ps)-1].By != "custom" {
+			t.Fatalf("%s: the agent's findings must survive the failed attempt: %+v", name, ps)
+		}
 	}
 }

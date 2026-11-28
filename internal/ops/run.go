@@ -279,13 +279,17 @@ func (r *runner) one(c Candidate) RunTask {
 			}
 			return rt
 		case task.Blocked, task.Cancelled:
+			attempt := t.Review
 			restoreProtected(t, snap) // whatever else the agent wrote, it cannot grant itself UAT or reviews
+			r.keepFindings(t, snap, attempt)
 			WithLock(p, func() error { return task.Save(p, t) })
 			rt.Status, rt.Note = t.Status, "the agent stopped the task; see its handoff"
 			return rt
 		}
 		// Still unfinished: whatever the agent wrote, it cannot keep grants it gave itself.
+		attempt := t.Review
 		restoreProtected(t, snap)
+		r.keepFindings(t, snap, attempt)
 		WithLock(p, func() error { return task.Save(p, t) })
 		switch {
 		case runErr != nil:
@@ -365,6 +369,20 @@ func ownPasses(base, attempt *task.Review, agent string) *task.Review {
 	return out
 }
 
+// keepFindings is the one rule for a failed attempt's review passes: none are kept, except
+// when the agent's last pass found something. Then its passes stay, under its name (never
+// independent: the agent is recorded as a worker), so those findings must reach 0 in a later
+// attempt or by a person instead of being forgotten. Call it after restoreProtected.
+func (r *runner) keepFindings(t *task.Task, snap protected, attempt *task.Review) {
+	own := ownPasses(snap.review, attempt, r.agentName)
+	if n := len(own.Passes); n > 0 && own.Passes[n-1].Findings > 0 {
+		t.Review = own
+		t.AddWorker(r.agentName)
+		return
+	}
+	t.Review = snap.review
+}
+
 func restoreProtected(t *task.Task, s protected) {
 	t.Profile, t.ProfilePinned, t.Tags, t.Goal, t.DependsOn = s.profile, s.pinned, s.tags, s.goal, s.dependsOn
 	t.CreatedBy = s.createdBy
@@ -387,9 +405,14 @@ func restoreProtected(t *task.Task, s protected) {
 // their values before the attempt, the check (and the audit, when required) are run by aitk, the
 // regression evidence is recomputed, and the Definition of Done decides. It returns the status to
 // record, or why the task cannot leave in_progress.
-func (r *runner) decide(t *task.Task, snap protected, since string) (string, string) {
+func (r *runner) decide(t *task.Task, snap protected, since string) (target, why string) {
 	p := r.p
 	attempt := t.Review // the agent's own passes: they count for the non-strict review loop only
+	defer func() {
+		if why != "" { // every way an attempt fails: findings the agent recorded are not forgotten
+			r.keepFindings(t, snap, attempt)
+		}
+	}()
 	restoreProtected(t, snap)
 	t.AddWorker(r.agentName) // aitk records this, not the agent: its own passes are never independent
 	cur := t.Criteria()
@@ -443,21 +466,17 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 			target = task.InReview
 		}
 	}
-	if err != nil {
-		t.Review = snap.review // a failed attempt keeps nothing the agent wrote about reviews
+	if err != nil { // the deferred keepFindings decides which passes a failed attempt keeps
 		return "", "the Definition of Done does not hold: " + err.Error()
 	}
 	if target == task.InReview && prof != "strict" && !reviewSatisfied(p, t, prof) { // lite too, once it has a pass
-		// The agent's own loop is unfinished: its passes stay (under its name, never independent),
-		// so findings it recorded must reach 0 in the next attempt instead of being forgotten.
 		if ps := t.Review.Passes; len(ps) > 0 && ps[len(ps)-1].Findings > 0 {
 			return "", fmt.Sprintf("review until clean is not finished (the last review pass found %d to fix)", ps[len(ps)-1].Findings)
 		}
-		t.Review = snap.review // no findings to carry: a stale clean pass is simply redone
 		return "", "review until clean is not finished (no clean review pass on the current code)"
 	}
 	if target == task.InReview && prof == "strict" && p.Config.ReviewLoop() && !reviewDone(t) && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0) {
-		t.Review = snap.review // strict work waits for another tool only after the agent's own clean pass
+		// strict work waits for another tool only after the agent's own clean pass
 		return "", "your own review pass is missing or found something to fix (strict work needs it before another tool's pass)"
 	}
 	if IsBugTask(t) {
