@@ -1374,3 +1374,90 @@ echo x > feature.txt
 		t.Fatalf("a symlink inside the repository must not stop the run: %+v", r)
 	}
 }
+
+// Security review pass 6 scenarios.
+func TestRunGuardSixthPass(t *testing.T) {
+	close := "touch ok.txt\naitk task update --ac-done 1\naitk check\naitk close --summary done --knowledge none\n"
+	head := func(dir string) string { return strings.TrimSpace(must(t, dir, "git", "rev-parse", "HEAD")) }
+
+	// Sequencer state the agent leaves behind (an author from CHERRY_PICK_HEAD, an extra parent
+	// from MERGE_HEAD) never shapes aitk's commit: the commit stops instead.
+	for _, f := range []string{"CHERRY_PICK_HEAD", "MERGE_HEAD"} {
+		dir := newRunProject(t, "")
+		twoTasks(t, dir)
+		write(t, dir, "m.txt", "m")
+		must(t, dir, "git", "add", "m.txt")
+		must(t, dir, "git", "-c", "user.name=Maintainer Person", "-c", "user.email=maint@example.com", "commit", "-qm", "chore: maintainer")
+		before := head(dir)
+		agent := "echo x > feature.txt\n" + close + "git rev-parse HEAD > .git/" + f + "\n"
+		r := aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+		if head(dir) != before || !strings.Contains(r.Data.Tasks[0].Note, f) {
+			t.Fatalf("%s: aitk must not commit with sequencer state present: %+v\n%s", f, r, must(t, dir, "git", "log", "-2", "--format=%an %p"))
+		}
+	}
+
+	// An include that is a dotfiles symlink outside the repository is never rewritten.
+	dir := newRunProject(t, "")
+	home := t.TempDir()
+	write(t, home, "dotfiles/git-work.gc", "[core]\n\tautocrlf = false\n")
+	must(t, home, "ln", "-s", filepath.Join(home, "dotfiles/git-work.gc"), "git-work.gc")
+	must(t, dir, "git", "config", "include.path", filepath.Join(home, "git-work.gc"))
+	twoTasks(t, dir)
+	r := aitkRun(t, dir, "--cmd", "echo x > feature.txt\n"+close, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if fi, err := os.Lstat(filepath.Join(home, "git-work.gc")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the user's symlinked include must stay a symlink: %v %v", fi, err)
+	}
+	if len(r.Data.Tasks) == 0 || r.Data.Tasks[0].Status != "done" || strings.Contains(r.Data.Tasks[0].Note, "git-work") {
+		t.Fatalf("an untouched include must not be reported or stop the run: %+v", r)
+	}
+
+	// aitk never writes outside the repository: an agent that edits such an include stops the
+	// run (the effective config changed) instead of having aitk rewrite the user's file.
+	dir = newRunProject(t, "")
+	home = t.TempDir()
+	write(t, home, "user.gc", "[core]\n\tautocrlf = false\n")
+	must(t, dir, "git", "config", "include.path", filepath.Join(home, "user.gc"))
+	twoTasks(t, dir)
+	before := head(dir)
+	r = aitkRun(t, dir, "--cmd", "echo x > feature.txt\nprintf '[filter \"x\"]\\n\\tclean = cat\\n' >> "+filepath.Join(home, "user.gc")+"\n"+close, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if b, _ := os.ReadFile(filepath.Join(home, "user.gc")); !strings.Contains(string(b), "filter") {
+		t.Fatalf("aitk must not rewrite a file outside the repository:\n%s", b)
+	}
+	if head(dir) != before || !strings.Contains(r.Data.Stopped, "could not restore") {
+		t.Fatalf("a changed include outside the repository must stop the run: %+v", r)
+	}
+
+	// A symlinked .git keeps working and is never removed; a symlinked .git/config stays a link.
+	dir = newRunProject(t, "")
+	store := filepath.Join(t.TempDir(), "store.git")
+	must(t, dir, "sh", "-c", "mv .git "+store+" && ln -s "+store+" .git")
+	must(t, dir, "sh", "-c", "mv .git/config .git/config.real && ln -s config.real .git/config")
+	twoTasks(t, dir)
+	r = aitkRun(t, dir, "--cmd", "echo x > feature.txt\n"+close, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if fi, err := os.Lstat(filepath.Join(dir, ".git")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("a symlinked .git must stay: %v %v (%+v)", fi, err, r)
+	}
+	if fi, err := os.Lstat(filepath.Join(store, "config")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("a symlinked .git/config must stay a link: %v %v", fi, err)
+	}
+	if len(r.Data.Tasks) == 0 || r.Data.Tasks[0].Status != "done" || r.Data.Tasks[0].Commit == "" {
+		t.Fatalf("a run in a repository with a symlinked .git must finish and commit: %+v", r)
+	}
+
+	// An agent that edits a symlinked .git/config has it restored through the link.
+	dir = newRunProject(t, "")
+	must(t, dir, "sh", "-c", "mv .git/config .git/config.real && ln -s config.real .git/config")
+	_, _, bFile, bWas := twoTasks(t, dir)
+	was, _ := os.ReadFile(filepath.Join(dir, ".git/config.real"))
+	agent := `printf '[filter "x"]\n\tclean = sed s/^status:.*/status:\\\\ cancelled/\n' >> .git/config
+echo 'docs/ai/tasks/*.md filter=x' > .gitattributes
+echo x > feature.txt
+` + close
+	aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if got, _ := os.ReadFile(filepath.Join(dir, ".git/config.real")); string(got) != string(was) {
+		t.Fatalf("the symlinked config must be restored through its link:\n%s", got)
+	}
+	if got, _ := sh(t, dir, "git", "show", "HEAD:"+bFile); got != string(bWas) {
+		t.Fatalf("a filter in a symlinked config rewrote another task:\n%s", got)
+	}
+}

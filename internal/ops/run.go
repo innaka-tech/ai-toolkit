@@ -420,6 +420,8 @@ type attemptGuard struct {
 	layout            map[string]string // existing parts of docs/ai/tasks -> where they resolved
 	gitWasDir         bool              // .git was a directory (not a gitdir: file)
 	config            string            // the repository's effective config and branch, see repoConfig
+	links             map[string]string // guarded paths that were symlinks -> their link target
+	gitReal           string            // where .git resolved when it was a directory (or a link to one)
 	accepted          map[string]string // new task files kept so far (path -> id): not duplicates of themselves
 }
 
@@ -427,11 +429,19 @@ func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
 	g := &attemptGuard{files: map[string][]byte{}, present: map[string]bool{}, ids: []string{t.ID}, curID: t.ID,
 		curFile: p.Path(filepath.ToSlash(t.File)), agent: agent}
 	g.curWas, _ = os.ReadFile(g.curFile)
+	g.links = map[string]string{}
 	keep := func(abs string) {
 		b, err := os.ReadFile(abs)
-		g.present[abs] = err == nil
+		// Only a path that did not exist counts as absent: one that could not be read for another
+		// reason is never removed as if the agent had created it.
+		g.present[abs] = err == nil || !errors.Is(err, os.ErrNotExist)
 		if err == nil {
 			g.files[abs] = b
+			if fi, lerr := os.Lstat(abs); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+				if target, rerr := os.Readlink(abs); rerr == nil {
+					g.links[abs] = target // a dotfiles-style link stays a link
+				}
+			}
 		}
 	}
 	keep(p.Path(project.ConfigFile))
@@ -441,16 +451,20 @@ func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
 	}
 	for _, f := range []string{filepath.Join(common, "config"), filepath.Join(common, "info", "attributes"), filepath.Join(p.GitDir, "config.worktree"),
 		filepath.Join(p.GitDir, "commondir"), filepath.Join(p.GitDir, "gitdir"), filepath.Join(p.Root, ".git")} {
-		if fi, err := os.Lstat(f); err == nil && fi.IsDir() {
-			continue // the .git directory itself: its contents are guarded file by file
+		if fi, err := os.Stat(f); err == nil && fi.IsDir() {
+			continue // the .git directory itself (or a link to it): its contents are guarded file by file
 		}
-		keep(f)
-	}
-	for _, f := range includedConfigs(p) { // files the repository's config pulls in (include.path)
 		keep(f)
 	}
 	g.gitDir, g.commonDir = p.GitDir, common
 	g.realRoot, _ = filepath.EvalSymlinks(p.Root)
+	for _, f := range includedConfigs(p) { // files the repository's config pulls in (include.path)
+		// Inside the repository or its git directories they are restored; elsewhere (a file in
+		// the user's home) aitk does not write, and the effective-config check fails closed.
+		if g.inside(f, p.Root, p.GitDir, common) {
+			keep(f)
+		}
+	}
 	g.layout = map[string]string{}
 	for d := filepath.FromSlash(project.TasksDir); d != "." && d != string(filepath.Separator); d = filepath.Dir(d) {
 		if got, err := filepath.EvalSymlinks(filepath.Join(p.Root, d)); err == nil {
@@ -458,8 +472,9 @@ func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
 		}
 	}
 	g.config = repoConfig(p)
-	if fi, err := os.Lstat(filepath.Join(p.Root, ".git")); err == nil && fi.IsDir() {
+	if fi, err := os.Stat(filepath.Join(p.Root, ".git")); err == nil && fi.IsDir() {
 		g.gitWasDir = true
+		g.gitReal, _ = filepath.EvalSymlinks(filepath.Join(p.Root, ".git"))
 	}
 	tasks, _ := task.List(p)
 	for _, o := range tasks {
@@ -511,6 +526,47 @@ func (g *attemptGuard) put(abs string, want []byte) bool {
 	return true
 }
 
+// putLink restores a guarded path that was a symlink: the link itself, then the content it
+// points to. It reports whether it changed anything.
+func (g *attemptGuard) putLink(abs, target string, want []byte) bool {
+	changed := false
+	if cur, err := os.Readlink(abs); err != nil || cur != target {
+		os.RemoveAll(abs)
+		if err := os.Symlink(target, abs); err != nil {
+			g.failed = append(g.failed, abs)
+			return false
+		}
+		changed = true
+	}
+	if got, err := os.ReadFile(abs); err == nil && bytes.Equal(got, want) {
+		return changed
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil || os.WriteFile(real, want, 0o644) != nil {
+		g.failed = append(g.failed, abs)
+		return false
+	}
+	return true
+}
+
+// inside reports whether path (resolved) lies under one of the roots (resolved).
+func (g *attemptGuard) inside(path string, roots ...string) bool {
+	real := path
+	if r, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		real = filepath.Join(r, filepath.Base(path))
+	}
+	for _, root := range roots {
+		rr, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			rr = root
+		}
+		if rel, err := filepath.Rel(rr, real); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (g *attemptGuard) restoreLocked(p *project.Project) []string {
 	var changed []string
 	if moved := g.moved(p); moved != "" {
@@ -518,6 +574,12 @@ func (g *attemptGuard) restoreLocked(p *project.Project) []string {
 		return nil // writing now would follow the agent's links out of the repository
 	}
 	for abs, want := range g.files {
+		if target, ok := g.links[abs]; ok {
+			if g.putLink(abs, target, want) {
+				changed = append(changed, relTo(p, abs))
+			}
+			continue
+		}
 		fi, lerr := os.Lstat(abs)
 		regular := lerr == nil && fi.Mode().IsRegular()
 		if got, err := os.ReadFile(abs); regular && err == nil && bytes.Equal(got, want) {
@@ -616,9 +678,9 @@ func (g *attemptGuard) moved(p *project.Project) string {
 		}
 	}
 	if g.gitWasDir {
-		fi, err := os.Lstat(filepath.Join(p.Root, ".git"))
+		fi, err := os.Stat(filepath.Join(p.Root, ".git"))
 		got, eerr := filepath.EvalSymlinks(filepath.Join(p.Root, ".git"))
-		if err != nil || !fi.IsDir() || eerr != nil || got != filepath.Join(g.realRoot, ".git") {
+		if err != nil || !fi.IsDir() || eerr != nil || got != g.gitReal {
 			return ".git (no longer the repository's own directory)"
 		}
 	}
@@ -947,6 +1009,9 @@ func (r *runner) commitWork(rt *RunTask) error {
 	if r.guard != nil && len(r.guard.failed) > 0 {
 		return fmt.Errorf("could not restore %s after the attempt; nothing committed", strings.Join(dedupe(r.guard.failed), ", "))
 	}
+	if st := sequencerState(p); st != "" {
+		return fmt.Errorf("git has an operation in progress (%s): finish or abort it (git status); nothing committed", st)
+	}
 	if len(worktreeChanges(p)) == 0 {
 		return nil
 	}
@@ -995,6 +1060,18 @@ func (r *runner) commitWork(rt *RunTask) error {
 		return fmt.Errorf("files left in the working tree: %s", strings.Join(firstN(left, 5), ", "))
 	}
 	return nil
+}
+
+// sequencerState names git state that would change what a plain git commit records (the author
+// from CHERRY_PICK_HEAD, an extra parent from MERGE_HEAD) or that means an operation is
+// unfinished. Empty means none.
+func sequencerState(p *project.Project) string {
+	for _, f := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer", "rebase-merge", "rebase-apply"} {
+		if _, err := os.Lstat(filepath.Join(p.GitDir, f)); err == nil {
+			return f
+		}
+	}
+	return ""
 }
 
 func (r *runner) commit(rt *RunTask, subject string) error {
