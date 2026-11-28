@@ -107,7 +107,8 @@ func union(s string) string {
 
 func resolveConflicts(p *project.Project, dry bool) []Action {
 	var out []Action
-	root := p.Path(project.DocsAI)
+	// The trailing separator makes Walk descend when docs/ai itself is a symlink.
+	root := p.Path(project.DocsAI) + string(filepath.Separator)
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -224,7 +225,7 @@ func repairOne(p *project.Project, rel, content string, used map[string]bool, dr
 	fm := map[string]any{}
 	if hasFront && yaml.Unmarshal([]byte(front), &fm) != nil {
 		// Unparseable YAML: prefer the last committed version when it is valid.
-		if head, err := gitx.RunRaw(p.Root, "show", "HEAD:"+rel); err == nil {
+		if head, err := gitx.RunRaw(p.Root, "show", "HEAD:"+p.GitPath(rel)); err == nil {
 			if f2, b2, ok := doc.Split(string(head)); ok {
 				var m task.Meta
 				if yaml.Unmarshal([]byte(f2), &m) == nil && schema.Validate("task", m) == nil {
@@ -393,7 +394,7 @@ func repairOne(p *project.Project, rel, content string, used map[string]bool, dr
 }
 
 func gitTime(p *project.Project, rel string) string {
-	if d := gitx.LastCommitDate(p.Root, rel); d != "" {
+	if d := gitx.LastCommitDate(p.Root, p.GitPath(rel)); d != "" {
 		if t, err := time.Parse(time.RFC3339, d); err == nil {
 			return t.UTC().Format("2006-01-02T15:04:05Z")
 		}

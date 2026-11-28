@@ -1697,3 +1697,68 @@ func TestRunVerifiedTaskFreesTheWorktree(t *testing.T) {
 		}
 	}
 }
+
+// aitk run --commit where git tracks aitk's files under a symlink's target: finished work is
+// committed, and an unfinished task's handover record too.
+func TestRunCommitsWhenDocsIsASymlink(t *testing.T) {
+	for layout, move := range docsLayouts {
+		dir := runProject(t)
+		must(t, dir, "sh", "-c", move+" && git add -A && git commit -qm 'chore: move docs'")
+		must(t, dir, bin, "task", "new", "First", "--ac", "works")
+		must(t, dir, bin, "task", "new", "Second", "--ac", "works")
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: tasks")
+		agent := `if [ ! -f first.txt ]; then
+  echo x > first.txt; touch ok.txt; aitk task update --ac-done 1; aitk check; aitk close --summary done --knowledge none
+else
+  echo y > second.txt
+fi
+`
+		r := aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "2")
+		if len(r.Data.Tasks) != 2 || r.Data.Tasks[0].Status != "done" || r.Data.Tasks[0].Commit == "" {
+			t.Fatalf("%s: finished work must be committed: %+v", layout, r)
+		}
+		if r.Data.Tasks[1].Commit == "" || r.Data.Tasks[1].Stash == "" || strings.Contains(r.Data.Stopped, "commit failed") {
+			t.Fatalf("%s: the unfinished task's handover must be committed and its work stashed: %+v", layout, r)
+		}
+	}
+}
+
+// The pre-commit schema gate still sees task files behind the link.
+func TestPreCommitValidatesTasksBehindADocsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	for layout, move := range docsLayouts {
+		dir := project(t)
+		must(t, dir, "sh", "-c", move+" && git add -A && git commit -qm 'chore: move docs'")
+		write(t, dir, "docs/ai/tasks/T-zzzz-broken.md", "no frontmatter\n")
+		must(t, dir, "git", "add", "-A")
+		out, err := sh(t, dir, "git", "commit", "-qm", "docs: add task")
+		if err == nil || !strings.Contains(out, "[schema]") {
+			t.Fatalf("%s: an invalid task behind the link must be rejected:\n%s", layout, out)
+		}
+	}
+}
+
+var docsLayouts = map[string]string{
+	"docs link":    "mv docs documentation && ln -s documentation docs",
+	"docs/ai link": "mv docs/ai aidocs && ln -s ../aidocs docs/ai",
+}
+
+// The staged-blob check covers aitk's state behind a docs symlink too.
+func TestRunVerifiesStagedStateBehindADocsSymlink(t *testing.T) {
+	dir := newRunProject(t, "")
+	must(t, dir, "sh", "-c", "mv docs documentation && ln -s documentation docs && git add -A && git commit -qm 'chore: move docs'")
+	twoTasks(t, dir)
+	close := "touch ok.txt\naitk task update --ac-done 1\naitk check\naitk close --summary done --knowledge none\n"
+	agent := "echo x > feature.txt\n" + close + `printf 'a@b\n' > docs/ai/notes.md
+git add documentation/ai/notes.md && git commit -qm "docs: notes" --no-verify
+printf 'a+AEA-b\n' > docs/ai/notes.md
+echo 'documentation/ai/notes.md working-tree-encoding=UTF-7' > .gitattributes
+`
+	r := aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Commit != "" || !strings.Contains(r.Data.Tasks[0].Note, "differently") {
+		t.Fatalf("a state file behind the docs symlink must be checked too: %+v", r)
+	}
+}

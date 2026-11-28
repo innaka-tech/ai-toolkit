@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -84,7 +86,13 @@ func ReleaseProject(p *project.Project, in ReleaseInput) (*ReleaseResult, error)
 	if !in.Tag {
 		return res, nil
 	}
-	args := append([]string{"add", "--"}, res.Written...)
+	args := []string{"add", "--"}
+	for _, w := range res.Written { // a configured path under a symlinked directory: the path git tracks
+		if rel := filepath.ToSlash(w); !filepath.IsAbs(w) && path.Dir(rel) != "." {
+			w = p.GitRel(path.Dir(rel)) + "/" + path.Base(rel)
+		}
+		args = append(args, w)
+	}
 	if _, err := gitx.Run(p.Root, args...); err != nil {
 		return res, apperr.New("E_GIT", apperr.ExitRuntime, "git status", "%v", err)
 	}
@@ -105,7 +113,7 @@ func codeChanges(p *project.Project) []string {
 	out, _ := gitx.RunRaw(p.Root, "status", "--porcelain=v1", "-z", "--untracked-files=normal")
 	var files []string
 	for _, rec := range strings.Split(string(out), "\x00") {
-		if len(rec) > 3 && !profile.Managed(rec[3:]) {
+		if len(rec) > 3 && !profile.ManagedIn(p, rec[3:]) {
 			files = append(files, rec[3:])
 		}
 	}

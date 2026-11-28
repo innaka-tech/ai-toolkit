@@ -16,14 +16,19 @@ const (
 // gitattributes lets parallel branches merge without conflicts: knowledge files are
 // append-only lists (union merge keeps both sides), and generated indexes are rebuilt
 // by the next aitk command.
-const gitattributes = gaBegin + `
-docs/ai/knowledge/*.md merge=union
-docs/ai/knowledge/_archive/*.md merge=union
-docs/ai/handoff.md merge=union linguist-generated
-docs/ai/current-task.md merge=union linguist-generated
-docs/ai/knowledge.md merge=union linguist-generated
-docs/ai/decisions.md merge=union linguist-generated
-` + gaEnd + "\n"
+// The patterns name the paths git tracks, so behind an in-repo docs symlink they use the
+// link's target (git matches attributes against tracked paths, never through the link).
+func gitattributes(p *project.Project) string {
+	d := p.GitRel(project.DocsAI)
+	return gaBegin + "\n" +
+		d + "/knowledge/*.md merge=union\n" +
+		d + "/knowledge/_archive/*.md merge=union\n" +
+		d + "/handoff.md merge=union linguist-generated\n" +
+		d + "/current-task.md merge=union linguist-generated\n" +
+		d + "/knowledge.md merge=union linguist-generated\n" +
+		d + "/decisions.md merge=union linguist-generated\n" +
+		gaEnd + "\n"
+}
 
 // EnsureGitattributes installs aitk's block in .gitattributes. It reports whether the file changed.
 func EnsureGitattributes(p *project.Project, dryRun bool) (bool, error) {
@@ -32,12 +37,12 @@ func EnsureGitattributes(p *project.Project, dryRun bool) (bool, error) {
 	s := string(b)
 	var next string
 	if i, j := strings.Index(s, gaBegin), strings.Index(s, gaEnd); i >= 0 && j > i {
-		next = s[:i] + gitattributes + strings.TrimPrefix(s[j+len(gaEnd):], "\n")
+		next = s[:i] + gitattributes(p) + strings.TrimPrefix(s[j+len(gaEnd):], "\n")
 	} else {
 		if s != "" && !strings.HasSuffix(s, "\n") {
 			s += "\n"
 		}
-		next = s + gitattributes
+		next = s + gitattributes(p)
 	}
 	if next == string(b) {
 		return false, nil

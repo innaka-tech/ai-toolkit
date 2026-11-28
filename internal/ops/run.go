@@ -1063,11 +1063,6 @@ func firstN(xs []string, n int) []string {
 	return xs
 }
 
-// isAitkState reports whether a path is aitk's own state (tasks, handoffs, knowledge, indexes).
-func isAitkState(path string) bool {
-	return strings.HasPrefix(path, project.DocsAI+"/") || path == "ai-state.json"
-}
-
 // commitWork commits the task's work. The tree was clean when the run started and every task
 // leaves it clean, so the changes belong to this task. Finished work (done or in_review) is one
 // Conventional Commit; unfinished work is set aside with git stash and only aitk's handover
@@ -1116,7 +1111,7 @@ func (r *runner) commitWork(rt *RunTask) error {
 		if _, err := literalGit(p, "read-tree", "HEAD"); err != nil { // also drops index flags
 			return err
 		}
-		if _, err := literalGit(p, "add", "-A", "--", project.DocsAI, "ai-state.json"); err != nil {
+		if _, err := literalGit(p, "add", "-A", "--", p.GitRel(project.DocsAI), "ai-state.json"); err != nil {
 			return err
 		}
 		if err := r.guard.verifyStaged(p); err != nil {
@@ -1156,7 +1151,7 @@ func (g *attemptGuard) verifyStaged(p *project.Project) error {
 	// Also every staged file of aitk's own state, changed or not: a blob the agent committed
 	// itself matches HEAD, so it is not in the diff, yet a filter can make the file on disk
 	// differ from it.
-	all, err := literalGit(p, "ls-files", "-z", "--", project.DocsAI, project.StateFile)
+	all, err := literalGit(p, "ls-files", "-z", "--", p.GitRel(project.DocsAI), project.StateFile) // the path git tracks, also behind a docs symlink
 	if err != nil {
 		return err
 	}
@@ -1168,11 +1163,11 @@ func (g *attemptGuard) verifyStaged(p *project.Project) error {
 		if _, seen := wants[rel]; seen || rel == "" {
 			continue
 		}
-		if strings.Contains(rel, "\n") && (strings.HasPrefix(rel, project.DocsAI+"/") || g.files[p.Path(rel)] != nil) {
+		if strings.Contains(rel, "\n") && (strings.HasPrefix(p.AitkRel(rel), project.DocsAI+"/") || g.files[p.Path(rel)] != nil) {
 			return fmt.Errorf("a file name with a newline in aitk's state (%q); nothing committed", rel)
 		}
 		want, guarded := g.files[p.Path(rel)]
-		if !guarded && (strings.HasPrefix(rel, project.DocsAI+"/") || rel == project.StateFile) {
+		if !guarded && (strings.HasPrefix(p.AitkRel(rel), project.DocsAI+"/") || rel == project.StateFile) {
 			// aitk's own files the guard does not snapshot (the agent's task, new tasks,
 			// handoffs): what git stores must still be exactly what aitk read and verified.
 			b, err := os.ReadFile(p.Path(rel))
