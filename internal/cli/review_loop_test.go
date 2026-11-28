@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // standardChange touches enough files that the task is not lite.
@@ -568,5 +569,28 @@ func TestPullDoesNotRaiseTheProfileOfAWaitingTask(t *testing.T) {
 	run(t, dir, "git", "add", "up")
 	run(t, dir, "git", "commit", "-qm", "feat: upstream")
 	write(t, dir, "notes.txt", "stray\n") // untracked
+	mustOK(t, aitk(t, dir, "task", "start", b))
+}
+
+// Two closes in the same second: the later one decides.
+func TestTheLatestOfTwoClosesInOneSecondDecides(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"standard\"\n")
+	a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	standardChange(t, dir, "s")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	for {
+		start := time.Now().Unix()
+		mustOK(t, aitk(t, dir, "close", "--status", "in_progress", "--summary", "wip", "--knowledge", "none"))
+		mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+		if time.Now().Unix() == start {
+			break // both in one second
+		}
+		mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0")) // try again in a fresh second
+	}
 	mustOK(t, aitk(t, dir, "task", "start", b))
 }

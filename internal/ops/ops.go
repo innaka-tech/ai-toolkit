@@ -904,15 +904,15 @@ func closedSince(p *project.Project, id, at string) bool {
 	return closingSince(p, id, at) != nil
 }
 
-// closingSince returns the latest such close, or nil.
+// closingSince returns the latest such close, or nil. handoff.List is newest first (ties within
+// a second broken by write order), so the first match is the latest.
 func closingSince(p *project.Project, id, at string) *handoff.Handoff {
-	var latest *handoff.Handoff
 	for _, h := range handoff.List(p) {
-		if strings.EqualFold(h.Task, id) && h.At >= at && h.TaskStatus != "" && h.Outcome != "switched" && (latest == nil || h.At >= latest.At) {
-			latest = h
+		if strings.EqualFold(h.Task, id) && h.At >= at && h.TaskStatus != "" && h.Outcome != "switched" {
+			return h
 		}
 	}
-	return latest
+	return nil
 }
 
 // reviewDone: ≥2 passes, the last with 0 findings, and at least one clean pass by a tool that
