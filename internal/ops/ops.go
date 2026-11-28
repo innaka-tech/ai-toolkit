@@ -876,28 +876,45 @@ func waitingOnOthers(p *project.Project, t *task.Task) bool {
 		}
 		lastPass = last.At
 	}
-	if p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) { // opted in: own clean pass, strict work too; never lite
-		if lastPass == "" || (prof != "strict" && !reviewSatisfied(p, t, prof)) {
-			return false
-		}
-	}
-	if !closedSince(p, t.ID, lastPass) {
+	h := closingSince(p, t.ID, lastPass)
+	if h == nil {
 		return false // never closed after its last pass: its agent still has to run aitk close
 	}
-	target, err := dod(p, t, prof, CloseInput{})
-	return err == nil && target == task.InReview
+	// The close applied the Definition of Done to the code as it was then; later changes that
+	// are not the agent's (a pull, a merge) must not take the worktree back. What is left to
+	// check is that the close did not leave the agent's own review loop unfinished: its clean
+	// pass must have reviewed the code the close verified. Acceptance re-checks everything.
+	if p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) { // opted in: own clean pass, strict work too; never lite
+		if lastPass == "" {
+			return false
+		}
+		if prof != "strict" {
+			last := t.Review.Passes[len(t.Review.Passes)-1]
+			atClose := h.Check != nil && h.Check.Tree != "" && last.Tree == h.Check.Tree
+			if !atClose && !reviewSatisfied(p, t, prof) {
+				return false
+			}
+		}
+	}
+	return h.TaskStatus == task.InReview
 }
 
 // closedSince reports whether the task was closed at or after at: only aitk close and aitk run
 // record the status they closed to (task_status), whoever ran them, a person included. A review
 // pass alone, aitk switch, or a uat accept/reject (no task_status) never counts as a close.
 func closedSince(p *project.Project, id, at string) bool {
+	return closingSince(p, id, at) != nil
+}
+
+// closingSince returns the latest such close, or nil.
+func closingSince(p *project.Project, id, at string) *handoff.Handoff {
+	var latest *handoff.Handoff
 	for _, h := range handoff.List(p) {
-		if strings.EqualFold(h.Task, id) && h.At >= at && h.TaskStatus != "" && h.Outcome != "switched" {
-			return true
+		if strings.EqualFold(h.Task, id) && h.At >= at && h.TaskStatus != "" && h.Outcome != "switched" && (latest == nil || h.At >= latest.At) {
+			latest = h
 		}
 	}
-	return false
+	return latest
 }
 
 // reviewDone: ≥2 passes, the last with 0 findings, and at least one clean pass by a tool that

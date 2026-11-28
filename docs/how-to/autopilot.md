@@ -63,7 +63,7 @@ Together with the check on the final tree, the risk profiles, the security audit
 Agents run as your user, so they can write any file in the repository, aitk's records included. `aitk run` therefore does not believe a task file that says `done`. It re-derives the outcome itself:
 
 - The fields an agent must not change for itself go back to their values from before the attempt: user acceptance, audit results, regression evidence, the risk profile and its pin, tags, goal, dependencies, `created_by`, and `workers` (the agent is added as a worker; nobody is removed). Review passes the agent recorded during the attempt are kept under the agent's name, whatever the file says: they count for the review loop, never as another tool's independent review; a failed attempt keeps none, except when the agent's last pass found something: then its passes stay (under its name, never independent), so the findings must reach 0 later. Acceptance criteria may be added and checked, but a removed or reworded criterion fails the task.
-- If the agent did not record a handoff with `aitk close`, aitk writes one, so every finished task has a record.
+- If the agent did not close after its last change or review pass (it never ran `aitk close`, closed before its last pass, or switched), aitk writes the close handoff itself, so every finished task has a record and frees the worktree.
 - aitk runs the check itself, and the audit too when the profile requires one.
 - It recomputes the regression evidence from the task's own commits and uncommitted changes. Deleted tests do not count, and neither do other tasks' commits, which are recognized by their `AI-Task` trailer.
 - It then applies the Definition of Done.

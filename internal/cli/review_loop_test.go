@@ -447,3 +447,35 @@ func TestUATAcceptIsNotAClose(t *testing.T) {
 	}
 	expect(t, aitk(t, dir, "task", "start", other), 3, "E_TASK_ACTIVE")
 }
+
+// A task closed to wait for a person stays out of the way when code it did not write arrives
+// (a pull, a merge): the close already applied the Definition of Done. Legacy projects too.
+func TestUpstreamChangeDoesNotTakeTheWorktreeBack(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		dir := repo(t)
+		initRepo(t, dir)
+		cfg := read(t, dir, "aitk.toml") + "\n[uat]\nrequired = \"standard\"\n"
+		if legacy {
+			cfg = strings.Replace(cfg, `review = "standard"`, "", 1)
+		}
+		write(t, dir, "aitk.toml", cfg)
+		a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+		standardChange(t, dir, "p")
+		mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+		mustOK(t, aitk(t, dir, "check"))
+		if !legacy {
+			mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+		}
+		mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+		if st := status(t, dir, a); st != "in_review" {
+			t.Fatalf("legacy=%v: setup: waits for UAT, got %s", legacy, st)
+		}
+		b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+		run(t, dir, "git", "add", "-A")
+		run(t, dir, "git", "commit", "-qm", "feat: export")
+		write(t, dir, "upstream.go", "package main\n") // stands in for a git pull
+		run(t, dir, "git", "add", "upstream.go")
+		run(t, dir, "git", "commit", "-qm", "feat: upstream")
+		mustOK(t, aitk(t, dir, "task", "start", b))
+	}
+}
