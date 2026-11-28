@@ -1461,3 +1461,48 @@ echo x > feature.txt
 		t.Fatalf("a filter in a symlinked config rewrote another task:\n%s", got)
 	}
 }
+
+// Security review pass 7 scenarios.
+func TestRunGuardSeventhPass(t *testing.T) {
+	close := "touch ok.txt\naitk task update --ac-done 1\naitk check\naitk close --summary done --knowledge none\n"
+	head := func(dir string) string { // read the ref directly: a broken config stops git itself
+		b, _ := os.ReadFile(filepath.Join(dir, ".git/refs/heads/main"))
+		return strings.TrimSpace(string(b))
+	}
+	linkedConfig := func(t *testing.T) (string, []byte) {
+		dir := newRunProject(t, "")
+		must(t, dir, "sh", "-c", "mv .git/config .git/config.real && ln -s config.real .git/config")
+		twoTasks(t, dir)
+		cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+		return dir, cfg
+	}
+
+	// A link chain re-pointed at aitk.toml is never written through.
+	dir, cfg := linkedConfig(t)
+	before := head(dir)
+	r := aitkRun(t, dir, "--cmd", "echo x > feature.txt\nmv .git/config.real ../saved-config && ln -s ../aitk.toml .git/config.real\n"+close, "--commit", "--max-attempts", "2", "--max-tasks", "1")
+	sameFile(t, dir, "aitk.toml", cfg, "re-pointed link chain")
+	if head(dir) != before || !strings.Contains(r.Data.Stopped, "could not restore") {
+		t.Fatalf("a re-pointed link chain must stop the run: %+v", r)
+	}
+
+	// A link chain re-pointed at a tracked copy with the same content stops the run too.
+	dir, _ = linkedConfig(t)
+	before = head(dir)
+	r = aitkRun(t, dir, "--cmd", "echo x > feature.txt\ncp .git/config.real evil.cfg && rm .git/config.real && ln -s ../evil.cfg .git/config.real\n"+close, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if head(dir) != before || !strings.Contains(r.Data.Stopped, "could not restore") {
+		t.Fatalf("a config link moved into the working tree must stop the run: %+v", r)
+	}
+
+	// A .gitattributes encoding rule cannot change another task as it is committed.
+	dir = newRunProject(t, "")
+	_, _, bFile, bWas := twoTasks(t, dir)
+	before = head(dir)
+	r = aitkRun(t, dir, "--cmd", "echo x > feature.txt\necho '"+bFile+" working-tree-encoding=IBM037' > .gitattributes\n"+close, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if got, _ := sh(t, dir, "git", "show", "HEAD:"+bFile); got != string(bWas) && head(dir) != before {
+		t.Fatalf("an encoding rule changed another task in the commit: %+v\n%q", r, got)
+	}
+	if head(dir) != before && r.Data.Tasks[0].Commit != "" {
+		t.Fatalf("the commit must stop when git would store a guarded file differently: %+v", r)
+	}
+}

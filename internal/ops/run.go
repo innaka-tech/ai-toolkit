@@ -421,6 +421,7 @@ type attemptGuard struct {
 	gitWasDir         bool              // .git was a directory (not a gitdir: file)
 	config            string            // the repository's effective config and branch, see repoConfig
 	links             map[string]string // guarded paths that were symlinks -> their link target
+	linkReal          map[string]string // guarded paths that were symlinks -> the file they resolved to
 	gitReal           string            // where .git resolved when it was a directory (or a link to one)
 	accepted          map[string]string // new task files kept so far (path -> id): not duplicates of themselves
 }
@@ -429,7 +430,7 @@ func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
 	g := &attemptGuard{files: map[string][]byte{}, present: map[string]bool{}, ids: []string{t.ID}, curID: t.ID,
 		curFile: p.Path(filepath.ToSlash(t.File)), agent: agent}
 	g.curWas, _ = os.ReadFile(g.curFile)
-	g.links = map[string]string{}
+	g.links, g.linkReal = map[string]string{}, map[string]string{}
 	keep := func(abs string) {
 		b, err := os.ReadFile(abs)
 		// Only a path that did not exist counts as absent: one that could not be read for another
@@ -440,6 +441,7 @@ func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
 			if fi, lerr := os.Lstat(abs); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
 				if target, rerr := os.Readlink(abs); rerr == nil {
 					g.links[abs] = target // a dotfiles-style link stays a link
+					g.linkReal[abs], _ = filepath.EvalSymlinks(abs)
 				}
 			}
 		}
@@ -538,11 +540,17 @@ func (g *attemptGuard) putLink(abs, target string, want []byte) bool {
 		}
 		changed = true
 	}
+	// The link must still lead to the same regular file: a chain the agent re-pointed (to
+	// aitk.toml, to a tracked file) is never written through or accepted.
+	real, err := filepath.EvalSymlinks(abs)
+	if fi, lerr := os.Lstat(real); err != nil || real != g.linkReal[abs] || lerr != nil || !fi.Mode().IsRegular() {
+		g.failed = append(g.failed, abs+" (its link now leads elsewhere)")
+		return false
+	}
 	if got, err := os.ReadFile(abs); err == nil && bytes.Equal(got, want) {
 		return changed
 	}
-	real, err := filepath.EvalSymlinks(abs)
-	if err != nil || os.WriteFile(real, want, 0o644) != nil {
+	if os.WriteFile(real, want, 0o644) != nil {
 		g.failed = append(g.failed, abs)
 		return false
 	}
@@ -1029,6 +1037,9 @@ func (r *runner) commitWork(rt *RunTask) error {
 		if _, err := literalGit(p, "add", "-A"); err != nil {
 			return err
 		}
+		if err := r.guard.verifyStaged(p); err != nil {
+			return err
+		}
 		if err := r.commit(rt, commitSubject(t)); err != nil {
 			return err
 		}
@@ -1040,6 +1051,9 @@ func (r *runner) commitWork(rt *RunTask) error {
 			return err
 		}
 		if _, err := literalGit(p, "add", "-A", "--", project.DocsAI, "ai-state.json"); err != nil {
+			return err
+		}
+		if err := r.guard.verifyStaged(p); err != nil {
 			return err
 		}
 		if out, _ := literalGit(p, "diff", "--cached", "--name-only"); strings.TrimSpace(out) != "" {
@@ -1058,6 +1072,36 @@ func (r *runner) commitWork(rt *RunTask) error {
 	}
 	if left := worktreeChanges(p); len(left) > 0 {
 		return fmt.Errorf("files left in the working tree: %s", strings.Join(firstN(left, 5), ", "))
+	}
+	return nil
+}
+
+// verifyStaged checks that git staged the guarded files exactly as aitk restored them: a
+// .gitattributes rule (an encoding, a filter from config git reads) must not change what lands
+// in the commit. Line endings are compared normalized, so autocrlf checkouts still work.
+func (g *attemptGuard) verifyStaged(p *project.Project) error {
+	if g == nil {
+		return nil
+	}
+	out, err := literalGit(p, "diff", "--cached", "--name-only", "-z")
+	if err != nil {
+		return err
+	}
+	norm := func(b []byte) []byte { return bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")) }
+	for _, rel := range strings.Split(out, "\x00") {
+		want, guarded := g.files[p.Path(rel)]
+		if rel == "" || !guarded {
+			continue
+		}
+		c := exec.Command("git", append(safeGitFlags(), "cat-file", "blob", ":"+rel)...)
+		c.Dir = p.Root
+		got, err := c.Output()
+		if err != nil {
+			continue // removed from the index: the restore put the file back, git add saw it
+		}
+		if !bytes.Equal(norm(got), norm(want)) {
+			return fmt.Errorf("git would commit %s differently from the file (a .gitattributes rule changed it); nothing committed", rel)
+		}
 	}
 	return nil
 }
