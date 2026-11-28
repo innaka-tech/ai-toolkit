@@ -213,7 +213,14 @@ func Build(p *project.Project, budget int, taskID string) *Brief {
 		b.Goal = goalInfo(p, t.Goal, tasks)
 	}
 	b.Rules = rules(b.Profile, p.Config.Check.Cmd != "")
-	b.Rules = append(b.Rules[:len(b.Rules)-1], append(characterRules(p.Config), b.Rules[len(b.Rules)-1])...)
+	// The task's own profile counts from the start: at task start the diff is empty (lite),
+	// but the rules must already say how the task will be finished.
+	ruleProf := b.Profile // already what close will use (pinned, unless the diff is strict)
+	if t != nil && !t.ProfilePinned && len(b.Changed) == 0 && rank(t.Profile) > rank(ruleProf) {
+		ruleProf = t.Profile
+	}
+	extra := append(reviewRules(p.Config, t, ruleProf), characterRules(p.Config)...)
+	b.Rules = append(b.Rules[:len(b.Rules)-1], append(extra, b.Rules[len(b.Rules)-1])...)
 	if p.Config.AutoPersona() {
 		b.Personas, b.Standards = pickPersonas(p, t, b.Profile, b.Changed)
 	}
@@ -301,7 +308,7 @@ func rules(prof string, hasCheck bool) []string {
 	case "strict":
 		r = append(r, "Every acceptance criterion must be satisfied: aitk task update <id> --ac-done N.",
 			"Fill the task's Risk section: Impact, Security (STRIDE), Rollback, Validation.",
-			"Done needs ≥2 review passes (last with 0 findings), one by a different tool: aitk review pass --findings N.")
+			"Done needs ≥2 review passes (last with 0 findings), one clean (0 findings) by a different tool: aitk review pass --findings N.")
 	}
 	r = append(r, "If unsure, blocked, or the check fails twice: stop and ask the user.")
 	return r
@@ -419,7 +426,11 @@ func render(b *Brief) string {
 	}
 	if len(b.Personas) > 0 {
 		s.WriteString("\n## Personas this task needs (run them yourself, before close)\n")
-		s.WriteString("Print each prompt with the command and follow it; use a subagent if your tool can start one. A review pass still needs a different tool.\n")
+		s.WriteString("Print each prompt with the command and follow it; use a subagent if your tool can start one.")
+		if b.Profile == "strict" {
+			s.WriteString(" The independent review pass still needs a different tool.")
+		}
+		s.WriteString("\n")
 		for _, ps := range b.Personas {
 			fmt.Fprintf(&s, "- `%s`: %s\n", ps.Run, ps.Why)
 		}

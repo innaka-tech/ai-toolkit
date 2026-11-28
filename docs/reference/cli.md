@@ -477,7 +477,7 @@ aitk report [flags]
 
 ## `aitk review`
 
-Record bug-hunt review passes (strict tasks)
+Record review passes (standard and strict tasks; only strict with [quality] review = "strict")
 
 ```
 aitk review

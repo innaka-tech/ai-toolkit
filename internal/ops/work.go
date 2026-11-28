@@ -30,6 +30,9 @@ type WorkResult struct {
 
 // Work creates (or reuses) a worktree and branch dedicated to task id, claims the task, and starts it there.
 func Work(p *project.Project, id string) (*WorkResult, error) {
+	if err := RunScope(id); err != nil {
+		return nil, err
+	}
 	t, err := task.Find(p, id)
 	if err != nil {
 		return nil, apperr.TaskNotFound(id)

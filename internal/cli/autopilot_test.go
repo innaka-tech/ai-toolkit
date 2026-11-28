@@ -86,6 +86,7 @@ func finish(t *testing.T, dir, id string) {
 	mustOK(t, aitk(t, dir, "task", "update", id, "--ac-done", "1"))
 	write(t, dir, "ok.txt", "1")
 	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "review", "pass", id, "--findings", "0")) // new projects review until clean
 	mustOK(t, aitk(t, dir, "close", "--summary", "done "+id, "--knowledge", "none"))
 }
 

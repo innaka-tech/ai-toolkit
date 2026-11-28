@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -174,6 +177,15 @@ func Run(p *project.Project, in RunInput, log io.Writer) (*RunResult, error) {
 		c := nx.Ready[0]
 		filter.Skip[c.ID] = true
 		rt := r.one(c)
+		if r.guard != nil {
+			r.guard.checkGitDirs(p)
+			if len(r.guard.failed) > 0 { // in every mode: the next task must not start from a forged baseline
+				rt.Note = strings.TrimPrefix(rt.Note+"; could not restore "+strings.Join(dedupe(r.guard.failed), ", "), "; ")
+				res.Tasks = append(res.Tasks, rt)
+				res.Stopped = "aitk could not restore what the agent changed outside its task: put those files back by hand (git status), then run again"
+				break
+			}
+		}
 		if rt.AgentError {
 			res.Tasks = append(res.Tasks, rt)
 			res.Stopped = "the agent failed to start: fix the agent command or its login, then run again (" + rt.ID + " stays " + rt.Status + ")"
@@ -211,16 +223,28 @@ type runner struct {
 	timeout          time.Duration
 	attempts         int
 	log              io.Writer
+	guard            *attemptGuard // the current task's guard, re-applied before verification and commits
 }
 
-func (r *runner) one(c Candidate) RunTask {
+func (r *runner) one(c Candidate) (rt RunTask) {
 	p := r.p
-	rt := RunTask{ID: c.ID, Title: c.Title}
+	rt = RunTask{ID: c.ID, Title: c.Title}
+	var tampered []string // what the agent changed outside its own task, restored by aitk
+	defer func() {
+		if len(tampered) > 0 {
+			rt.Note = strings.TrimPrefix(rt.Note+"; restored what the agent changed outside its task: "+strings.Join(dedupe(tampered), ", "), "; ")
+		}
+	}()
+	r.guard = nil
 	t, err := TaskStart(p, c.ID)
 	if err != nil {
 		rt.Status, rt.Note = c.Status, "could not start: "+err.Error()
 		return rt
 	}
+	// One guard for the whole task: a later attempt must not take an earlier attempt's
+	// unrestorable change as its baseline.
+	guard := guardOf(p, t, r.agentName)
+	r.guard = guard
 	for rt.Attempts < r.attempts {
 		rt.Attempts++
 		fmt.Fprintf(r.log, "aitk run: %s %q, attempt %d of %d\n", t.ID, t.Title, rt.Attempts, r.attempts)
@@ -231,8 +255,12 @@ func (r *runner) one(c Candidate) RunTask {
 		snap := protectedOf(t)
 		started := task.Now()
 		prompt := runPrompt(p, t, rt.Attempts, r.attempts)
+		if rt.Attempts > 1 && rt.Note != "" {
+			prompt = "The previous attempt did not finish: " + rt.Note + "\n\n" + prompt
+		}
 		before := profile.Fingerprint(p)
 		ar := r.runAgent(prompt, t.ID)
+		tampered = append(tampered, guard.restore(p)...) // before verification and any commit
 		code, runErr := ar.code, ar.err
 		cur, ferr := task.Find(p, t.ID)
 		if ferr != nil {
@@ -240,9 +268,21 @@ func (r *runner) one(c Candidate) RunTask {
 			return rt
 		}
 		t = cur
+		if len(guard.failed) > 0 {
+			return r.guardFailed(t, snap, rt)
+		}
 		// An agent that fails at once without touching anything is broken (not installed, bad
 		// flags, not logged in): stop the run instead of blaming the task.
 		if (code != 0 || runErr != nil) && ar.duration < agentStartupWindow && t.Status == task.InProgress && profile.Fingerprint(p) == before {
+			// Code untouched, but the agent may have written its own task file (it is not in the
+			// fingerprint): the same rule as every failed attempt, so a forged pass or a lower
+			// profile cannot become the next attempt's baseline.
+			attempt := t.Review
+			r.restore(t, snap)
+			r.keepFindings(t, snap, attempt)
+			if r.saveFailed(t) {
+				return r.unsaved(t, rt)
+			}
 			rt.Status, rt.AgentError = t.Status, true
 			rt.Note = fmt.Sprintf("the agent failed to start (exit %d)", code)
 			if runErr != nil {
@@ -257,26 +297,47 @@ func (r *runner) one(c Candidate) RunTask {
 		case task.Done, task.InReview:
 			claimed := t.Status
 			target, why := r.decide(t, snap, started)
+			tampered = append(tampered, guard.restore(p)...) // the check ran project code: look again
+			if len(guard.failed) > 0 {
+				return r.guardFailed(t, snap, rt)
+			}
 			if why != "" {
 				t.Status, t.Closed, t.Updated = task.InProgress, "", task.Now()
-				WithLock(p, func() error { return task.Save(p, t) })
+				if r.saveFailed(t) {
+					return r.unsaved(t, rt)
+				}
 				rt.Note = "the agent reported " + claimed + ", but aitk's own verification failed (" + why + "); reopened"
 				continue
 			}
-			rt.Status = target
+			rt.Status, rt.Note = target, "" // an earlier attempt's note no longer applies
 			if target == task.InReview {
-				rt.Note = "waiting for review passes or a person's acceptance (aitk uat accept " + t.ID + ")"
+				rt.Note = "waiting for a person's acceptance (aitk uat accept " + t.ID + ")"
+				kept := t.Review
+				t.Review = snap.review // the same test decide used: passes from outside the attempt
+				independent := reviewDone(t)
+				t.Review = kept
+				if t.Profile == "strict" && (!reviewDone(t) || !independent) {
+					rt.Note = "waiting for an independent review pass by another tool (aitk review pass " + t.ID + " --findings N)"
+				}
 			}
 			return rt
 		case task.Blocked, task.Cancelled:
-			restoreProtected(t, snap) // whatever else the agent wrote, it cannot grant itself UAT or reviews
-			WithLock(p, func() error { return task.Save(p, t) })
+			attempt := t.Review
+			r.restore(t, snap) // whatever else the agent wrote, it cannot grant itself UAT or reviews
+			r.keepFindings(t, snap, attempt)
+			if r.saveFailed(t) {
+				return r.unsaved(t, rt)
+			}
 			rt.Status, rt.Note = t.Status, "the agent stopped the task; see its handoff"
 			return rt
 		}
 		// Still unfinished: whatever the agent wrote, it cannot keep grants it gave itself.
-		restoreProtected(t, snap)
-		WithLock(p, func() error { return task.Save(p, t) })
+		attempt := t.Review
+		r.restore(t, snap)
+		r.keepFindings(t, snap, attempt)
+		if r.saveFailed(t) {
+			return r.unsaved(t, rt)
+		}
 		switch {
 		case runErr != nil:
 			rt.Note = runErr.Error()
@@ -293,6 +354,40 @@ func (r *runner) one(c Candidate) RunTask {
 	return r.handOver(t, rt)
 }
 
+// guardFailed ends the task when the guard could not put something back: nothing the agent
+// did can be verified, so the task stays open and keeps no grants. Run then stops.
+func (r *runner) guardFailed(t *task.Task, snap protected, rt RunTask) RunTask {
+	r.restore(t, snap)
+	if t.Status == task.Done || t.Status == task.InReview {
+		t.Status, t.Closed = task.InProgress, ""
+	}
+	t.Updated = task.Now()
+	r.saveFailed(t)
+	rt.Status = t.Status
+	rt.Note = "stopped: could not restore what the agent changed outside its task"
+	return rt
+}
+
+// saveFailed saves the task and reports whether it could not: a task file the agent left
+// invalid (a schema violation) would otherwise keep whatever it wrote, grants included. Then
+// the file goes back to how it was when the task started and the guard fails closed.
+func (r *runner) saveFailed(t *task.Task) bool {
+	err := WithLock(r.p, func() error { return task.Save(r.p, t) })
+	if err == nil || r.guard == nil {
+		return err != nil
+	}
+	r.guard.put(r.guard.curFile, r.guard.curWas)
+	r.guard.failed = append(r.guard.failed, relTo(r.p, r.guard.curFile)+" (aitk could not save it: "+err.Error()+")")
+	return true
+}
+
+// unsaved ends the task after saveFailed: the file is back as it was before the task started.
+func (r *runner) unsaved(t *task.Task, rt RunTask) RunTask {
+	rt.Status = task.InProgress
+	rt.Note = "stopped: the agent left its task file invalid, so aitk put it back as it was before the task"
+	return rt
+}
+
 // protected holds the fields an agent must not be able to grant itself: a person's acceptance,
 // review passes (which count only from other tools), audit results, and regression evidence.
 type protected struct {
@@ -307,11 +402,19 @@ type protected struct {
 	goal      string
 	dependsOn []string
 	criteria  []string // texts; marking them done is the agent's job, rewording them is not
+	// Who worked on the task decides which review passes count as independent.
+	createdBy string
+	workers   []string
+	// What decides which changes are the task's (and so its risk profile).
+	base, created, branch string
+	legacy                map[string]any
 }
 
 func protectedOf(t *task.Task) protected {
 	s := protected{profile: t.Profile, pinned: t.ProfilePinned, tags: append([]string(nil), t.Tags...),
-		goal: t.Goal, dependsOn: append([]string(nil), t.DependsOn...)}
+		goal: t.Goal, dependsOn: append([]string(nil), t.DependsOn...),
+		createdBy: t.CreatedBy, workers: append([]string(nil), t.Workers...),
+		base: t.Base, created: t.Created, branch: t.Branch, legacy: t.Legacy}
 	for _, c := range t.Criteria() {
 		s.criteria = append(s.criteria, c.Text)
 	}
@@ -334,8 +437,456 @@ func protectedOf(t *task.Task) protected {
 	return s
 }
 
+// restore puts back what the agent may not change and records the agent as a worker: aitk does
+// this on every path an attempt can end on, so the agent's own passes are never independent.
+func (r *runner) restore(t *task.Task, snap protected) {
+	restoreProtected(t, snap)
+	t.AddWorker(r.agentName)
+}
+
+// attemptGuard holds what an agent must not change during an attempt: aitk.toml, the other
+// tasks' files, the identity of its own task file, and the git configuration aitk's own git
+// commands read afterwards. New task files are allowed (a persona may file follow-up tasks), but
+// only as new work: a file that claims an existing task's id (or no valid id) is removed, and a
+// new task keeps only its description. It fails closed: what it cannot restore stops the commit.
+type attemptGuard struct {
+	files   map[string][]byte // absolute path -> content before the attempt
+	present map[string]bool   // absolute path -> existed before the attempt
+	ids     []string          // ids of the tasks that existed before the attempt
+	curID   string
+	curFile string // absolute
+	curWas  []byte
+	agent   string
+	failed  []string // what could not be restored
+	// Where git must still resolve to before a commit.
+	gitDir, commonDir string
+	realRoot          string            // the repository root with symlinks resolved
+	layout            map[string]string // existing parts of docs/ai/tasks -> where they resolved
+	gitWasDir         bool              // .git was a directory (not a gitdir: file)
+	config            string            // the repository's effective config and branch, see repoConfig
+	links             map[string]string // guarded paths that were symlinks -> their link target
+	linkReal          map[string]string // guarded paths that were symlinks -> the file they resolved to
+	gitReal           string            // where .git resolved when it was a directory (or a link to one)
+	accepted          map[string]string // new task files kept so far (path -> id): not duplicates of themselves
+}
+
+func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
+	g := &attemptGuard{files: map[string][]byte{}, present: map[string]bool{}, ids: []string{t.ID}, curID: t.ID,
+		curFile: p.Path(filepath.ToSlash(t.File)), agent: agent}
+	g.curWas, _ = os.ReadFile(g.curFile)
+	g.links, g.linkReal = map[string]string{}, map[string]string{}
+	keep := func(abs string) {
+		b, err := os.ReadFile(abs)
+		// Only a path that did not exist counts as absent: one that could not be read for another
+		// reason is never removed as if the agent had created it.
+		g.present[abs] = err == nil || !errors.Is(err, os.ErrNotExist)
+		if err == nil {
+			g.files[abs] = b
+			if fi, lerr := os.Lstat(abs); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+				if target, rerr := os.Readlink(abs); rerr == nil {
+					g.links[abs] = target // a dotfiles-style link stays a link
+					g.linkReal[abs], _ = filepath.EvalSymlinks(abs)
+				}
+			}
+		}
+	}
+	keep(p.Path(project.ConfigFile))
+	common := p.CommonDir
+	if common == "" {
+		common = filepath.Join(p.Root, ".git")
+	}
+	for _, f := range []string{filepath.Join(common, "config"), filepath.Join(common, "info", "attributes"), filepath.Join(p.GitDir, "config.worktree"),
+		filepath.Join(p.GitDir, "commondir"), filepath.Join(p.GitDir, "gitdir"), filepath.Join(p.Root, ".git")} {
+		if fi, err := os.Stat(f); err == nil && fi.IsDir() {
+			continue // the .git directory itself (or a link to it): its contents are guarded file by file
+		}
+		keep(f)
+	}
+	g.gitDir, g.commonDir = p.GitDir, common
+	g.realRoot, _ = filepath.EvalSymlinks(p.Root)
+	for _, f := range includedConfigs(p) { // files the repository's config pulls in (include.path)
+		// Inside the repository or its git directories they are restored; elsewhere (a file in
+		// the user's home) aitk does not write, and the effective-config check fails closed.
+		if g.inside(f, p.Root, p.GitDir, common) {
+			keep(f)
+		}
+	}
+	g.layout = map[string]string{}
+	for d := filepath.FromSlash(project.TasksDir); d != "." && d != string(filepath.Separator); d = filepath.Dir(d) {
+		if got, err := filepath.EvalSymlinks(filepath.Join(p.Root, d)); err == nil {
+			g.layout[d] = got
+		}
+	}
+	g.config = repoConfig(p)
+	if fi, err := os.Stat(filepath.Join(p.Root, ".git")); err == nil && fi.IsDir() {
+		g.gitWasDir = true
+		g.gitReal, _ = filepath.EvalSymlinks(filepath.Join(p.Root, ".git"))
+	}
+	tasks, _ := task.List(p)
+	for _, o := range tasks {
+		g.ids = append(g.ids, o.ID)
+		if abs := p.Path(filepath.ToSlash(o.File)); abs != g.curFile {
+			keep(abs)
+		}
+	}
+	return g
+}
+
+func (g *attemptGuard) knownID(id string) bool {
+	for _, k := range g.ids {
+		if strings.EqualFold(k, id) {
+			return true
+		}
+	}
+	return false
+}
+
+// restore puts the guarded state back and names what it changed. It runs under the project
+// lock when it can, and without it when the lock is broken (an agent must not be able to switch
+// the restore off by breaking the lock).
+func (g *attemptGuard) restore(p *project.Project) []string {
+	if g == nil {
+		return nil
+	}
+	var changed []string
+	ran := false
+	work := func() error {
+		ran = true
+		changed = g.restoreLocked(p)
+		return nil
+	}
+	if err := WithLock(p, work); err != nil && !ran {
+		work()
+		changed = append(changed, "(the project lock was unavailable)")
+	}
+	sort.Strings(changed)
+	return changed
+}
+
+func (g *attemptGuard) put(abs string, want []byte) bool {
+	os.RemoveAll(abs) // whatever sits there now (a directory, a symlink) goes first
+	if err := fsx.WriteFile(abs, want, 0o644); err != nil {
+		g.failed = append(g.failed, abs)
+		return false
+	}
+	return true
+}
+
+// putLink restores a guarded path that was a symlink: the link itself, then the content it
+// points to. It reports whether it changed anything.
+func (g *attemptGuard) putLink(abs, target string, want []byte) bool {
+	changed := false
+	if cur, err := os.Readlink(abs); err != nil || cur != target {
+		os.RemoveAll(abs)
+		if err := os.Symlink(target, abs); err != nil {
+			g.failed = append(g.failed, abs)
+			return false
+		}
+		changed = true
+	}
+	// The link must still lead to the same regular file: a chain the agent re-pointed (to
+	// aitk.toml, to a tracked file) is never written through or accepted.
+	real, err := filepath.EvalSymlinks(abs)
+	if fi, lerr := os.Lstat(real); err != nil || real != g.linkReal[abs] || lerr != nil || !fi.Mode().IsRegular() {
+		g.failed = append(g.failed, abs+" (its link now leads elsewhere)")
+		return false
+	}
+	if got, err := os.ReadFile(abs); err == nil && bytes.Equal(got, want) {
+		return changed
+	}
+	if fsx.WriteFile(real, want, 0o644) != nil { // a new file by rename: a hard link the agent made is not written through
+		g.failed = append(g.failed, abs)
+		return false
+	}
+	return true
+}
+
+// inside reports whether path (resolved) lies under one of the roots (resolved).
+func (g *attemptGuard) inside(path string, roots ...string) bool {
+	real := path
+	if r, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		real = filepath.Join(r, filepath.Base(path))
+	}
+	for _, root := range roots {
+		rr, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			rr = root
+		}
+		if rel, err := filepath.Rel(rr, real); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *attemptGuard) restoreLocked(p *project.Project) []string {
+	var changed []string
+	if moved := g.moved(p); moved != "" {
+		g.failed = append(g.failed, moved)
+		return nil // writing now would follow the agent's links out of the repository
+	}
+	for abs, want := range g.files {
+		if target, ok := g.links[abs]; ok {
+			if g.putLink(abs, target, want) {
+				changed = append(changed, relTo(p, abs))
+			}
+			continue
+		}
+		fi, lerr := os.Lstat(abs)
+		regular := lerr == nil && fi.Mode().IsRegular()
+		if got, err := os.ReadFile(abs); regular && err == nil && bytes.Equal(got, want) {
+			continue
+		}
+		if g.put(abs, want) {
+			changed = append(changed, relTo(p, abs))
+		}
+	}
+	for abs, was := range g.present {
+		if !was { // git config files the agent created
+			if _, err := os.Lstat(abs); err == nil && os.RemoveAll(abs) == nil {
+				changed = append(changed, relTo(p, abs)+" (removed)")
+			}
+		}
+	}
+	// The agent's own task file keeps its identity: a changed id (or a missing file) is forgery.
+	if len(g.curWas) > 0 {
+		if cur, err := task.Load(p, relTo(p, g.curFile)); err != nil || !strings.EqualFold(cur.ID, g.curID) {
+			if g.put(g.curFile, g.curWas) {
+				changed = append(changed, relTo(p, g.curFile)+" (its id or file was changed)")
+			}
+		}
+	}
+	entries, _ := os.ReadDir(p.Path(project.TasksDir))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		abs := p.Path(project.TasksDir, e.Name())
+		if _, guarded := g.files[abs]; guarded || abs == g.curFile {
+			continue
+		}
+		r := relTo(p, abs)
+		nt, err := task.Load(p, r)
+		switch {
+		case err != nil || !task.IDPattern.MatchString(nt.ID):
+			if os.Remove(abs) == nil {
+				changed = append(changed, r+" (removed: not a valid task)")
+			}
+		case g.accepted[abs] != "" && strings.EqualFold(g.accepted[abs], nt.ID):
+			// kept by an earlier restore: only reset it again below
+			if sanitizeNewTask(nt, g.agent) && task.Save(p, nt) != nil && os.Remove(abs) == nil {
+				changed = append(changed, r+" (removed: could not be reset to its description)")
+			}
+		case g.knownID(nt.ID):
+			if os.Remove(abs) == nil {
+				changed = append(changed, r+" (removed: duplicate of "+nt.ID+")")
+			}
+		default:
+			g.ids = append(g.ids, nt.ID) // a second new file with this id is a duplicate too
+			if g.accepted == nil {
+				g.accepted = map[string]string{}
+			}
+			g.accepted[abs] = nt.ID
+			if !sanitizeNewTask(nt, g.agent) {
+				continue
+			}
+			if err := task.Save(p, nt); err != nil {
+				if os.Remove(abs) == nil { // fail closed: an invalid seeded task is not kept as written
+					changed = append(changed, r+" (removed: could not be reset to its description)")
+				}
+			} else {
+				changed = append(changed, r+" (new task reset to its description)")
+			}
+		}
+	}
+	// Last, what git will actually read: an include the guard could not list (missing, empty,
+	// conditional on a branch) or a branch switch shows up here, and fails closed.
+	if repoConfig(p) != g.config {
+		g.failed = append(g.failed, "git configuration (changed through an included file or a branch switch)")
+	}
+	return changed
+}
+
+// moved names the first part of the layout that no longer resolves inside the repository: any
+// existing component of docs/ai/tasks that is (or sits under) a symlink or junction, and a .git
+// directory that was replaced. Empty means the layout is intact.
+func (g *attemptGuard) moved(p *project.Project) string {
+	if g.realRoot == "" {
+		return p.Root + " (could not resolve the repository root)"
+	}
+	for d := filepath.FromSlash(project.TasksDir); d != "." && d != string(filepath.Separator); d = filepath.Dir(d) {
+		got, err := filepath.EvalSymlinks(filepath.Join(p.Root, d))
+		if err != nil {
+			if _, lerr := os.Lstat(filepath.Join(p.Root, d)); lerr != nil {
+				continue // missing: restored as a plain directory below
+			}
+			return filepath.ToSlash(d) + " (cannot be resolved)"
+		}
+		if was, ok := g.layout[d]; ok && got != was {
+			return filepath.ToSlash(d) + " (now resolves elsewhere: a link)"
+		}
+		if r, err := filepath.Rel(g.realRoot, got); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(d) + " (a link out of the repository)"
+		}
+	}
+	if g.gitWasDir {
+		fi, err := os.Stat(filepath.Join(p.Root, ".git"))
+		got, eerr := filepath.EvalSymlinks(filepath.Join(p.Root, ".git"))
+		if err != nil || !fi.IsDir() || eerr != nil || got != g.gitReal {
+			return ".git (no longer the repository's own directory)"
+		}
+	}
+	return ""
+}
+
+// includedConfigs lists the files the repository's own config pulls in with include.path or
+// includeIf, wherever they are (a tracked file, a file in .git, the main checkout of a linked
+// worktree). Global and system config are not the repository's and are left alone.
+func includedConfigs(p *project.Project) []string {
+	seen := map[string]bool{}
+	var files []string
+	for _, scope := range []string{"--local", "--worktree"} {
+		c := exec.Command("git", append(safeGitFlags(), "config", scope, "--list", "--show-origin", "--includes", "-z")...)
+		c.Dir = p.Root
+		out, err := c.Output()
+		if err != nil {
+			continue
+		}
+		parts := strings.Split(string(out), "\x00")
+		for i := 0; i+1 < len(parts); i += 2 { // origin, then key and value
+			f, ok := strings.CutPrefix(parts[i], "file:")
+			if !ok {
+				continue
+			}
+			if !filepath.IsAbs(f) {
+				f = filepath.Join(p.Root, f)
+			}
+			if f = filepath.Clean(f); !seen[f] {
+				seen[f] = true
+				files = append(files, f)
+			}
+		}
+	}
+	return files
+}
+
+// repoConfig is what git reads for this repository beyond global and system config, includes
+// resolved, plus the current branch (includeIf onbranch depends on it). Errors are part of it.
+func repoConfig(p *project.Project) string {
+	var b strings.Builder
+	for _, args := range [][]string{{"config", "--local", "--list", "--includes", "-z"}, {"config", "--worktree", "--list", "--includes", "-z"}, {"symbolic-ref", "-q", "HEAD"}} {
+		c := exec.Command("git", append(safeGitFlags(), args...)...)
+		c.Dir = p.Root
+		out, err := c.CombinedOutput()
+		fmt.Fprintf(&b, "%s\x00%v\x00", out, err)
+	}
+	return b.String()
+}
+
+// checkGitDirs fails the guard if git would now resolve to another git directory (an agent
+// pointing commondir or the .git file elsewhere, to bring its own config and filters).
+func (g *attemptGuard) checkGitDirs(p *project.Project) {
+	out, err := literalGit(p, "rev-parse", "--absolute-git-dir", "--git-common-dir")
+	if err != nil {
+		g.failed = append(g.failed, "git directory (rev-parse failed)")
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	same := func(a, b string) bool {
+		ra, _ := filepath.EvalSymlinks(a)
+		rb, _ := filepath.EvalSymlinks(b)
+		return ra != "" && ra == rb
+	}
+	if len(lines) < 2 {
+		g.failed = append(g.failed, "git directory (unexpected rev-parse output)")
+		return
+	}
+	common := lines[1]
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(p.Root, common)
+	}
+	if !same(lines[0], g.gitDir) || !same(common, g.commonDir) {
+		g.failed = append(g.failed, "git directory (points elsewhere)")
+	}
+}
+
+func relTo(p *project.Project, abs string) string {
+	if r, err := filepath.Rel(p.Root, abs); err == nil {
+		return filepath.ToSlash(r)
+	}
+	return abs
+}
+
+// sanitizeNewTask keeps a task the agent filed as plain new work. It reports whether it changed.
+func sanitizeNewTask(t *task.Task, agent string) bool {
+	changed := t.Review != nil || t.Evidence != nil || len(t.Workers) > 0 || t.CreatedBy != agent ||
+		t.Base != "" || t.Branch != "" || len(t.Paths) > 0 || len(t.Legacy) > 0 ||
+		(t.ProfilePinned && t.Profile != "strict") || (t.Status != task.Todo && t.Status != task.Blocked) || t.Closed != ""
+	t.Review, t.Evidence, t.Workers, t.CreatedBy, t.Closed = nil, nil, nil, agent, ""
+	t.Base, t.Branch, t.Paths, t.Legacy = "", "", nil, nil // set when someone starts it, never seeded
+	if t.ProfilePinned && t.Profile != "strict" {
+		t.ProfilePinned = false // pinning raises the bar only
+	}
+	if t.Status != task.Todo && t.Status != task.Blocked {
+		t.Status = task.Todo
+	}
+	return changed
+}
+
+func dedupe(xs []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, x := range xs {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// ownPasses is the protected review plus the passes the agent appended during the attempt,
+// renumbered and attributed to the agent.
+func ownPasses(base, attempt *task.Review, agent string) *task.Review {
+	out := &task.Review{}
+	if base != nil {
+		out.Passes = append(out.Passes, base.Passes...)
+	}
+	if attempt != nil {
+		for i := len(out.Passes); i < len(attempt.Passes); i++ {
+			ps := attempt.Passes[i]
+			ps.N, ps.By, ps.Session = len(out.Passes)+1, agent, ""
+			out.Passes = append(out.Passes, ps)
+		}
+	}
+	return out
+}
+
+// keepFindings is the one rule for a failed attempt's review passes: none are kept, except
+// when the agent's last pass found something. Then its passes stay, under its name (never
+// independent: the agent is recorded as a worker), so those findings must reach 0 in a later
+// attempt or by a person instead of being forgotten. Call it after restoreProtected.
+func (r *runner) keepFindings(t *task.Task, snap protected, attempt *task.Review) {
+	own := ownPasses(snap.review, attempt, r.agentName)
+	if n := len(own.Passes); n > 0 && own.Passes[n-1].Findings > 0 {
+		t.Review = own
+		t.AddWorker(r.agentName)
+		return
+	}
+	t.Review = snap.review
+}
+
 func restoreProtected(t *task.Task, s protected) {
 	t.Profile, t.ProfilePinned, t.Tags, t.Goal, t.DependsOn = s.profile, s.pinned, s.tags, s.goal, s.dependsOn
+	t.CreatedBy = s.createdBy
+	t.Base, t.Created, t.Branch, t.Legacy = s.base, s.created, s.branch, s.legacy
+	workers := append([]string(nil), s.workers...) // an agent can add itself but never remove anyone
+	for _, w := range t.Workers {
+		if !containsFold(workers, w) {
+			workers = append(workers, w)
+		}
+	}
+	t.Workers = workers
 	t.Review = s.review
 	if t.Evidence == nil {
 		t.Evidence = &task.Evidence{}
@@ -348,9 +899,15 @@ func restoreProtected(t *task.Task, s protected) {
 // their values before the attempt, the check (and the audit, when required) are run by aitk, the
 // regression evidence is recomputed, and the Definition of Done decides. It returns the status to
 // record, or why the task cannot leave in_progress.
-func (r *runner) decide(t *task.Task, snap protected, since string) (string, string) {
+func (r *runner) decide(t *task.Task, snap protected, since string) (target, why string) {
 	p := r.p
-	restoreProtected(t, snap)
+	attempt := t.Review // the agent's own passes: they count for the non-strict review loop only
+	defer func() {
+		if why != "" { // every way an attempt fails: findings the agent recorded are not forgotten
+			r.keepFindings(t, snap, attempt)
+		}
+	}()
+	r.restore(t, snap) // protected fields back, and the agent recorded as a worker: its own passes are never independent
 	cur := t.Criteria()
 	if len(cur) < len(snap.criteria) {
 		return "", "acceptance criteria were removed"
@@ -385,9 +942,35 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 			return "", "the security audit fails when aitk runs it"
 		}
 	}
+	// Only passes appended during this attempt are kept, attributed to the agent whatever the
+	// file says. The agent is a worker, so for strict work they can never stand in for another
+	// tool's independent review; they do count for the non-strict review loop, and they show
+	// the agent did its own pass, so a strict task left in_review does not hold the worktree.
+	t.Review = ownPasses(snap.review, attempt, r.agentName)
 	target, err := dod(p, t, prof, CloseInput{})
-	if err != nil {
+	if err == nil && target == task.Done && prof == "strict" {
+		// The independent review must stand on passes recorded outside this attempt: the agent's
+		// own clean pass after another tool's findings is not that tool confirming the fix.
+		kept := t.Review
+		t.Review = snap.review
+		independent := reviewDone(t)
+		t.Review = kept
+		if !independent {
+			target = task.InReview
+		}
+	}
+	if err != nil { // the deferred keepFindings decides which passes a failed attempt keeps
 		return "", "the Definition of Done does not hold: " + err.Error()
+	}
+	if target == task.InReview && prof != "strict" && !reviewSatisfied(p, t, prof) { // lite too, once it has a pass
+		if ps := t.Review.Passes; len(ps) > 0 && ps[len(ps)-1].Findings > 0 {
+			return "", fmt.Sprintf("review until clean is not finished (the last review pass found %d to fix)", ps[len(ps)-1].Findings)
+		}
+		return "", "review until clean is not finished (no clean review pass on the current code)"
+	}
+	if target == task.InReview && prof == "strict" && p.Config.ReviewLoop() && !reviewDone(t) && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0) {
+		// strict work waits for another tool only after the agent's own clean pass
+		return "", "your own review pass is missing or found something to fix (strict work needs it before another tool's pass)"
 	}
 	if IsBugTask(t) {
 		t.Evidence.RegressionTests = capList(regressionTests(p, t), 10)
@@ -402,18 +985,17 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 	if err := WithLock(p, func() error { return task.Save(p, t) }); err != nil {
 		return "", err.Error()
 	}
-	// Close writes the record of what was done; if the agent never ran it, aitk run writes one.
-	recorded := false
-	for _, h := range handoff.List(p) {
-		if strings.EqualFold(h.Task, t.ID) && h.At >= since {
-			recorded = true
-			break
-		}
+	// Close writes the record of what was done. When the agent did not close after this attempt
+	// started and after its last pass (it closed before reviewing, or switched instead), aitk run
+	// records the close itself: the rule closedSince uses, so the verified task frees the worktree.
+	from := since
+	if t.Review != nil && len(t.Review.Passes) > 0 && t.Review.Passes[len(t.Review.Passes)-1].At > from {
+		from = t.Review.Passes[len(t.Review.Passes)-1].At
 	}
-	if !recorded {
+	if !closedSince(p, t.ID, from) {
 		outcome := map[string]string{task.Done: "done", task.InReview: "progress"}[target]
 		handoff.Write(p, handoff.Meta{Task: t.ID, At: task.Now(), By: r.agentName, Outcome: outcome, TaskStatus: target, Check: t.Evidence.Check},
-			"## "+t.Title+"\n\nVerified by aitk run (check, Definition of Done). The agent did not record a summary with aitk close.\n")
+			"## "+t.Title+"\n\nVerified by aitk run (check, Definition of Done). The agent did not close the task after its last change or review pass.\n")
 	}
 	return target, ""
 }
@@ -457,7 +1039,7 @@ func setEnv(k, v string) func() {
 
 // worktreeChanges lists changed and untracked paths.
 func worktreeChanges(p *project.Project) []string {
-	out, _ := gitx.RunRaw(p.Root, "status", "--porcelain", "-z", "--untracked-files=all")
+	out, _ := gitx.RunRaw(p.Root, append(safeGitFlags(), "status", "--porcelain", "-z", "--untracked-files=all")...)
 	var paths []string
 	toks := strings.Split(string(out), "\x00")
 	for i := 0; i < len(toks); i++ {
@@ -487,6 +1069,18 @@ func firstN(xs []string, n int) []string {
 // record is committed, so a broken attempt never lands in the history or in the next task's commit.
 func (r *runner) commitWork(rt *RunTask) error {
 	p := r.p
+	if again := r.guard.restore(p); len(again) > 0 { // anything still running could have changed them
+		rt.Note = strings.TrimPrefix(rt.Note+"; restored before the commit: "+strings.Join(again, ", "), "; ")
+	}
+	if r.guard != nil {
+		r.guard.checkGitDirs(p)
+	}
+	if r.guard != nil && len(r.guard.failed) > 0 {
+		return fmt.Errorf("could not restore %s after the attempt; nothing committed", strings.Join(dedupe(r.guard.failed), ", "))
+	}
+	if st := sequencerState(p); st != "" {
+		return fmt.Errorf("git has an operation in progress (%s): finish or abort it (git status); nothing committed", st)
+	}
 	if len(worktreeChanges(p)) == 0 {
 		return nil
 	}
@@ -496,7 +1090,15 @@ func (r *runner) commitWork(rt *RunTask) error {
 	}
 	finished := rt.Status == task.Done || rt.Status == task.InReview
 	if finished {
+		// The index is a file the agent can write (skip-worktree, assume-unchanged, staged
+		// content): rebuild it from HEAD so only the working tree aitk restored is committed.
+		if _, err := literalGit(p, "read-tree", "HEAD"); err != nil {
+			return err
+		}
 		if _, err := literalGit(p, "add", "-A"); err != nil {
+			return err
+		}
+		if err := r.guard.verifyStaged(p); err != nil {
 			return err
 		}
 		if err := r.commit(rt, commitSubject(t)); err != nil {
@@ -506,10 +1108,13 @@ func (r *runner) commitWork(rt *RunTask) error {
 		// Commit aitk's handover record alone, then set everything else aside. Unstaging first
 		// means a rename or a staged change by the agent cannot ride along in the commit; stashing
 		// without pathspecs keeps renames and odd file names intact.
-		if _, err := literalGit(p, "reset", "-q"); err != nil {
+		if _, err := literalGit(p, "read-tree", "HEAD"); err != nil { // also drops index flags
 			return err
 		}
 		if _, err := literalGit(p, "add", "-A", "--", p.GitRel(project.DocsAI), "ai-state.json"); err != nil {
+			return err
+		}
+		if err := r.guard.verifyStaged(p); err != nil {
 			return err
 		}
 		if out, _ := literalGit(p, "diff", "--cached", "--name-only"); strings.TrimSpace(out) != "" {
@@ -520,7 +1125,7 @@ func (r *runner) commitWork(rt *RunTask) error {
 		if len(worktreeChanges(p)) > 0 {
 			msg := "aitk run: unfinished work on " + t.ID
 			// No pathspecs here, and not literalGit: stash uses pathspec magic internally.
-			if _, err := gitx.RunRaw(p.Root, "stash", "push", "--include-untracked", "-m", msg); err != nil {
+			if _, err := gitx.RunRaw(p.Root, append(safeGitFlags(), "stash", "push", "--include-untracked", "-m", msg)...); err != nil {
 				return fmt.Errorf("could not set the unfinished work aside: %w", err)
 			}
 			rt.Stash = msg
@@ -532,8 +1137,109 @@ func (r *runner) commitWork(rt *RunTask) error {
 	return nil
 }
 
+// verifyStaged checks that git staged the guarded files exactly as aitk restored them: a
+// .gitattributes rule (an encoding, a filter from config git reads) must not change what lands
+// in the commit. Line endings are compared normalized, so autocrlf checkouts still work.
+func (g *attemptGuard) verifyStaged(p *project.Project) error {
+	if g == nil {
+		return nil
+	}
+	out, err := literalGit(p, "diff", "--cached", "--name-only", "-z")
+	if err != nil {
+		return err
+	}
+	// Also every staged file of aitk's own state, changed or not: a blob the agent committed
+	// itself matches HEAD, so it is not in the diff, yet a filter can make the file on disk
+	// differ from it.
+	all, err := literalGit(p, "ls-files", "-z", "--", p.GitRel(project.DocsAI), project.StateFile) // the path git tracks, also behind a docs symlink
+	if err != nil {
+		return err
+	}
+	out += "\x00" + all
+	norm := func(b []byte) []byte { return bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")) }
+	var rels []string
+	wants := map[string][]byte{}
+	for _, rel := range strings.Split(out, "\x00") {
+		if _, seen := wants[rel]; seen || rel == "" {
+			continue
+		}
+		if strings.Contains(rel, "\n") && (strings.HasPrefix(p.AitkRel(rel), project.DocsAI+"/") || g.files[p.Path(rel)] != nil) {
+			return fmt.Errorf("a file name with a newline in aitk's state (%q); nothing committed", rel)
+		}
+		want, guarded := g.files[p.Path(rel)]
+		if !guarded && (strings.HasPrefix(p.AitkRel(rel), project.DocsAI+"/") || rel == project.StateFile) {
+			// aitk's own files the guard does not snapshot (the agent's task, new tasks,
+			// handoffs): what git stores must still be exactly what aitk read and verified.
+			b, err := os.ReadFile(p.Path(rel))
+			if err != nil {
+				continue
+			}
+			want, guarded = b, true
+		}
+		if guarded {
+			rels = append(rels, rel)
+			wants[rel] = want
+		}
+	}
+	if len(rels) == 0 {
+		return nil
+	}
+	// One git process for every blob: "<sha> blob <size>\n<content>\n", or "<name> missing\n"
+	// for a path no longer in the index (the restore put the file back; git add saw it).
+	c := exec.Command("git", append(safeGitFlags(), "cat-file", "--batch")...)
+	c.Dir = p.Root
+	var in bytes.Buffer
+	for _, rel := range rels {
+		in.WriteString(":" + rel + "\n")
+	}
+	c.Stdin = &in
+	got, err := c.Output()
+	if err != nil {
+		return fmt.Errorf("could not read the staged files: %w", err)
+	}
+	for _, rel := range rels {
+		nl := bytes.IndexByte(got, '\n')
+		if nl < 0 {
+			return fmt.Errorf("could not read the staged files: short output")
+		}
+		header := strings.Fields(string(got[:nl]))
+		got = got[nl+1:]
+		if len(header) != 3 || header[1] != "blob" {
+			continue // missing from the index
+		}
+		size, err := strconv.Atoi(header[2])
+		if err != nil || size+1 > len(got) {
+			return fmt.Errorf("could not read the staged files: bad size for %s", rel)
+		}
+		blob := got[:size]
+		got = got[size+1:]
+		if !bytes.Equal(norm(blob), norm(wants[rel])) {
+			return fmt.Errorf("git would commit %s differently from the file (a .gitattributes rule changed it); nothing committed", rel)
+		}
+	}
+	return nil
+}
+
+// sequencerState names git state that would change what a plain git commit records (the author
+// from CHERRY_PICK_HEAD, an extra parent from MERGE_HEAD) or that means an operation is
+// unfinished. Empty means none.
+func sequencerState(p *project.Project) string {
+	for _, f := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer", "rebase-merge", "rebase-apply"} {
+		if _, err := os.Lstat(filepath.Join(p.GitDir, f)); err == nil {
+			return f
+		}
+	}
+	return ""
+}
+
 func (r *runner) commit(rt *RunTask, subject string) error {
-	if out, err := literalGit(r.p, "commit", "-q", "-m", subject, "-m", "AI-Task: "+rt.ID+"\nAI-Tool: "+r.agentName); err != nil {
+	// The repository's hooks are files the agent could have written: commit without them.
+	noHooks, err := os.MkdirTemp("", "aitk-nohooks-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(noHooks)
+	if out, err := literalGit(r.p, "-c", "core.hooksPath="+noHooks, "commit", "--no-verify", "-q", "-m", subject, "-m", "AI-Task: "+rt.ID+"\nAI-Tool: "+r.agentName); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(checkSummary(out)))
 	}
 	out, err := gitx.RunRaw(r.p.Root, "rev-parse", "--short", "HEAD")
@@ -541,9 +1247,15 @@ func (r *runner) commit(rt *RunTask, subject string) error {
 	return err
 }
 
+// safeGitFlags switch off git settings that run programs (an agent can write .git/config):
+// the fsmonitor hook and repository hooks. The guard also restores .git/config after attempts.
+func safeGitFlags() []string {
+	return []string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}
+}
+
 // literalGit runs git with pathspec magic off, so a file named ":x" is just a file.
 func literalGit(p *project.Project, args ...string) (string, error) {
-	c := exec.Command("git", args...)
+	c := exec.Command("git", append(safeGitFlags(), args...)...)
 	c.Dir = p.Root
 	c.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
 	out, err := c.CombinedOutput()
@@ -592,7 +1304,7 @@ func runPrompt(p *project.Project, t *task.Task, attempt, max int) string {
 Steps:
 1. Read the brief below and the task file. Keep the change focused on this task.
 2. Implement it, then run ` + "`aitk check`" + ` until it passes. Mark each satisfied criterion: ` + "`aitk task update " + t.ID + " --ac-done N`" + `.
-3. If the task is tagged bug, add a regression test that fails without the fix. Before closing, run ` + "`aitk impact`" + ` and make sure the code that depends on what you changed is covered by the check.
+3. If the task is tagged bug, add a regression test that fails without the fix. Before closing, run ` + "`aitk impact`" + ` and make sure the code that depends on what you changed is covered by the check.` + reviewStep(p, t) + `
 4. Finish with ` + "`aitk close --summary \"<what changed>\" --knowledge \"<lasting finding>|none\"`" + `. If close refuses, do what its fix line says and close again.
 5. If you cannot finish (missing access, unclear requirement, the check fails twice for the same reason), run ` + "`aitk close --status blocked --summary \"<why>\" --knowledge none`" + ` and stop.
 Never mark work done any other way, never edit aitk's evidence by hand, and never accept UAT.
@@ -697,4 +1409,27 @@ func firstPositive(xs ...int) int {
 		}
 	}
 	return 0
+}
+
+// reviewStep is the prompt line for the agent's own review loop, only where it applies: a
+// task under [quality] review standard, or strict work (own clean pass before another tool's).
+func reviewStep(p *project.Project, t *task.Task) string {
+	prof := t.Profile // what close will use: pinned, unless the diff makes it strict
+	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
+		prof = computed
+	}
+	if prof == "lite" && !t.ProfilePinned {
+		prof = "standard" // the diff may still grow past lite
+	}
+	strictHint := ""
+	if len(p.Config.Risk.SensitivePaths) > 0 && !t.ProfilePinned && prof != "strict" && p.Config.ReviewLoop() {
+		strictHint = " If your change touches a sensitive path (aitk.toml [risk] sensitive_paths), the task becomes strict: your clean pass is still needed, and another tool's independent pass follows."
+	}
+	switch {
+	case prof == "strict" && p.Config.ReviewLoop():
+		return "\n   Then review your own change: record `aitk review pass " + t.ID + " --findings N`, fix what you found, run the check again, and repeat until a pass finds 0. Strict work also needs an independent pass by another tool after yours; your own passes never count as that one."
+	case prof != "strict" && p.Config.ReviewRequired(prof):
+		return "\n   Then review your own change: record `aitk review pass " + t.ID + " --findings N`, fix what you found, run the check again, and repeat until a pass finds 0." + strictHint
+	}
+	return ""
 }
