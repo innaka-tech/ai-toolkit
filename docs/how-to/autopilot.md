@@ -17,7 +17,7 @@ aitk run --agent claude-code --commit --max-tasks 5
 | The agent closed without its own clean review pass (`[quality] review = "standard"`: standard tasks, strict tasks before another tool's pass, and lite tasks whose last pass found something) | reopened (recorded findings stay, see below); the next attempt's prompt says why | same task, next attempt |
 | The agent hands over with `aitk close --status blocked` | `blocked`, with the agent's handoff | next task |
 | Not finished after `--max-attempts` runs (default 2), or the check keeps failing | `blocked`, with a handoff written by aitk (with `--commit`: its unfinished changes go to `git stash`, named after the task) | next task |
-| The agent cannot start (exits at once without changing anything: not installed, bad flags, not logged in) | unchanged | the run stops |
+| The agent cannot start (exits at once without changing anything: not installed, bad flags, not logged in) | unchanged (anything it wrote into its task file goes back, by the failed-attempt rule) | the run stops |
 
 The run stops after two unfinished tasks in a row (something is wrong that another attempt will not fix), when no task is ready, or after `--max-tasks` (default 10). A timeout (`--timeout`, minutes) ends the agent and every process it started. Only one run works in a worktree at a time; agents started by `aitk run` cannot start another run or accept UAT.
 

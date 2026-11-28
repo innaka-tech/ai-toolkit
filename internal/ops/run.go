@@ -254,6 +254,12 @@ func (r *runner) one(c Candidate) RunTask {
 			if ar.tail != "" {
 				rt.Note += ": " + lastLines(ar.tail, 3)
 			}
+			// The same rule as every failed attempt: the task file is not in the fingerprint, so
+			// whatever the agent wrote there (passes, a lower profile) goes back.
+			attempt := t.Review
+			restoreProtected(t, snap)
+			r.keepFindings(t, snap, attempt)
+			WithLock(p, func() error { return task.Save(p, t) })
 			return rt
 		}
 		switch t.Status {

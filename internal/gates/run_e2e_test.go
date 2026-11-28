@@ -941,3 +941,16 @@ func TestRunFindingsSurviveEveryFailedAttempt(t *testing.T) {
 		}
 	}
 }
+
+// An agent that writes passes and a lower profile, then exits as if it never started, keeps
+// none of it: the "failed to start" path follows the same rule as every failed attempt.
+func TestRunFailedStartKeepsNoForgedPasses(t *testing.T) {
+	dir := runProject(t)
+	r := aitkRun(t, dir, "--cmd", "aitk review pass --findings 0; aitk review pass --findings 0; aitk task update --status in_progress; exit 1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || !strings.Contains(r.Data.Stopped, "failed to start") {
+		t.Fatalf("setup: the run must stop as a failed start: %+v", r)
+	}
+	if ps := passesOf(t, dir, r.Data.Tasks[0].ID); len(ps) != 0 {
+		t.Fatalf("passes written by an agent that \"failed to start\" must not stay: %+v", ps)
+	}
+}
