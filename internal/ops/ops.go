@@ -888,12 +888,12 @@ func waitingOnOthers(p *project.Project, t *task.Task) bool {
 	return err == nil && target == task.InReview
 }
 
-// closedSince reports whether the agent closed the task at or after at: a handoff from aitk
-// close (or aitk run) records the status it closed to. A review pass alone, aitk switch, or a
-// person's uat accept/reject never counts as finishing the agent's part.
+// closedSince reports whether the task was closed at or after at: only aitk close and aitk run
+// record the status they closed to (task_status), whoever ran them, a person included. A review
+// pass alone, aitk switch, or a uat accept/reject (no task_status) never counts as a close.
 func closedSince(p *project.Project, id, at string) bool {
 	for _, h := range handoff.List(p) {
-		if strings.EqualFold(h.Task, id) && h.At >= at && h.TaskStatus != "" && h.By != "human" && h.Outcome != "switched" {
+		if strings.EqualFold(h.Task, id) && h.At >= at && h.TaskStatus != "" && h.Outcome != "switched" {
 			return true
 		}
 	}

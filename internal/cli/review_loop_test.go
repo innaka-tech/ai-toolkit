@@ -401,3 +401,23 @@ func TestLiteDiffWithFindingsIsNotDone(t *testing.T) {
 	}
 	mustOK(t, aitk(t, dir, "task", "start", b))
 }
+
+// A person's own aitk close counts as closing: the next task starts while this one waits for
+// acceptance. (A person's uat accept/reject is not a close; see TestWaitingOnOthersNeedsAClose.)
+func TestPersonsCloseFreesTheWorktree(t *testing.T) {
+	dir := repo(t)
+	asPerson(t) // after repo(), which sets claude-code
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"standard\"\n")
+	a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	standardChange(t, dir, "h")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("setup: waits for UAT, got %s", st)
+	}
+	mustOK(t, aitk(t, dir, "task", "start", b))
+}

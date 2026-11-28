@@ -270,7 +270,7 @@ func UATAccept(p *project.Project, id, by, note string) (*UATDecision, error) {
 		if note != "" {
 			body += " " + note
 		}
-		_, err = handoff.Write(p, handoff.Meta{Task: t.ID, At: now, By: "human", Outcome: map[bool]string{true: "done", false: "progress"}[res.Status == task.Done], TaskStatus: t.Status}, body+"\n")
+		_, err = handoff.Write(p, handoff.Meta{Task: t.ID, At: now, By: "human", Outcome: map[bool]string{true: "done", false: "progress"}[res.Status == task.Done]}, body+"\n") // no task_status: not a close (closedSince)
 		return err
 	})
 	return res, err
@@ -313,7 +313,7 @@ func UATReject(p *project.Project, id, by, reason string) (*UATDecision, error) 
 			return err
 		}
 		res = &UATDecision{Task: t.ID, Status: t.Status, UAT: "rejected"}
-		_, err = handoff.Write(p, handoff.Meta{Task: t.ID, At: now, By: "human", Outcome: "progress", TaskStatus: t.Status,
+		_, err = handoff.Write(p, handoff.Meta{Task: t.ID, At: now, By: "human", Outcome: "progress", // no task_status: not a close (closedSince)
 			Next: []string{"Address UAT feedback: " + reason}}, "## "+t.Title+"\n\nUAT rejected by "+who+".\n")
 		return err
 	})
