@@ -147,7 +147,7 @@ func LoadAll(p *project.Project) []Entry {
 }
 
 func fileDate(p *project.Project, rel string) string {
-	if d := gitx.LastCommitDate(p.Root, rel); len(d) >= 10 {
+	if d := gitx.LastCommitDate(p.Root, p.GitPath(rel)); len(d) >= 10 {
 		return d[:10]
 	}
 	if info, err := os.Stat(p.Path(rel)); err == nil {

@@ -666,7 +666,7 @@ func matchTS(text, key string) string {
 }
 
 func commitTS(p *project.Project, rel string) string {
-	if d := gitx.LastCommitDate(p.Root, rel); d != "" {
+	if d := gitx.LastCommitDate(p.Root, p.GitPath(rel)); d != "" {
 		if t, err := time.Parse(time.RFC3339, d); err == nil {
 			return t.UTC().Format("2006-01-02T15:04:05Z")
 		}

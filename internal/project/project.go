@@ -306,6 +306,22 @@ func (p *Project) gitRel(rel string) string {
 	return rel
 }
 
+// GitPath is the inverse of AitkRel: aitk's name for a file (docs/ai/tasks/T-1.md) as the path
+// git tracks it under, for git commands that take a path (git show HEAD:<path>, git log).
+func (p *Project) GitPath(rel string) string {
+	for _, dir := range []string{DocsAI, ADRDir} {
+		if g := p.GitRel(dir); g != dir {
+			if rel == dir {
+				return g
+			}
+			if rest, ok := strings.CutPrefix(rel, dir+"/"); ok {
+				return g + "/" + rest
+			}
+		}
+	}
+	return rel
+}
+
 // AitkRel maps a path as git reports it back to aitk's own name for it: with docs ->
 // documentation, documentation/ai/tasks/T-1.md is docs/ai/tasks/T-1.md. Other paths are
 // returned unchanged.
