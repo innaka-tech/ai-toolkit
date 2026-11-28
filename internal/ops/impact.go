@@ -58,7 +58,7 @@ func Impact(p *project.Project) *ImpactResult {
 			continue
 		}
 		ext := strings.ToLower(path.Ext(c.Path))
-		if !codeExt[ext] || strings.HasPrefix(c.Path, "docs/") {
+		if !codeExt[ext] || strings.HasPrefix(c.Path, "docs/") || strings.HasPrefix(c.Path, p.GitRel("docs")+"/") { // docs, also behind a symlink
 			continue
 		}
 		s := src{path: c.Path, ext: ext, dir: path.Dir(c.Path), stem: strings.TrimSuffix(path.Base(c.Path), path.Ext(c.Path)), lines: c.Lines}

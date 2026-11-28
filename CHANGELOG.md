@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Fixed
-- A repository whose `docs/` is a symlink to another directory inside it (`docs -> documentation`) works again: `aitk close` no longer fails with `E_DOD_CHECK_STALE` right after a passing check, aitk's own files there no longer count as code changes (which raised the risk profile), `aitk run --commit` commits the handover record instead of failing on a pathspec "beyond a symbolic link", the pre-commit and `aitk ci` schema checks still validate task and handoff files there, the secret scan still skips `_legacy`, the `.gitattributes` merge rules name the tracked paths, and `aitk doctor --fix` restores broken task files from git and resolves merge conflicts there (also when `docs/ai` itself is the link).
+- A repository whose `docs/` is a symlink to another directory inside it (`docs -> documentation`) works again: `aitk close` no longer fails with `E_DOD_CHECK_STALE` right after a passing check, aitk's own files there no longer count as code changes (which raised the risk profile), `aitk run --commit` commits the handover record instead of failing on a pathspec "beyond a symbolic link", the pre-commit and `aitk ci` schema checks still validate task and handoff files there, the secret scan still skips `_legacy`, the `.gitattributes` merge rules name the tracked paths, and `aitk doctor --fix` restores broken task files from git and resolves merge conflicts there (also when `docs/ai` itself is the link). `aitk impact` treats code under the docs target as docs, `aitk import bmad` skips aitk's own folder there, and `aitk release --tag` stages a changelog configured under `docs/`.
 
 ## [2.10.0] - 2026-11-27
 

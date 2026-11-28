@@ -93,3 +93,36 @@ func TestSymlinkedClaudeMdDoesNotMakeTheCheckStale(t *testing.T) {
 	run(t, dir, "ln", "-s", "AGENTS.md", "CLAUDE.md")
 	mustOK(t, aitk(t, dir, "close", "--summary", "small", "--knowledge", "none"))
 }
+
+// The rest of aitk behind a docs symlink: impact ignores docs code samples, BMAD import does
+// not read aitk's own folder, and release --tag stages a changelog configured under docs/.
+func TestDocsSymlinkImpactImportAndRelease(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[release]\nchangelog = \"docs/CHANGELOG.md\"\n")
+	write(t, dir, "ok.txt", "1")
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "chore: init")
+	run(t, dir, "sh", "-c", "mv docs documentation && ln -s documentation docs && git add -A && git commit -qm 'chore: move docs' && git tag v0.1.0")
+
+	write(t, dir, "docs/conf.py", "x = 1\n")
+	if files, _ := data(aitk(t, dir, "impact"))["files"].([]any); len(files) != 0 {
+		t.Fatalf("a code file under docs is not source, also behind the link: %v", files)
+	}
+	run(t, dir, "rm", "docs/conf.py")
+
+	write(t, dir, "docs/ai/notes/s.md", "---\ntype: story\ntitle: Stray story\n---\n")
+	if r := aitk(t, dir, "import", "bmad", "--dry-run"); data(r)["imported"] != nil {
+		t.Fatalf("BMAD import must not read aitk's own folder behind the link: %v", data(r))
+	}
+	run(t, dir, "rm", "-r", "docs/ai/notes")
+
+	commit(t, dir, "a.txt", "feat: a")
+	mustOK(t, aitk(t, dir, "release", "--tag"))
+	if out := run(t, dir, "git", "tag", "--list", "v0.2.0"); !strings.Contains(out, "v0.2.0") {
+		t.Fatal("release --tag must commit and tag with the changelog under the docs symlink")
+	}
+}

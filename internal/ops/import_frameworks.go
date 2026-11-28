@@ -162,7 +162,7 @@ func ImportBMAD(p *project.Project, paths []string, dry bool) (*ImportResult, er
 				case ".git", "node_modules", "vendor", ".aitk":
 					return filepath.SkipDir
 				}
-				if rel := repoRel(p, path); filepath.ToSlash(rel) == project.DocsAI {
+				if rel := filepath.ToSlash(repoRel(p, path)); rel == project.DocsAI || rel == p.GitRel(project.DocsAI) { // also behind a docs symlink
 					return filepath.SkipDir
 				}
 				return nil
