@@ -108,7 +108,7 @@ func New(root, version string, exec Exec) *mcp.Server {
 			a = opt(a, "--status", in.Status)
 			return a
 		})
-	add(s, h, "review_pass", "Record one review pass on a task: strict tasks need two (the last with 0 findings, one by another tool); with [quality] review = standard, standard tasks need a last pass with 0 findings on the current code. Reviewers give id instead of starting the task.",
+	add(s, h, "review_pass", "Record one review pass on a task: strict tasks need two (the last with 0 findings, one clean (0 findings) by another tool); with [quality] review = standard, standard tasks need a last pass with 0 findings on the current code. Reviewers give id instead of starting the task.",
 		func(in reviewIn) []string {
 			a := []string{"review", "pass", "--findings", strconv.Itoa(in.Findings)}
 			if in.ID != "" {

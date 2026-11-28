@@ -135,7 +135,8 @@ func reviewRules(c project.Config, t *task.Task, prof string) []string {
 	if t == nil {
 		return nil // no task: nothing to review or finish yet (a quick lite close is exempt)
 	}
-	if c.ReviewRequired(prof) && prof != "strict" {
+	started := t.Review != nil && len(t.Review.Passes) > 0 && t.Review.Passes[len(t.Review.Passes)-1].Findings > 0
+	if prof != "strict" && (c.ReviewRequired(prof) || (c.ReviewLoop() && started)) { // lite too once a pass found something
 		r = append(r, "Review until clean: review your change, record aitk review pass --findings N, fix what it found, and repeat until a pass finds 0. Only then close.")
 	}
 	if c.ReviewLoop() && prof == "strict" {

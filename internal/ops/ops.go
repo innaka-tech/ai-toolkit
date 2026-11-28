@@ -183,7 +183,7 @@ func Init(dir, name, check string, dryRun bool) (*InitResult, error) {
 		cfg += "\n# [check]\n# cmd = \"make test\"   # required for the Definition of Done to verify work\n"
 	}
 	cfg += "\n[risk]\n# Changes matching these globs make a task \"strict\" (risk analysis + independent review).\nsensitive_paths = []\n"
-	cfg += "\n[quality]\n# Tasks of these profiles need review passes until one finds 0 before they are done:\n# off | strict | standard (strict always needs two passes, one by a different tool).\nreview = \"standard\"\n"
+	cfg += "\n[quality]\n# Tasks of these profiles need review passes until one finds 0 before they are done:\n# off | strict | standard (strict always needs two passes, one clean (0 findings) by a different tool).\nreview = \"standard\"\n"
 	cfg += "\n# How agents work and talk here, applied in every aitk brief (docs/how-to/assistant.md).\n# [assistant]\n# character = \"full\"    # lite | full | ultra | off\n# talk = \"normal\"       # normal | lite | caveman\n# auto_persona = true   # the brief picks the personas the task needs\n"
 	state := map[string]any{"schema_version": 2, "project": map[string]any{"name": project.Slug(name, 62)}}
 	stateJSON, _ := json.MarshalIndent(state, "", "  ")
@@ -699,7 +699,7 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			case prof == "strict" && p.Config.ReviewLoop() && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0):
 				res.Notes = append(res.Notes, "strict task: first review your own change until a pass finds 0 (aitk review pass "+t.ID+" --findings N) and close again; then another tool records the independent pass")
 			case prof == "strict" && !reviewDone(t):
-				res.Notes = append(res.Notes, "strict task needs ≥2 review passes (last with 0 findings, one by a tool that did not work on it) before it can be done: aitk review pass --findings N")
+				res.Notes = append(res.Notes, "strict task needs ≥2 review passes (last with 0 findings, one clean (0 findings) by a tool that did not work on it) before it can be done: aitk review pass --findings N")
 			case !reviewSatisfied(p, t, prof):
 				res.Notes = append(res.Notes, "review until clean: review the change, record aitk review pass "+t.ID+" --findings N, fix what it found, and repeat until a pass finds 0; then run aitk close again")
 			default:
@@ -806,7 +806,10 @@ func reviewSatisfied(p *project.Project, t *task.Task, prof string) bool {
 		return reviewDone(t)
 	}
 	if !p.Config.ReviewRequired(prof) {
-		return true
+		// A lite close stays quick, but once the loop has started its findings must reach 0:
+		// a small diff is no reason to leave a review's findings unfixed.
+		return !p.Config.ReviewLoop() || t.Review == nil || len(t.Review.Passes) == 0 ||
+			t.Review.Passes[len(t.Review.Passes)-1].Findings == 0
 	}
 	if t.Review == nil || len(t.Review.Passes) == 0 {
 		return false
@@ -859,10 +862,11 @@ func SwitchAllowed(p *project.Project, next string) error {
 		"task %s is still %s; one task at a time", t.ID, t.Status)
 }
 
-// waitingOnOthers reports whether an in_review task needs nothing more from its own agent: the
-// Definition of Done holds except for another tool's review pass or a person's acceptance. A
-// task with no review pass yet, a last pass with findings, an unmet review-until-clean rule, or
-// an open close requirement still needs its agent.
+// waitingOnOthers reports whether an in_review task needs nothing more from its own agent: it
+// was closed after its last pass (by aitk close or aitk run, anyone), that close left it
+// waiting only for another tool's pass or a person's acceptance, and nothing the agent did
+// since reopens its part. A task with no review pass yet (where the loop applies), a last pass
+// with findings, no close after it, or an unfinished review loop still needs its agent.
 func waitingOnOthers(p *project.Project, t *task.Task) bool {
 	prof := t.Profile
 	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
@@ -876,27 +880,48 @@ func waitingOnOthers(p *project.Project, t *task.Task) bool {
 		}
 		lastPass = last.At
 	}
-	if p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) { // opted in: own clean pass, strict work too; never lite
-		if lastPass == "" || (prof != "strict" && !reviewSatisfied(p, t, prof)) {
+	h := closingSince(p, t.ID, lastPass)
+	if h == nil || h.TaskStatus != task.InReview {
+		return false // never closed (to in_review) after its last pass: its agent still has to run aitk close
+	}
+	loop := p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) // opted in: own clean pass, strict work too; never lite
+	if loop && lastPass == "" {
+		return false
+	}
+	if len(codeChanges(p)) > 0 {
+		// Uncommitted work: the agent kept editing after its close. Judge the code as it is now.
+		if loop && prof != "strict" && !reviewSatisfied(p, t, prof) {
 			return false
 		}
+		target, err := dod(p, t, prof, CloseInput{})
+		return err == nil && target == task.InReview
 	}
-	if !closedSince(p, t.ID, lastPass) {
-		return false // never closed after its last pass: its agent still has to run aitk close
+	// A clean tree: the close applied the Definition of Done to the code as it was then, and
+	// commits that arrive later (a pull, a merge) must not take the worktree back. The close must
+	// not have left the agent's own loop unfinished: its clean pass reviewed the code the close
+	// verified (known when a check ran). Acceptance re-checks everything on the code as it is.
+	if loop && prof != "strict" && h.Check != nil && h.Check.Tree != "" && t.Review.Passes[len(t.Review.Passes)-1].Tree != h.Check.Tree {
+		return false
 	}
-	target, err := dod(p, t, prof, CloseInput{})
-	return err == nil && target == task.InReview
+	return true
 }
 
-// closedSince reports whether a handoff for the task was written at or after at (aitk close
-// writes one), so a review pass alone never counts as finishing the agent's part.
+// closedSince reports whether the task was closed at or after at: only aitk close and aitk run
+// record the status they closed to (task_status), whoever ran them, a person included. A review
+// pass alone, aitk switch, or a uat accept/reject (no task_status) never counts as a close.
 func closedSince(p *project.Project, id, at string) bool {
+	return closingSince(p, id, at) != nil
+}
+
+// closingSince returns the latest such close, or nil.
+func closingSince(p *project.Project, id, at string) *handoff.Handoff {
+	var latest *handoff.Handoff
 	for _, h := range handoff.List(p) {
-		if strings.EqualFold(h.Task, id) && h.At >= at && h.Outcome != "" {
-			return true
+		if strings.EqualFold(h.Task, id) && h.At >= at && h.TaskStatus != "" && h.Outcome != "switched" && (latest == nil || h.At >= latest.At) {
+			latest = h
 		}
 	}
-	return false
+	return latest
 }
 
 // reviewDone: ≥2 passes, the last with 0 findings, and at least one clean pass by a tool that

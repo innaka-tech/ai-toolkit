@@ -786,9 +786,15 @@ touch .attempted
 		if b, _ := os.ReadFile(filepath.Join(dir, "reason.txt")); strings.TrimSpace(string(b)) != "1" {
 			t.Fatalf("review %q: the second attempt's prompt must say why the first failed (got %q)", review, b)
 		}
-		if review != "" {
-			if ps := passesOf(t, dir, r.Data.Tasks[0].ID); len(ps) != 0 {
-				t.Fatalf("failed strict attempts must keep none of the agent's passes: %+v", ps)
+		if review != "" { // findings survive, under the agent's name only (never independent)
+			ps := passesOf(t, dir, r.Data.Tasks[0].ID)
+			if len(ps) == 0 || ps[len(ps)-1].Findings == 0 {
+				t.Fatalf("a failed strict attempt's findings must be kept: %+v", ps)
+			}
+			for _, p := range ps {
+				if p.By != "custom" {
+					t.Fatalf("kept passes are the agent's own: %+v", ps)
+				}
 			}
 		}
 	}
@@ -1602,5 +1608,92 @@ echo 'docs/ai/notes.md working-tree-encoding=UTF-7' > .gitattributes
 	r = aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
 	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Commit != "" || !strings.Contains(r.Data.Tasks[0].Note, "differently") {
 		t.Fatalf("aitk must not commit when a committed state file differs from the disk: %+v (HEAD was %s)", r, before)
+	}
+}
+
+// A lite-sized task whose last pass found something is not finished inside aitk run either.
+func TestRunLiteTaskWithFindingsIsReopened(t *testing.T) {
+	dir := newRunProject(t, "")
+	must(t, dir, bin, "task", "new", "Small", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent := "touch ok.txt\necho x > a.txt\naitk task update --ac-done 1\naitk review pass --findings 2\naitk check\naitk close --summary done --knowledge none\n"
+	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "in_review" || r.Data.Tasks[0].Status == "done" ||
+		!strings.Contains(r.Data.Tasks[0].Note, "review until clean") {
+		t.Fatalf("a lite task with findings must be reopened, not left waiting: %+v", r)
+	}
+}
+
+// Findings a lite task's agent recorded survive the reopen: the next attempt cannot close it as
+// done without a clean pass.
+func TestRunLiteFindingsSurviveTheRetry(t *testing.T) {
+	dir := newRunProject(t, "")
+	must(t, dir, bin, "task", "new", "Small", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	// Attempt 1 records findings; attempt 2 only closes again.
+	agent := "if [ ! -f a.txt ]; then touch ok.txt; echo x > a.txt; aitk task update --ac-done 1; aitk review pass --findings 2; fi\naitk check\naitk close --summary done --knowledge none\n"
+	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "2", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "done" || !strings.Contains(r.Data.Tasks[0].Note, "found 2 to fix") {
+		t.Fatalf("a lite task's findings must survive the retry: %+v", r)
+	}
+}
+
+// Findings the agent recorded survive every way an attempt can fail, not only an unfinished
+// review loop: a failing check, open criteria, a blocked hand-over, or no close at all.
+func TestRunFindingsSurviveEveryFailedAttempt(t *testing.T) {
+	cases := map[string]string{
+		"check fails":   "echo x > a.txt\naitk task update --ac-done 1\naitk review pass --findings 2\n",
+		"criteria open": "touch ok.txt\necho x > a.txt\naitk review pass --findings 2\naitk check\naitk close --summary s --knowledge none || true\n",
+		"blocked":       "touch ok.txt\necho x > a.txt\naitk review pass --findings 2\naitk close --status blocked --summary s --knowledge none\n",
+		"not closed":    "touch ok.txt\necho x > a.txt\naitk review pass --findings 2\naitk task update --status in_progress\n",
+	}
+	for name, agent := range cases {
+		dir := newRunProject(t, "")
+		id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Small", "--ac", "works")))[1]
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+		ps := passesOf(t, dir, id)
+		if len(ps) == 0 || ps[len(ps)-1].Findings != 2 || ps[len(ps)-1].By != "custom" {
+			t.Fatalf("%s: the agent's findings must survive the failed attempt: %+v", name, ps)
+		}
+	}
+}
+
+// An agent that writes passes and a lower profile, then exits as if it never started, keeps
+// none of it: the "failed to start" path follows the same rule as every failed attempt.
+func TestRunFailedStartKeepsNoForgedPasses(t *testing.T) {
+	dir := runProject(t)
+	r := aitkRun(t, dir, "--cmd", "aitk review pass --findings 0; aitk review pass --findings 0; aitk task update --status in_progress; exit 1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || !strings.Contains(r.Data.Stopped, "failed to start") {
+		t.Fatalf("setup: the run must stop as a failed start: %+v", r)
+	}
+	if ps := passesOf(t, dir, r.Data.Tasks[0].ID); len(ps) != 0 {
+		t.Fatalf("passes written by an agent that \"failed to start\" must not stay: %+v", ps)
+	}
+}
+
+// A task aitk run verified frees the worktree even when the agent closed before its last pass,
+// or switched instead of closing: aitk run records the close itself.
+func TestRunVerifiedTaskFreesTheWorktree(t *testing.T) {
+	work := "for i in 1 2 3 4 5 6; do echo x > \"src_$i.txt\"; done\ntouch ok.txt\naitk task update --ac-done 1\naitk check\n"
+	cases := map[string]string{
+		"closed before the last pass": work + "aitk close --summary s --knowledge none\nsleep 1.1\naitk review pass --findings 0\n",
+		"switched instead of closing": work + "aitk review pass --findings 0\naitk switch codex --print >/dev/null\n",
+	}
+	for name, agent := range cases {
+		dir := newRunProject(t, "\n[uat]\nrequired = \"standard\"\n")
+		must(t, dir, bin, "task", "new", "Feature", "--ac", "works")
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+		if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status != "in_review" {
+			t.Fatalf("%s: setup: the run must verify the task as waiting for acceptance: %+v", name, r)
+		}
+		if out, err := sh(t, dir, bin, "task", "new", "Next", "--start"); err != nil {
+			t.Fatalf("%s: a task the run verified must not hold the worktree:\n%s", name, out)
+		}
 	}
 }

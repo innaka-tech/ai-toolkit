@@ -274,9 +274,12 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 		// An agent that fails at once without touching anything is broken (not installed, bad
 		// flags, not logged in): stop the run instead of blaming the task.
 		if (code != 0 || runErr != nil) && ar.duration < agentStartupWindow && t.Status == task.InProgress && profile.Fingerprint(p) == before {
-			// Code untouched, but the agent may have written its own task file: nothing it wrote
-			// there survives (a forged pass would otherwise be the next attempt's baseline).
+			// Code untouched, but the agent may have written its own task file (it is not in the
+			// fingerprint): the same rule as every failed attempt, so a forged pass or a lower
+			// profile cannot become the next attempt's baseline.
+			attempt := t.Review
 			r.restore(t, snap)
+			r.keepFindings(t, snap, attempt)
 			if r.saveFailed(t) {
 				return r.unsaved(t, rt)
 			}
@@ -319,7 +322,9 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 			}
 			return rt
 		case task.Blocked, task.Cancelled:
+			attempt := t.Review
 			r.restore(t, snap) // whatever else the agent wrote, it cannot grant itself UAT or reviews
+			r.keepFindings(t, snap, attempt)
 			if r.saveFailed(t) {
 				return r.unsaved(t, rt)
 			}
@@ -327,7 +332,9 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 			return rt
 		}
 		// Still unfinished: whatever the agent wrote, it cannot keep grants it gave itself.
+		attempt := t.Review
 		r.restore(t, snap)
+		r.keepFindings(t, snap, attempt)
 		if r.saveFailed(t) {
 			return r.unsaved(t, rt)
 		}
@@ -855,6 +862,20 @@ func ownPasses(base, attempt *task.Review, agent string) *task.Review {
 	return out
 }
 
+// keepFindings is the one rule for a failed attempt's review passes: none are kept, except
+// when the agent's last pass found something. Then its passes stay, under its name (never
+// independent: the agent is recorded as a worker), so those findings must reach 0 in a later
+// attempt or by a person instead of being forgotten. Call it after restoreProtected.
+func (r *runner) keepFindings(t *task.Task, snap protected, attempt *task.Review) {
+	own := ownPasses(snap.review, attempt, r.agentName)
+	if n := len(own.Passes); n > 0 && own.Passes[n-1].Findings > 0 {
+		t.Review = own
+		t.AddWorker(r.agentName)
+		return
+	}
+	t.Review = snap.review
+}
+
 func restoreProtected(t *task.Task, s protected) {
 	t.Profile, t.ProfilePinned, t.Tags, t.Goal, t.DependsOn = s.profile, s.pinned, s.tags, s.goal, s.dependsOn
 	t.CreatedBy = s.createdBy
@@ -878,10 +899,15 @@ func restoreProtected(t *task.Task, s protected) {
 // their values before the attempt, the check (and the audit, when required) are run by aitk, the
 // regression evidence is recomputed, and the Definition of Done decides. It returns the status to
 // record, or why the task cannot leave in_progress.
-func (r *runner) decide(t *task.Task, snap protected, since string) (string, string) {
+func (r *runner) decide(t *task.Task, snap protected, since string) (target, why string) {
 	p := r.p
 	attempt := t.Review // the agent's own passes: they count for the non-strict review loop only
-	r.restore(t, snap)
+	defer func() {
+		if why != "" { // every way an attempt fails: findings the agent recorded are not forgotten
+			r.keepFindings(t, snap, attempt)
+		}
+	}()
+	r.restore(t, snap) // protected fields back, and the agent recorded as a worker: its own passes are never independent
 	cur := t.Criteria()
 	if len(cur) < len(snap.criteria) {
 		return "", "acceptance criteria were removed"
@@ -933,16 +959,17 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 			target = task.InReview
 		}
 	}
-	if err != nil {
-		t.Review = snap.review // a failed attempt keeps nothing the agent wrote about reviews
+	if err != nil { // the deferred keepFindings decides which passes a failed attempt keeps
 		return "", "the Definition of Done does not hold: " + err.Error()
 	}
-	if target == task.InReview && prof != "strict" && p.Config.ReviewRequired(prof) && !reviewSatisfied(p, t, prof) {
-		t.Review = snap.review // the agent's own loop is unfinished: work for the next attempt
+	if target == task.InReview && prof != "strict" && !reviewSatisfied(p, t, prof) { // lite too, once it has a pass
+		if ps := t.Review.Passes; len(ps) > 0 && ps[len(ps)-1].Findings > 0 {
+			return "", fmt.Sprintf("review until clean is not finished (the last review pass found %d to fix)", ps[len(ps)-1].Findings)
+		}
 		return "", "review until clean is not finished (no clean review pass on the current code)"
 	}
 	if target == task.InReview && prof == "strict" && p.Config.ReviewLoop() && !reviewDone(t) && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0) {
-		t.Review = snap.review // strict work waits for another tool only after the agent's own clean pass
+		// strict work waits for another tool only after the agent's own clean pass
 		return "", "your own review pass is missing or found something to fix (strict work needs it before another tool's pass)"
 	}
 	if IsBugTask(t) {
@@ -958,18 +985,17 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 	if err := WithLock(p, func() error { return task.Save(p, t) }); err != nil {
 		return "", err.Error()
 	}
-	// Close writes the record of what was done; if the agent never ran it, aitk run writes one.
-	recorded := false
-	for _, h := range handoff.List(p) {
-		if strings.EqualFold(h.Task, t.ID) && h.At >= since {
-			recorded = true
-			break
-		}
+	// Close writes the record of what was done. When the agent did not close after this attempt
+	// started and after its last pass (it closed before reviewing, or switched instead), aitk run
+	// records the close itself: the rule closedSince uses, so the verified task frees the worktree.
+	from := since
+	if t.Review != nil && len(t.Review.Passes) > 0 && t.Review.Passes[len(t.Review.Passes)-1].At > from {
+		from = t.Review.Passes[len(t.Review.Passes)-1].At
 	}
-	if !recorded {
+	if !closedSince(p, t.ID, from) {
 		outcome := map[string]string{task.Done: "done", task.InReview: "progress"}[target]
 		handoff.Write(p, handoff.Meta{Task: t.ID, At: task.Now(), By: r.agentName, Outcome: outcome, TaskStatus: target, Check: t.Evidence.Check},
-			"## "+t.Title+"\n\nVerified by aitk run (check, Definition of Done). The agent did not record a summary with aitk close.\n")
+			"## "+t.Title+"\n\nVerified by aitk run (check, Definition of Done). The agent did not close the task after its last change or review pass.\n")
 	}
 	return target, ""
 }

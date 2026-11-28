@@ -4,7 +4,7 @@ title: Review until clean and one task at a time
 status: in_review
 profile: standard
 created: "2026-11-27T10:55:05Z"
-updated: "2026-11-27T15:40:44Z"
+updated: "2026-11-28T09:44:58Z"
 created_by: claude-code
 workers:
   - claude-code
@@ -65,29 +65,84 @@ review:
       at: "2026-11-27T15:36:08Z"
       findings: 1
       tree: 71ba2ace3c9fc27eda12e4a9910ba080e52125b182b832f79aeb08436cbe28aa
+    - "n": 12
+      by: claude-code
+      at: "2026-11-27T15:43:56Z"
+      findings: 2
+      tree: 3e6e42dbe7e1d80b77d83d92c7e75bbd2dbdc6f986485513de8644b45d9b2657
+    - "n": 13
+      by: claude-code
+      at: "2026-11-27T15:49:29Z"
+      findings: 4
+      tree: 24385ab01a76114d04c98e378b92026244b1d8cae2dab168c882da11d9941ecc
+    - "n": 14
+      by: claude-code
+      at: "2026-11-28T00:43:51Z"
+      findings: 2
+      tree: f5a7911889b30a86015deef27b3bac63046ad26c682281fc3fb35a012c811aa0
+    - "n": 15
+      by: claude-code
+      at: "2026-11-28T00:49:29Z"
+      findings: 2
+      tree: f7c5d09d9b59c6497bdee90bbcff852337219faaead2f7d4401a2b1dc766cfbf
+    - "n": 16
+      by: claude-code
+      at: "2026-11-28T01:32:40Z"
+      findings: 1
+      tree: 92b29080330469043f9f36d2ae7c5d2644b3c0f7445f954d07633f05ef0df250
+    - "n": 17
+      by: claude-code
+      at: "2026-11-28T02:05:51Z"
+      findings: 2
+      tree: 7460f2abb09be5b632bd8307a7b92482efd05aaf0da110f12244413e43837957
+    - "n": 18
+      by: claude-code
+      at: "2026-11-28T02:34:32Z"
+      findings: 1
+      tree: 542021ad8e3bb3de2862854e9fa01c94068d602929b6eb87b252fb1ed52db664
+    - "n": 19
+      by: claude-code
+      at: "2026-11-28T06:49:39Z"
+      findings: 1
+      tree: bb1c56a934525b9a2597f62678eab36654b6c7f7be8fee0e8664d079ff679972
+    - "n": 20
+      by: claude-code
+      at: "2026-11-28T06:59:31Z"
+      findings: 2
+      tree: 9908a744be1e43e890a001ca6cde4c2c4d4917f447996cf0e1d4dea67fb38833
+    - "n": 21
+      by: claude-code
+      at: "2026-11-28T07:53:44Z"
+      findings: 1
+      tree: c4633a5d6ab4f6f71289dc96eb8a06344a63b39b02a610cf67a1448d4fa92209
+    - "n": 22
+      by: claude-code
+      at: "2026-11-28T09:44:58Z"
+      findings: 2
+      tree: 0b162c8729b65b5442a60d711069e63ba4affc3a56686aba5240980e466458de
 evidence:
   check:
     cmd: go vet ./... && go test -short ./...
     exit_code: 0
-    duration_ms: 32947
+    duration_ms: 37327
     summary: |-
-      …compat	[no test files]
+      …al/compat	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/conv	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doc	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doctor	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/fsx	(cached)
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	(cached)
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	35.950s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/gitx	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/handoff	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/heal	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/jsonedit	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/knowledge	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	0.609s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	0.732s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/migrate	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	0.021s
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	1.569s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	0.009s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	1.567s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/proc	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/profile	(cached)
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/profile	0.648s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/project	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/release	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/schema	[no test files]
@@ -100,8 +155,8 @@ evidence:
       ?   	github.com/innaka-tech/ai-toolkit/v2/schemas	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/skills	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/standards	[no test files]
-    at: "2026-11-27T15:40:44Z"
-    tree: 3e6e42dbe7e1d80b77d83d92c7e75bbd2dbdc6f986485513de8644b45d9b2657
+    at: "2026-11-28T09:44:53Z"
+    tree: 0b162c8729b65b5442a60d711069e63ba4affc3a56686aba5240980e466458de
 ---
 
 ## Objective

@@ -270,6 +270,9 @@ func TestWaitingOnOthersNeedsAClose(t *testing.T) {
 	// A clean pass alone (task in_review, never closed) does not free the worktree.
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
 	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+	// Handing the task to another tool is not closing it.
+	aitk(t, dir, "switch", "codex", "--print")
+	expect(t, aitk(t, dir, "task", "next", "--start"), 3, "E_TASK_ACTIVE")
 
 	// in_review with findings: task next --start must refuse too (not switch to b).
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "1"))
@@ -370,4 +373,169 @@ func TestStrictIndependentPassMustBeClean(t *testing.T) {
 	if st := status(t, dir, id); st == "done" {
 		t.Fatal("another tool's findings followed by the implementer's own clean pass must not count as the independent review, not even after acceptance")
 	}
+}
+
+// A started task with a small (lite) diff still fixes its review's findings before done.
+func TestLiteDiffWithFindingsIsNotDone(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	a := data(aitk(t, dir, "task", "new", "Small", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "2"))
+	aitk(t, dir, "close", "--summary", "small", "--knowledge", "none")
+	if st := status(t, dir, a); st == "done" {
+		t.Fatal("a lite-sized task must not close as done while its last pass has findings")
+	}
+	if md, _ := briefMD(t, dir); !strings.Contains(md, "Review until clean") {
+		t.Fatalf("the brief must state the rule close enforces on a lite task with findings:\n%s", md)
+	}
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+	// Fixed and reviewed clean: done, and the worktree is free.
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "small", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "done" {
+		t.Fatalf("after a clean pass the lite task closes as done, got %s", st)
+	}
+	mustOK(t, aitk(t, dir, "task", "start", b))
+}
+
+// A person's own aitk close counts as closing: the next task starts while this one waits for
+// acceptance. (A person's uat accept/reject is not a close; see TestUATAcceptIsNotAClose.)
+func TestPersonsCloseFreesTheWorktree(t *testing.T) {
+	dir := repo(t)
+	asPerson(t) // after repo(), which sets claude-code
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"standard\"\n")
+	a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	standardChange(t, dir, "h")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("setup: waits for UAT, got %s", st)
+	}
+	mustOK(t, aitk(t, dir, "task", "start", b))
+}
+
+// A person's uat accept is not a close: strict work whose agent never closed still holds the
+// worktree when acceptance comes before the independent pass.
+func TestUATAcceptIsNotAClose(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", strings.Replace(read(t, dir, "aitk.toml"), "sensitive_paths = []", `sensitive_paths = ["db/**"]`, 1)+"\n[uat]\nrequired = \"strict\"\n")
+	id := newStarted(t, dir, "Add payments table", "--ac", "migration applies")
+	write(t, dir, "db/001.sql", "create table payments(id int);\n")
+	write(t, dir, "ok.txt", "1")
+	f := fillRisk(t, dir)
+	mustOK(t, aitk(t, dir, "security", "checklist"))
+	write(t, dir, f, strings.ReplaceAll(read(t, dir, f), "- [ ] V", "- [x] V"))
+	other := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "audit"))
+	mustOK(t, aitk(t, dir, "task", "update", "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0")) // the agent's own pass; it never closes
+	asPerson(t)
+	mustOK(t, aitk(t, dir, "uat", "accept", id, "--by", "alice"))
+	t.Setenv("AITK_TOOL", "claude-code")
+	if st := status(t, dir, id); st != "in_review" {
+		t.Fatalf("setup: the independent pass is still missing, got %s", st)
+	}
+	expect(t, aitk(t, dir, "task", "start", other), 3, "E_TASK_ACTIVE")
+}
+
+// A task closed to wait for a person stays out of the way when code it did not write arrives
+// (a pull, a merge): the close already applied the Definition of Done. Legacy projects too.
+func TestUpstreamChangeDoesNotTakeTheWorktreeBack(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		dir := repo(t)
+		initRepo(t, dir)
+		cfg := read(t, dir, "aitk.toml") + "\n[uat]\nrequired = \"standard\"\n"
+		if legacy {
+			cfg = strings.Replace(cfg, `review = "standard"`, "", 1)
+		}
+		write(t, dir, "aitk.toml", cfg)
+		a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+		standardChange(t, dir, "p")
+		mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+		mustOK(t, aitk(t, dir, "check"))
+		if !legacy {
+			mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+		}
+		mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+		if st := status(t, dir, a); st != "in_review" {
+			t.Fatalf("legacy=%v: setup: waits for UAT, got %s", legacy, st)
+		}
+		b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+		run(t, dir, "git", "add", "-A")
+		run(t, dir, "git", "commit", "-qm", "feat: export")
+		write(t, dir, "upstream.go", "package main\n") // stands in for a git pull
+		run(t, dir, "git", "add", "upstream.go")
+		run(t, dir, "git", "commit", "-qm", "feat: upstream")
+		mustOK(t, aitk(t, dir, "task", "start", b))
+	}
+}
+
+// The agent's own edits after its close (uncommitted) still hold the worktree: they are its
+// unreviewed work, not code from elsewhere.
+func TestEditsAfterTheCloseStillHoldTheWorktree(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"standard\"\n")
+	a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	standardChange(t, dir, "e")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	write(t, dir, "src/e_9.go", "package src\n\nvar later = 1\n") // unreviewed, uncommitted
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+}
+
+// Without a check command, a commit from elsewhere does not take the worktree back either.
+func TestUpstreamChangeWithoutACheckCommand(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	cfg := read(t, dir, "aitk.toml")
+	cfg = cfg[:strings.Index(cfg, "\n[check]")] + "\n[uat]\nrequired = \"standard\"\n"
+	write(t, dir, "aitk.toml", cfg)
+	a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	standardChange(t, dir, "n")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("setup: waits for UAT, got %s", st)
+	}
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "feat: export")
+	write(t, dir, "upstream.go", "package main\n")
+	run(t, dir, "git", "add", "upstream.go")
+	run(t, dir, "git", "commit", "-qm", "feat: upstream")
+	mustOK(t, aitk(t, dir, "task", "start", b))
+}
+
+// A close that left the review loop unfinished (the clean pass reviewed older code) keeps the
+// worktree even once everything is committed.
+func TestUnfinishedLoopHoldsAfterCommitting(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"standard\"\n")
+	a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	standardChange(t, dir, "c")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	write(t, dir, "src/c_9.go", "package src\n\nvar later = 1\n")
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "feat: export")
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
 }
