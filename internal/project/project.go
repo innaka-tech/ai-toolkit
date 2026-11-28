@@ -242,6 +242,9 @@ type Project struct {
 	GitDir    string // per-worktree git dir
 	CommonDir string // shared git dir
 	Config    Config
+
+	relMu sync.Mutex
+	rels  map[string]string // GitRel cache
 }
 
 // Paths relative to Root.
@@ -263,11 +266,26 @@ func (p *Project) Path(rel ...string) string {
 	return filepath.Join(append([]string{p.Root}, rel...)...)
 }
 
-// GitRel returns the repository-relative path git uses for an aitk path: when a parent
-// directory (docs, say) is a symlink to another directory inside the repository, git tracks
-// the files under the link's target, and pathspecs through the link are refused. A path that
-// resolves outside the repository, or cannot be resolved, is returned unchanged.
-func (p *Project) GitRel(rel string) string {
+// GitRel returns the repository-relative path git uses for one of aitk's directories: when it
+// (or a parent, like docs) is a symlink to another directory inside the repository, git tracks
+// the files under the link's target, and pathspecs through the link are refused. A directory
+// that resolves outside the repository, to the root itself, or cannot be resolved is returned
+// unchanged. Results are cached per Project: callers ask for every changed file.
+func (p *Project) GitRel(dir string) string {
+	p.relMu.Lock()
+	defer p.relMu.Unlock()
+	if r, ok := p.rels[dir]; ok {
+		return r
+	}
+	r := p.gitRel(dir)
+	if p.rels == nil {
+		p.rels = map[string]string{}
+	}
+	p.rels[dir] = r
+	return r
+}
+
+func (p *Project) gitRel(rel string) string {
 	root, err := filepath.EvalSymlinks(p.Root)
 	if err != nil {
 		return rel
@@ -277,7 +295,7 @@ func (p *Project) GitRel(rel string) string {
 	for dir != "." && dir != string(filepath.Separator) && dir != "" {
 		if real, err := filepath.EvalSymlinks(filepath.Join(p.Root, dir)); err == nil {
 			r, err := filepath.Rel(root, filepath.Join(real, rest))
-			if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			if err != nil || r == "." || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 				return rel
 			}
 			return filepath.ToSlash(r)
@@ -286,6 +304,23 @@ func (p *Project) GitRel(rel string) string {
 		dir = filepath.Dir(dir)
 	}
 	return rel
+}
+
+// AitkRel maps a path as git reports it back to aitk's own name for it: with docs ->
+// documentation, documentation/ai/tasks/T-1.md is docs/ai/tasks/T-1.md. Other paths are
+// returned unchanged.
+func (p *Project) AitkRel(gitPath string) string {
+	for _, dir := range []string{DocsAI, ADRDir} {
+		if g := p.GitRel(dir); g != dir {
+			if gitPath == g {
+				return dir
+			}
+			if rest, ok := strings.CutPrefix(gitPath, g+"/"); ok {
+				return dir + "/" + rest
+			}
+		}
+	}
+	return gitPath
 }
 
 // LocalStateDir is the in-tree fallback for aitk's private state, used when the git

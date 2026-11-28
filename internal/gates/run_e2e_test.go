@@ -404,3 +404,18 @@ fi
 		t.Fatalf("the unfinished task's handover must be committed and its work stashed: %+v", r)
 	}
 }
+
+// The pre-commit schema gate still sees task files behind a docs symlink.
+func TestPreCommitValidatesTasksBehindADocsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := project(t)
+	must(t, dir, "sh", "-c", "mv docs documentation && ln -s documentation docs && git add -A && git commit -qm 'chore: move docs'")
+	write(t, dir, "docs/ai/tasks/T-zzzz-broken.md", "no frontmatter\n")
+	must(t, dir, "git", "add", "-A")
+	out, err := sh(t, dir, "git", "commit", "-qm", "docs: add task")
+	if err == nil || !strings.Contains(out, "[schema]") {
+		t.Fatalf("an invalid task behind the docs symlink must be rejected:\n%s", out)
+	}
+}

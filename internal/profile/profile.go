@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -39,15 +40,7 @@ func Managed(rel string) bool {
 // ManagedIn is Managed for a path as git reports it: aitk's own directories may sit behind a
 // symlink inside the repository (docs -> documentation), where git names the target's path.
 func ManagedIn(p *project.Project, rel string) bool {
-	if Managed(rel) {
-		return true
-	}
-	for _, dir := range []string{project.DocsAI, project.ADRDir} {
-		if g := p.GitRel(dir); g != dir && strings.HasPrefix(rel, g+"/") {
-			return true
-		}
-	}
-	return false
+	return Managed(rel) || Managed(p.AitkRel(rel))
 }
 
 // Change is a changed file with its line count. From is the old path of a rename.
@@ -309,8 +302,16 @@ func treeFingerprint(p *project.Project) string {
 		return ""
 	}
 	args := []string{"rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"}
-	for _, f := range []string{project.StateFile, project.ConfigFile, project.AgentsFile, "CLAUDE.md", ".gitattributes", project.DocsAI, project.ADRDir, project.LocalStateDir} {
-		args = append(args, p.GitRel(f)) // the path git tracks, also behind an in-repo symlink
+	// Files at the root are named as they are (git tracks a symlinked CLAUDE.md as the link
+	// itself); aitk's directories by the path git tracks them under, also behind an in-repo
+	// symlink, plus their own name when no parent is a link (a link at docs/ai is a blob there).
+	args = append(args, project.StateFile, project.ConfigFile, project.AgentsFile, "CLAUDE.md", ".gitattributes")
+	for _, d := range []string{project.DocsAI, project.ADRDir, project.LocalStateDir} {
+		g := p.GitRel(d)
+		args = append(args, g)
+		if parent := path.Dir(d); g != d && (parent == "." || p.GitRel(parent) == parent) {
+			args = append(args, d)
+		}
 	}
 	if _, err := run(args...); err != nil {
 		return ""

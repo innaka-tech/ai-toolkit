@@ -168,6 +168,7 @@ func PreCommit(root string) ([]Violation, error) {
 	if err != nil {
 		return nil, err
 	}
+	aitkRel := aitkRelIn(root)
 	for _, rel := range strings.Split(names, "\n") {
 		if rel == "" {
 			continue
@@ -176,7 +177,7 @@ func PreCommit(root string) ([]Violation, error) {
 		if err != nil {
 			continue
 		}
-		vs = append(vs, validateFile(rel, content)...)
+		vs = append(vs, validateFile(aitkRel(rel), content)...)
 	}
 	return vs, nil
 }
@@ -193,6 +194,16 @@ var (
 	taskFile    = regexp.MustCompile(`^docs/ai/tasks/[^/]+\.md$`)
 	handoffFile = regexp.MustCompile(`^docs/ai/handoff/[^/]+\.md$`)
 )
+
+// aitkRelIn maps git's paths to aitk's names for them in the repository at root (aitk's files
+// behind an in-repo docs symlink), so their schema checks still run.
+func aitkRelIn(root string) func(string) string {
+	p, err := project.Repo(root)
+	if err != nil {
+		return func(rel string) string { return rel }
+	}
+	return p.AitkRel
+}
 
 // validateFile validates one aitk-managed file's content against its schema.
 func validateFile(rel string, content []byte) []Violation {
@@ -338,12 +349,13 @@ func CI(root, base string) ([]Violation, error) {
 		}
 	}
 	names, _ := gitx.Run(root, "diff", "--name-only", "--diff-filter=ACMR", base+"...HEAD")
+	aitkRel := aitkRelIn(root)
 	for _, rel := range strings.Split(names, "\n") {
 		if rel == "" {
 			continue
 		}
 		if b, err := os.ReadFile(filepath.Join(root, rel)); err == nil {
-			vs = append(vs, validateFile(rel, b)...)
+			vs = append(vs, validateFile(aitkRel(rel), b)...)
 		}
 	}
 	return vs, nil

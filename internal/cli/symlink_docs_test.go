@@ -36,3 +36,21 @@ func TestCloseWorksWhenDocsIsASymlink(t *testing.T) {
 		t.Fatalf("close must finish the task in a repository whose docs/ is a symlink, got %s", st)
 	}
 }
+
+// A symlinked CLAUDE.md (a common way to share AGENTS.md) is aitk's file, not a code change.
+func TestSymlinkedClaudeMdDoesNotMakeTheCheckStale(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := repo(t)
+	initRepo(t, dir)
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "chore: init")
+	id := data(aitk(t, dir, "task", "new", "Small", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	write(t, dir, "ok.txt", "1")
+	mustOK(t, aitk(t, dir, "task", "update", id, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	run(t, dir, "rm", "-f", "CLAUDE.md")
+	run(t, dir, "ln", "-s", "AGENTS.md", "CLAUDE.md")
+	mustOK(t, aitk(t, dir, "close", "--summary", "small", "--knowledge", "none"))
+}

@@ -113,7 +113,7 @@ func ScanTrackedFiles(p *project.Project) []secrets.Finding {
 	out, _ := gitx.RunRaw(p.Root, "ls-files", "-z")
 	var fs []secrets.Finding
 	for _, rel := range strings.Split(string(out), "\x00") {
-		if rel == "" || strings.HasPrefix(rel, "docs/ai/_legacy/") {
+		if rel == "" || strings.HasPrefix(p.AitkRel(rel), project.LegacyDir+"/") {
 			continue
 		}
 		info, err := os.Stat(p.Path(rel))
