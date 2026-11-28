@@ -417,7 +417,9 @@ type attemptGuard struct {
 	// Where git must still resolve to before a commit.
 	gitDir, commonDir string
 	realRoot          string            // the repository root with symlinks resolved
+	layout            map[string]string // existing parts of docs/ai/tasks -> where they resolved
 	gitWasDir         bool              // .git was a directory (not a gitdir: file)
+	config            string            // the repository's effective config and branch, see repoConfig
 	accepted          map[string]string // new task files kept so far (path -> id): not duplicates of themselves
 }
 
@@ -444,11 +446,18 @@ func guardOf(p *project.Project, t *task.Task, agent string) *attemptGuard {
 		}
 		keep(f)
 	}
-	for _, f := range worktreeConfigs(p) { // config files git reads from the working tree (include.path)
+	for _, f := range includedConfigs(p) { // files the repository's config pulls in (include.path)
 		keep(f)
 	}
 	g.gitDir, g.commonDir = p.GitDir, common
 	g.realRoot, _ = filepath.EvalSymlinks(p.Root)
+	g.layout = map[string]string{}
+	for d := filepath.FromSlash(project.TasksDir); d != "." && d != string(filepath.Separator); d = filepath.Dir(d) {
+		if got, err := filepath.EvalSymlinks(filepath.Join(p.Root, d)); err == nil {
+			g.layout[d] = got
+		}
+	}
+	g.config = repoConfig(p)
 	if fi, err := os.Lstat(filepath.Join(p.Root, ".git")); err == nil && fi.IsDir() {
 		g.gitWasDir = true
 	}
@@ -576,6 +585,11 @@ func (g *attemptGuard) restoreLocked(p *project.Project) []string {
 			}
 		}
 	}
+	// Last, what git will actually read: an include the guard could not list (missing, empty,
+	// conditional on a branch) or a branch switch shows up here, and fails closed.
+	if repoConfig(p) != g.config {
+		g.failed = append(g.failed, "git configuration (changed through an included file or a branch switch)")
+	}
 	return changed
 }
 
@@ -594,7 +608,10 @@ func (g *attemptGuard) moved(p *project.Project) string {
 			}
 			return filepath.ToSlash(d) + " (cannot be resolved)"
 		}
-		if got != filepath.Join(g.realRoot, d) {
+		if was, ok := g.layout[d]; ok && got != was {
+			return filepath.ToSlash(d) + " (now resolves elsewhere: a link)"
+		}
+		if r, err := filepath.Rel(g.realRoot, got); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 			return filepath.ToSlash(d) + " (a link out of the repository)"
 		}
 	}
@@ -608,44 +625,48 @@ func (g *attemptGuard) moved(p *project.Project) string {
 	return ""
 }
 
-// worktreeConfigs lists the git config files inside the working tree that git reads for this
-// repository (a tracked file pulled in with include.path): the agent could otherwise define
-// filters or programs there that run during aitk's own git commands.
-func worktreeConfigs(p *project.Project) []string {
-	c := exec.Command("git", append(safeGitFlags(), "config", "--list", "--show-origin", "--includes", "-z")...)
-	c.Dir = p.Root
-	out, err := c.Output()
-	if err != nil {
-		return nil
-	}
-	root, _ := filepath.EvalSymlinks(p.Root)
+// includedConfigs lists the files the repository's own config pulls in with include.path or
+// includeIf, wherever they are (a tracked file, a file in .git, the main checkout of a linked
+// worktree). Global and system config are not the repository's and are left alone.
+func includedConfigs(p *project.Project) []string {
 	seen := map[string]bool{}
 	var files []string
-	parts := strings.Split(string(out), "\x00")
-	for i := 0; i+1 < len(parts); i += 2 { // origin, then key and value
-		f, ok := strings.CutPrefix(parts[i], "file:")
-		if !ok {
+	for _, scope := range []string{"--local", "--worktree"} {
+		c := exec.Command("git", append(safeGitFlags(), "config", scope, "--list", "--show-origin", "--includes", "-z")...)
+		c.Dir = p.Root
+		out, err := c.Output()
+		if err != nil {
 			continue
 		}
-		if !filepath.IsAbs(f) {
-			f = filepath.Join(p.Root, f)
+		parts := strings.Split(string(out), "\x00")
+		for i := 0; i+1 < len(parts); i += 2 { // origin, then key and value
+			f, ok := strings.CutPrefix(parts[i], "file:")
+			if !ok {
+				continue
+			}
+			if !filepath.IsAbs(f) {
+				f = filepath.Join(p.Root, f)
+			}
+			if f = filepath.Clean(f); !seen[f] {
+				seen[f] = true
+				files = append(files, f)
+			}
 		}
-		f = filepath.Clean(f)
-		real := f
-		if r, err := filepath.EvalSymlinks(f); err == nil {
-			real = r
-		}
-		rel, err := filepath.Rel(root, real)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || seen[f] {
-			continue
-		}
-		if first := strings.Split(rel, string(filepath.Separator))[0]; first == ".git" {
-			continue // the git directory's own files are guarded already
-		}
-		seen[f] = true
-		files = append(files, f)
 	}
 	return files
+}
+
+// repoConfig is what git reads for this repository beyond global and system config, includes
+// resolved, plus the current branch (includeIf onbranch depends on it). Errors are part of it.
+func repoConfig(p *project.Project) string {
+	var b strings.Builder
+	for _, args := range [][]string{{"config", "--local", "--list", "--includes", "-z"}, {"config", "--worktree", "--list", "--includes", "-z"}, {"symbolic-ref", "-q", "HEAD"}} {
+		c := exec.Command("git", append(safeGitFlags(), args...)...)
+		c.Dir = p.Root
+		out, err := c.CombinedOutput()
+		fmt.Fprintf(&b, "%s\x00%v\x00", out, err)
+	}
+	return b.String()
 }
 
 // checkGitDirs fails the guard if git would now resolve to another git directory (an agent

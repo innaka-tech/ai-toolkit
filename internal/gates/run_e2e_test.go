@@ -1317,3 +1317,60 @@ echo x > feature.txt
 		t.Fatalf("the included config must be restored:\n%s", b)
 	}
 }
+
+// Security review pass 5 scenarios: a filter defined in any config the repository reads (an
+// include that is missing, empty, branch-conditional, inside .git, or in the main checkout of a
+// linked worktree) never rewrites another task in aitk's commit; a symlink inside the
+// repository on the tasks path keeps working.
+func TestRunGuardFifthPass(t *testing.T) {
+	close := "touch ok.txt\naitk task update --ac-done 1\naitk check\naitk close --summary done --knowledge none\n"
+	filter := func(cfg string) string {
+		return `printf '[filter "x"]\n\tclean = sed s/^status:.*/status:\\\\ cancelled/\n' >> ` + cfg + `
+echo 'docs/ai/tasks/*.md filter=x' > .gitattributes
+echo x > feature.txt
+`
+	}
+	untouched := func(t *testing.T, dir, bFile string, bWas []byte, what string) {
+		t.Helper()
+		if got, _ := sh(t, dir, "git", "show", "HEAD:"+bFile); got != string(bWas) {
+			t.Fatalf("%s: a filter rewrote another task in the commit:\n%s", what, got)
+		}
+	}
+	cases := []struct {
+		name, setup, agent string
+	}{
+		{"missing include", "git config include.path ../repo.gitconfig", filter("repo.gitconfig")},
+		{"empty include", "echo '# shared settings' > repo.gitconfig && git add repo.gitconfig && git commit -qm 'chore: cfg' && git config include.path ../repo.gitconfig", filter("repo.gitconfig")},
+		{"branch include", "git config includeIf.onbranch:evil.path ../evil.gitconfig", "git checkout -q -b evil\n" + filter("evil.gitconfig")},
+		{"include in .git", "printf '[core]\\n\\tautocrlf = false\\n' > .git/extra.cfg && git config include.path extra.cfg", filter(".git/extra.cfg")},
+	}
+	for _, c := range cases {
+		dir := newRunProject(t, "")
+		must(t, dir, "sh", "-c", c.setup)
+		_, _, bFile, bWas := twoTasks(t, dir)
+		aitkRun(t, dir, "--cmd", c.agent+close, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+		untouched(t, dir, bFile, bWas, c.name)
+	}
+
+	// The main checkout's included config, run from a linked worktree.
+	dir := newRunProject(t, "")
+	write(t, dir, "repo.gitconfig", "[core]\n\tautocrlf = false\n")
+	must(t, dir, "git", "add", "repo.gitconfig")
+	must(t, dir, "git", "commit", "-qm", "chore: cfg")
+	must(t, dir, "git", "config", "include.path", "../repo.gitconfig")
+	wt := filepath.Join(t.TempDir(), "wt")
+	must(t, dir, "git", "worktree", "add", "-q", "-b", "wt", wt)
+	_, _, bFile, bWas := twoTasks(t, wt)
+	aitkRun(t, wt, "--cmd", filter(filepath.Join(dir, "repo.gitconfig"))+close, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	untouched(t, wt, bFile, bWas, "linked worktree include")
+
+	// docs -> documentation inside the repository is a legitimate layout: the guard does not
+	// treat it as a link out of the repository.
+	dir = newRunProject(t, "")
+	must(t, dir, "sh", "-c", "mv docs documentation && ln -s documentation docs && git add -A && git commit -qm 'chore: move docs'")
+	twoTasks(t, dir)
+	r := aitkRun(t, dir, "--cmd", "echo x > feature.txt", "--max-attempts", "1", "--max-tasks", "1")
+	if len(r.Data.Tasks) == 0 || strings.Contains(r.Data.Stopped, "could not restore") || strings.Contains(r.Data.Tasks[0].Note, "link") {
+		t.Fatalf("a symlink inside the repository must not stop the run: %+v", r)
+	}
+}
