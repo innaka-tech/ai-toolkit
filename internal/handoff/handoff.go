@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -38,6 +39,7 @@ type Handoff struct {
 	Body    string `json:"body"`
 	File    string `json:"file"`
 	written int64
+	seq     int // write order within one second for one task: 1 for <stamp>-<task>.md, n for -n.md
 }
 
 // Write creates docs/ai/handoff/<UTC>-<task>.md and refreshes the index.
@@ -91,18 +93,44 @@ func List(p *project.Project) []*Handoff {
 		if info, err := e.Info(); err == nil {
 			h.written = info.ModTime().UnixNano()
 		}
+		h.seq = seqOf(e.Name(), h.Meta)
 		out = append(out, h)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].At != out[j].At {
 			return out[i].At > out[j].At
 		}
-		if out[i].written != out[j].written { // same second: the later write is newer
+		// Same second, same task: Write numbers the files in write order, which survives a git
+		// checkout (that gives every file the same mtime, written in index order).
+		if a, b := out[i], out[j]; a.seq > 0 && b.seq > 0 && strings.EqualFold(a.Task, b.Task) && a.seq != b.seq {
+			return a.seq > b.seq
+		}
+		if out[i].written != out[j].written { // otherwise the later write is newer
 			return out[i].written > out[j].written
 		}
 		return out[i].File > out[j].File
 	})
 	return out
+}
+
+// seqOf reads the write order Write encodes in a handoff's file name: <stamp>-<task>.md is 1,
+// <stamp>-<task>-<n>.md is n. A name it does not recognise is 0.
+func seqOf(name string, m Meta) int {
+	task := m.Task
+	if task == "" {
+		task = "project"
+	}
+	prefix := strings.NewReplacer("-", "", ":", "").Replace(m.At) + "-" + task
+	base := strings.TrimSuffix(name, ".md")
+	if strings.EqualFold(base, prefix) {
+		return 1
+	}
+	if rest, ok := strings.CutPrefix(strings.ToLower(base), strings.ToLower(prefix)+"-"); ok {
+		if n, err := strconv.Atoi(rest); err == nil && n >= 2 {
+			return n
+		}
+	}
+	return 0
 }
 
 // WriteIndex regenerates docs/ai/handoff.md (10 newest).
