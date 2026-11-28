@@ -4,7 +4,7 @@ title: Review until clean and one task at a time
 status: in_review
 profile: standard
 created: "2026-11-27T10:55:05Z"
-updated: "2026-11-28T00:50:46Z"
+updated: "2026-11-28T01:33:58Z"
 created_by: claude-code
 workers:
   - claude-code
@@ -85,29 +85,34 @@ review:
       at: "2026-11-28T00:49:29Z"
       findings: 2
       tree: f7c5d09d9b59c6497bdee90bbcff852337219faaead2f7d4401a2b1dc766cfbf
+    - "n": 16
+      by: claude-code
+      at: "2026-11-28T01:32:40Z"
+      findings: 1
+      tree: 92b29080330469043f9f36d2ae7c5d2644b3c0f7445f954d07633f05ef0df250
 evidence:
   check:
     cmd: go vet ./... && go test -short ./...
-    exit_code: 0
-    duration_ms: 36796
+    exit_code: 1
+    duration_ms: 39798
     summary: |-
-      …ompat	[no test files]
-      ?   	github.com/innaka-tech/ai-toolkit/v2/internal/conv	[no test files]
-      ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doc	[no test files]
-      ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doctor	[no test files]
+      …b.com/innaka-tech/ai-toolkit/v2/internal/doctor	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/fsx	(cached)
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	34.760s
+      --- FAIL: TestRunFailedStandardAttemptKeepsNoPasses (1.03s)
+          run_e2e_test.go:830: a failed attempt (stale clean pass) must keep no passes: [{By:custom Findings:0}]
+      FAIL
+      FAIL	github.com/innaka-tech/ai-toolkit/v2/internal/gates	37.219s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/gitx	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/handoff	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/heal	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/jsonedit	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/knowledge	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	0.964s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	0.859s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/migrate	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	(cached)
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	1.818s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	2.076s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/proc	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/profile	(cached)
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/profile	0.720s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/project	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/release	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/schema	[no test files]
@@ -120,8 +125,10 @@ evidence:
       ?   	github.com/innaka-tech/ai-toolkit/v2/schemas	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/skills	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/standards	[no test files]
-    at: "2026-11-28T00:50:46Z"
-    tree: 92b29080330469043f9f36d2ae7c5d2644b3c0f7445f954d07633f05ef0df250
+      FAIL
+    at: "2026-11-28T01:33:58Z"
+    tree: f2c22cfbd581160165bd464bb293f95cea23ca55b1d05c3d4ee85c9ba1fcb312
+  check_failures: 1
 ---
 
 ## Objective

@@ -14,7 +14,7 @@ aitk run --agent claude-code --commit --max-tasks 5
 |---|---|---|
 | `aitk close` passes the Definition of Done, and aitk's own verification agrees | `done` (with `--commit`: one Conventional Commit with `AI-Task`/`AI-Tool` trailers) | next task |
 | Needs another tool's review pass or a person's acceptance (strict tasks, `uat.required`) | `in_review`: another tool runs `aitk review pass <id>`, a person runs `aitk uat accept <id>` | next task |
-| The agent closed without its own clean review pass (`[quality] review = "standard"`: standard tasks, and strict tasks before another tool's pass) | reopened; the next attempt's prompt says why | same task, next attempt |
+| The agent closed without its own clean review pass (`[quality] review = "standard"`: standard tasks, strict tasks before another tool's pass, and lite tasks whose last pass found something) | reopened, keeping the agent's passes so recorded findings must reach 0; the next attempt's prompt says why | same task, next attempt |
 | The agent hands over with `aitk close --status blocked` | `blocked`, with the agent's handoff | next task |
 | Not finished after `--max-attempts` runs (default 2), or the check keeps failing | `blocked`, with a handoff written by aitk (with `--commit`: its unfinished changes go to `git stash`, named after the task) | next task |
 | The agent cannot start (exits at once without changing anything: not installed, bad flags, not logged in) | unchanged | the run stops |

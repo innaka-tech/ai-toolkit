@@ -898,3 +898,18 @@ func TestRunLiteTaskWithFindingsIsReopened(t *testing.T) {
 		t.Fatalf("a lite task with findings must be reopened, not left waiting: %+v", r)
 	}
 }
+
+// Findings a lite task's agent recorded survive the reopen: the next attempt cannot close it as
+// done without a clean pass.
+func TestRunLiteFindingsSurviveTheRetry(t *testing.T) {
+	dir := newRunProject(t, "")
+	must(t, dir, bin, "task", "new", "Small", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	// Attempt 1 records findings; attempt 2 only closes again.
+	agent := "if [ ! -f a.txt ]; then touch ok.txt; echo x > a.txt; aitk task update --ac-done 1; aitk review pass --findings 2; fi\naitk check\naitk close --summary done --knowledge none\n"
+	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "2", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "done" || !strings.Contains(r.Data.Tasks[0].Note, "found 2 to fix") {
+		t.Fatalf("a lite task's findings must survive the retry: %+v", r)
+	}
+}
