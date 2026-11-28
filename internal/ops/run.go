@@ -293,7 +293,9 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 			}
 			if why != "" {
 				t.Status, t.Closed, t.Updated = task.InProgress, "", task.Now()
-				WithLock(p, func() error { return task.Save(p, t) })
+				if r.saveFailed(t) {
+					return r.unsaved(t, rt)
+				}
 				rt.Note = "the agent reported " + claimed + ", but aitk's own verification failed (" + why + "); reopened"
 				continue
 			}
@@ -311,13 +313,17 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 			return rt
 		case task.Blocked, task.Cancelled:
 			r.restore(t, snap) // whatever else the agent wrote, it cannot grant itself UAT or reviews
-			WithLock(p, func() error { return task.Save(p, t) })
+			if r.saveFailed(t) {
+				return r.unsaved(t, rt)
+			}
 			rt.Status, rt.Note = t.Status, "the agent stopped the task; see its handoff"
 			return rt
 		}
 		// Still unfinished: whatever the agent wrote, it cannot keep grants it gave itself.
 		r.restore(t, snap)
-		WithLock(p, func() error { return task.Save(p, t) })
+		if r.saveFailed(t) {
+			return r.unsaved(t, rt)
+		}
 		switch {
 		case runErr != nil:
 			rt.Note = runErr.Error()
@@ -342,9 +348,29 @@ func (r *runner) guardFailed(t *task.Task, snap protected, rt RunTask) RunTask {
 		t.Status, t.Closed = task.InProgress, ""
 	}
 	t.Updated = task.Now()
-	WithLock(r.p, func() error { return task.Save(r.p, t) })
+	r.saveFailed(t)
 	rt.Status = t.Status
 	rt.Note = "stopped: could not restore what the agent changed outside its task"
+	return rt
+}
+
+// saveFailed saves the task and reports whether it could not: a task file the agent left
+// invalid (a schema violation) would otherwise keep whatever it wrote, grants included. Then
+// the file goes back to how it was when the task started and the guard fails closed.
+func (r *runner) saveFailed(t *task.Task) bool {
+	err := WithLock(r.p, func() error { return task.Save(r.p, t) })
+	if err == nil || r.guard == nil {
+		return err != nil
+	}
+	r.guard.put(r.guard.curFile, r.guard.curWas)
+	r.guard.failed = append(r.guard.failed, relTo(r.p, r.guard.curFile)+" (aitk could not save it: "+err.Error()+")")
+	return true
+}
+
+// unsaved ends the task after saveFailed: the file is back as it was before the task started.
+func (r *runner) unsaved(t *task.Task, rt RunTask) RunTask {
+	rt.Status = task.InProgress
+	rt.Note = "stopped: the agent left its task file invalid, so aitk put it back as it was before the task"
 	return rt
 }
 
@@ -550,7 +576,7 @@ func (g *attemptGuard) putLink(abs, target string, want []byte) bool {
 	if got, err := os.ReadFile(abs); err == nil && bytes.Equal(got, want) {
 		return changed
 	}
-	if os.WriteFile(real, want, 0o644) != nil {
+	if fsx.WriteFile(real, want, 0o644) != nil { // a new file by rename: a hard link the agent made is not written through
 		g.failed = append(g.failed, abs)
 		return false
 	}
@@ -1090,6 +1116,15 @@ func (g *attemptGuard) verifyStaged(p *project.Project) error {
 	norm := func(b []byte) []byte { return bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")) }
 	for _, rel := range strings.Split(out, "\x00") {
 		want, guarded := g.files[p.Path(rel)]
+		if !guarded && rel != "" && (strings.HasPrefix(rel, project.DocsAI+"/") || rel == project.StateFile) {
+			// aitk's own files the guard does not snapshot (the agent's task, new tasks,
+			// handoffs): what git stores must still be exactly what aitk read and verified.
+			b, err := os.ReadFile(p.Path(rel))
+			if err != nil {
+				continue
+			}
+			want, guarded = b, true
+		}
 		if rel == "" || !guarded {
 			continue
 		}

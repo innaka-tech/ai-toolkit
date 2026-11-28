@@ -1506,3 +1506,52 @@ func TestRunGuardSeventhPass(t *testing.T) {
 		t.Fatalf("the commit must stop when git would store a guarded file differently: %+v", r)
 	}
 }
+
+// Security review pass 8 scenarios.
+func TestRunGuardEighthPass(t *testing.T) {
+	close := "touch ok.txt\naitk task update --ac-done 1\naitk check\naitk close --summary done --knowledge none\n"
+	head := func(dir string) string {
+		b, _ := os.ReadFile(filepath.Join(dir, ".git/refs/heads/main"))
+		return strings.TrimSpace(string(b))
+	}
+
+	// An encoding rule on the agent's own task file cannot change what git stores for it.
+	dir := newRunProject(t, "")
+	_, _, _, _ = twoTasks(t, dir)
+	before := head(dir)
+	agent := "echo x > feature.txt\n" + close + `f=$(grep -l "^status: done" docs/ai/tasks/*.md | head -1)
+tr -cd '\11\12\15\40-\176' < "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+printf '\nnote: a+AEA-b\n' >> "$f"
+echo "$f working-tree-encoding=UTF-7" > .gitattributes
+`
+	r := aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if head(dir) != before || !strings.Contains(r.Data.Tasks[0].Note, "differently") {
+		t.Fatalf("git must not store the agent's own task file differently from the file: %+v", r)
+	}
+
+	// A task file the agent leaves invalid is put back as it was before the task, and the run
+	// stops: none of what it wrote (grants included) survives.
+	dir = newRunProject(t, "")
+	twoTasks(t, dir)
+	before = head(dir)
+	long := strings.Repeat("x", 130)
+	agent = "echo x > feature.txt\n" + close + `f=$(grep -l "^status: done" docs/ai/tasks/*.md | head -1)
+sed -i.bak "s/^title: .*/title: ` + long + `/" "$f" && rm -f "$f.bak"
+`
+	r = aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "2", "--max-tasks", "1")
+	if head(dir) != before || !strings.Contains(r.Data.Stopped, "could not restore") {
+		t.Fatalf("an invalid task file must stop the run without a commit: %+v", r)
+	}
+	if out, _ := sh(t, dir, "grep", "-rl", long, "docs/ai/tasks"); strings.TrimSpace(out) != "" {
+		t.Fatalf("the invalid task file must be put back: %s", out)
+	}
+
+	// A hard link the agent puts at a guarded symlink's target is not written through.
+	for i := 0; i < 6; i++ {
+		dir = newRunProject(t, "")
+		must(t, dir, "sh", "-c", "mkdir cfg && mv aitk.toml cfg/aitk.toml && ln -s cfg/aitk.toml aitk.toml && git add -A && git commit -qm 'chore: cfg'")
+		_, _, bFile, bWas := twoTasks(t, dir)
+		aitkRun(t, dir, "--cmd", "ln -f "+bFile+" cfg/aitk.toml\n", "--max-attempts", "1", "--max-tasks", "1")
+		sameFile(t, dir, bFile, bWas, "hard link at a symlink target")
+	}
+}
