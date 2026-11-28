@@ -11,3 +11,7 @@ timeout = "10m"
 [risk]
 # Changes matching these globs make a task "strict" (risk analysis + independent review).
 sensitive_paths = [".github/**", ".goreleaser.yaml", "install.sh", "install.ps1", "action/**", "internal/secrets/**", "internal/gates/gates.go", "internal/audit/install.go"]
+
+[quality]
+# Review passes until one finds 0 before standard and strict tasks are done.
+review = "standard"

@@ -25,7 +25,7 @@ Severity: critical, high, medium, low (definitions in `aitk standards security`)
 Style the formatter or linter handles, personal preference, and "consider refactoring" without a concrete defect.
 
 ## Independence and passes
-- Strict tasks need two review passes, the last with 0 findings, at least one by a different tool than the one that built it: `aitk review pass <id> --findings N`.
+- Strict tasks need two review passes, the last with 0 findings, at least one clean (0 findings) by a different tool than the one that built it: `aitk review pass <id> --findings N`.
 - Rotate the focus between passes: flow logic, edge cases, cross-module effects and permissions, security and data.
 - Every fix re-runs the earlier passes' checks (regression).
 

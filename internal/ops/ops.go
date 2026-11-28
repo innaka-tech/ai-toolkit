@@ -183,6 +183,7 @@ func Init(dir, name, check string, dryRun bool) (*InitResult, error) {
 		cfg += "\n# [check]\n# cmd = \"make test\"   # required for the Definition of Done to verify work\n"
 	}
 	cfg += "\n[risk]\n# Changes matching these globs make a task \"strict\" (risk analysis + independent review).\nsensitive_paths = []\n"
+	cfg += "\n[quality]\n# Tasks of these profiles need review passes until one finds 0 before they are done:\n# standard (default) | strict | off (strict and off: only strict work, which always needs two passes, one clean (0 findings) by a different tool).\nreview = \"standard\"\n"
 	cfg += "\n# How agents work and talk here, applied in every aitk brief (docs/how-to/assistant.md).\n# [assistant]\n# character = \"full\"    # lite | full | ultra | off\n# talk = \"normal\"       # normal | lite | caveman\n# auto_persona = true   # the brief picks the personas the task needs\n"
 	state := map[string]any{"schema_version": 2, "project": map[string]any{"name": project.Slug(name, 62)}}
 	stateJSON, _ := json.MarshalIndent(state, "", "  ")
@@ -383,6 +384,9 @@ func TaskUpdate(p *project.Project, id string, in UpdateInput) (*task.Task, erro
 			if id == "" {
 				return apperr.NoActiveTask()
 			}
+		}
+		if err := RunScope(id); err != nil {
+			return err // inside aitk run the agent writes only its own task
 		}
 		if t, err = task.Find(p, id); err != nil {
 			return apperr.TaskNotFound(id)
@@ -691,9 +695,14 @@ func Close(p *project.Project, in CloseInput) (*CloseResult, error) {
 			}
 		}
 		if target == task.InReview {
-			if prof == "strict" && !reviewDone(t) {
-				res.Notes = append(res.Notes, "strict task needs ≥2 review passes (last with 0 findings, one by a tool that did not work on it) before it can be done: aitk review pass --findings N")
-			} else {
+			switch {
+			case prof == "strict" && p.Config.ReviewLoop() && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0):
+				res.Notes = append(res.Notes, "strict task: first review your own change until a pass finds 0 (aitk review pass "+t.ID+" --findings N) and close again; then another tool records the independent pass")
+			case prof == "strict" && !reviewDone(t):
+				res.Notes = append(res.Notes, "strict task needs ≥2 review passes (last with 0 findings, one clean (0 findings) by a tool that did not work on it) before it can be done: aitk review pass --findings N")
+			case !reviewSatisfied(p, t, prof):
+				res.Notes = append(res.Notes, "review until clean: review the change, record aitk review pass "+t.ID+" --findings N, fix what it found, and repeat until a pass finds 0; then run aitk close again")
+			default:
 				res.Notes = append(res.Notes, "waiting for user acceptance: a person runs aitk uat accept "+t.ID+" (script: aitk uat script "+t.ID+")")
 			}
 		}
@@ -781,7 +790,7 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 			return "", apperr.New("E_DOD_AUDIT", apperr.ExitGate, "aitk audit", "files changed after the last passing audit")
 		}
 	}
-	if prof == "strict" && !reviewDone(t) {
+	if !reviewSatisfied(p, t, prof) {
 		return task.InReview, nil
 	}
 	if p.Config.UATRequired(prof) && (t.Evidence == nil || t.Evidence.UAT == nil || t.Evidence.UAT.Status != "accepted") {
@@ -790,8 +799,128 @@ func dod(p *project.Project, t *task.Task, prof string, in CloseInput) (string, 
 	return task.Done, nil
 }
 
-// reviewDone: ≥2 passes, the last with 0 findings, and at least one pass by a tool that did
-// not work on the task (workers, the creator, and the tool closing it).
+// reviewSatisfied applies [quality] review: strict work needs the independent review
+// (reviewDone); other required profiles need at least one pass and the last one with 0 findings.
+func reviewSatisfied(p *project.Project, t *task.Task, prof string) bool {
+	if prof == "strict" {
+		return reviewDone(t)
+	}
+	if !p.Config.ReviewRequired(prof) {
+		// A lite close stays quick, but once the loop has started its findings must reach 0:
+		// a small diff is no reason to leave a review's findings unfixed.
+		return !p.Config.ReviewLoop() || t.Review == nil || len(t.Review.Passes) == 0 ||
+			t.Review.Passes[len(t.Review.Passes)-1].Findings == 0
+	}
+	if t.Review == nil || len(t.Review.Passes) == 0 {
+		return false
+	}
+	last := t.Review.Passes[len(t.Review.Passes)-1]
+	// The clean pass must have reviewed the code as it is now: changes after it need a new pass.
+	return last.Findings == 0 && (last.Tree == profile.Fingerprint(p) || profile.Fresh(p, last.Tree))
+}
+
+// RunScope keeps an agent inside aitk run on the one task it was given; work on anything else
+// would be finished outside the run's own verification.
+func RunScope(next string) error {
+	if os.Getenv(RunEnv) == "" {
+		return nil
+	}
+	if mine := os.Getenv("AITK_RUN_TASK"); mine != "" && !strings.EqualFold(next, mine) {
+		return apperr.New("E_RUN_SCOPE", apperr.ExitGate, "work on "+mine+" only; aitk run picks the next task itself",
+			"inside aitk run this agent works on %s, not on another task", mine)
+	}
+	return nil
+}
+
+// SwitchAllowed enforces one task at a time: an agent finishes the active task (review until
+// clean, then close) or blocks it before starting another in the same worktree.
+func SwitchAllowed(p *project.Project, next string) error {
+	if err := RunScope(next); err != nil {
+		return err
+	}
+	if !p.Config.OneTaskAtATime() {
+		return nil
+	}
+	cur := session.Load(p).Active()
+	if cur == "" || strings.EqualFold(cur, next) {
+		return nil
+	}
+	t, err := task.Find(p, cur)
+	if err != nil {
+		return nil // a stale pointer is healed elsewhere; it must not block work
+	}
+	switch t.Status {
+	case task.Done, task.Blocked, task.Cancelled:
+		return nil
+	case task.InReview:
+		if waitingOnOthers(p, t) {
+			return nil // it only waits for another tool's pass or a person's acceptance
+		}
+	}
+	return apperr.New("E_TASK_ACTIVE", apperr.ExitGate,
+		fmt.Sprintf("finish it (review until a pass finds 0, then aitk close), or park it: aitk task block %s --reason \"<why>\"", t.ID),
+		"task %s is still %s; one task at a time", t.ID, t.Status)
+}
+
+// waitingOnOthers reports whether an in_review task needs nothing more from its own agent: it
+// was closed after its last pass (by aitk close or aitk run, anyone), that close left it
+// waiting only for another tool's pass or a person's acceptance, and, with review = standard,
+// the clean pass reviewed the code that close verified. It trusts the close and the profile the
+// close saved: changes after it, from a pull or from anyone's edits, never take the worktree
+// back, because acceptance (and any later close) re-applies the Definition of Done to the code
+// as it is then. A last pass with findings, no close after it, or an unfinished review loop
+// still needs the agent.
+func waitingOnOthers(p *project.Project, t *task.Task) bool {
+	var last *task.Pass
+	if t.Review != nil && len(t.Review.Passes) > 0 {
+		last = &t.Review.Passes[len(t.Review.Passes)-1]
+		if last.Findings > 0 {
+			return false // something to fix
+		}
+	}
+	at := ""
+	if last != nil {
+		at = last.At
+	}
+	h := closingSince(p, t.ID, at)
+	if h == nil || h.TaskStatus != task.InReview {
+		return false // never closed (to in_review) after its last pass: its agent still has to run aitk close
+	}
+	// The profile that close saved decides.
+	prof := t.Profile
+	if p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) { // the loop (default): own clean pass, strict work too; never lite
+		if last == nil {
+			return false
+		}
+		// The close must not have left the loop unfinished: the clean pass reviewed the code the
+		// close verified (known when a check ran; without one, the close is trusted).
+		if prof != "strict" && h.Check != nil && h.Check.Tree != "" && last.Tree != h.Check.Tree {
+			return false
+		}
+	}
+	return true
+}
+
+// closedSince reports whether the task was closed at or after at: only aitk close and aitk run
+// record the status they closed to (task_status), whoever ran them, a person included. A review
+// pass alone, aitk switch, or a uat accept/reject (no task_status) never counts as a close.
+func closedSince(p *project.Project, id, at string) bool {
+	return closingSince(p, id, at) != nil
+}
+
+// closingSince returns the latest such close, or nil. handoff.List is newest first (ties within
+// a second broken by write order), so the first match is the latest.
+func closingSince(p *project.Project, id, at string) *handoff.Handoff {
+	for _, h := range handoff.List(p) {
+		if strings.EqualFold(h.Task, id) && h.At >= at && h.TaskStatus != "" && h.Outcome != "switched" {
+			return h
+		}
+	}
+	return nil
+}
+
+// reviewDone: ≥2 passes, the last with 0 findings, and at least one clean pass by a tool that
+// did not work on the task (workers, the creator, and the tool closing it).
 func reviewDone(t *task.Task) bool {
 	if t.Review == nil || len(t.Review.Passes) < 2 || t.Review.Passes[len(t.Review.Passes)-1].Findings != 0 {
 		return false
@@ -804,7 +933,9 @@ func reviewDone(t *task.Task) bool {
 		implementers[w] = true
 	}
 	for _, pass := range t.Review.Passes {
-		if pass.By != "" && pass.By != "unknown" && !implementers[pass.By] {
+		// The independent pass must itself be clean: another tool's findings followed by the
+		// implementer's own clean pass is not that tool confirming the fix.
+		if pass.By != "" && pass.By != "unknown" && !implementers[pass.By] && pass.Findings == 0 {
 			return true
 		}
 	}
@@ -824,13 +955,16 @@ func ReviewPass(p *project.Project, id string, findings int) (*task.Task, error)
 			return apperr.New("E_NO_ACTIVE_TASK", apperr.ExitGate, "aitk review pass <id> --findings N (reviewers: name the task; do not start it)", "no task given and no active task")
 		}
 		var err error
+		if err := RunScope(id); err != nil {
+			return err // inside aitk run the agent reviews only its own task
+		}
 		if t, err = task.Find(p, id); err != nil {
 			return apperr.TaskNotFound(id)
 		}
 		if t.Review == nil {
 			t.Review = &task.Review{}
 		}
-		t.Review.Passes = append(t.Review.Passes, task.Pass{N: len(t.Review.Passes) + 1, By: Tool(), At: task.Now(), Findings: findings})
+		t.Review.Passes = append(t.Review.Passes, task.Pass{N: len(t.Review.Passes) + 1, By: Tool(), At: task.Now(), Findings: findings, Tree: profile.Fingerprint(p)})
 		if t.Status == task.Implemented || t.Status == task.InProgress {
 			t.Status = task.InReview
 		}
