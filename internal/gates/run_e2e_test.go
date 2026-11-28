@@ -571,7 +571,7 @@ aitk close --status blocked --summary "probe only" --knowledge none
 	for _, tc := range []struct {
 		review string
 		want   string
-	}{{`review = "standard"`, "1"}, {"", "0"}} {
+	}{{`review = "standard"`, "1"}, {"", "1"}, {`review = "strict"`, "0"}} { // the loop is the default
 		dir := project(t)
 		must(t, dir, bin, "hooks", "uninstall")
 		cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
@@ -800,12 +800,12 @@ touch .attempted
 	}
 }
 
-// Projects without [quality] review keep the old strict behaviour in aitk run: a change that
+// review = "strict" keeps the old strict behaviour in aitk run: a change that
 // becomes strict waits for another tool after one attempt; no own-pass retry is imposed.
 func TestRunStrictWithoutReviewLoopKeepsOldBehaviour(t *testing.T) {
 	dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
 	cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
-	os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(strings.Replace(string(cfg), `review = "standard"`, "", 1)), 0o644)
+	os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(strings.Replace(string(cfg), `review = "standard"`, `review = "strict"`, 1)), 0o644)
 	must(t, dir, bin, "task", "new", "Auth", "--ac", "works") // unpinned: the diff makes it strict
 	must(t, dir, "git", "add", "-A")
 	must(t, dir, "git", "commit", "-qm", "chore: task")
@@ -874,7 +874,7 @@ func TestRunStrictAfterIndependentFindingsWaitsForTheReviewer(t *testing.T) {
 		dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
 		if !loop {
 			cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
-			os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(strings.Replace(string(cfg), `review = "standard"`, "", 1)), 0o644)
+			os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(strings.Replace(string(cfg), `review = "standard"`, `review = "strict"`, 1)), 0o644)
 		}
 		id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Auth", "--ac", "works", "--profile", "strict")))[1]
 		mustEnv(t, dir, []string{"AITK_TOOL=reviewer"}, bin, "review", "pass", id, "--findings", "2")

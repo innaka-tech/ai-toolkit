@@ -183,7 +183,7 @@ func Init(dir, name, check string, dryRun bool) (*InitResult, error) {
 		cfg += "\n# [check]\n# cmd = \"make test\"   # required for the Definition of Done to verify work\n"
 	}
 	cfg += "\n[risk]\n# Changes matching these globs make a task \"strict\" (risk analysis + independent review).\nsensitive_paths = []\n"
-	cfg += "\n[quality]\n# Tasks of these profiles need review passes until one finds 0 before they are done:\n# off | strict | standard (strict always needs two passes, one clean (0 findings) by a different tool).\nreview = \"standard\"\n"
+	cfg += "\n[quality]\n# Tasks of these profiles need review passes until one finds 0 before they are done:\n# standard (default) | strict | off (strict and off: only strict work, which always needs two passes, one clean (0 findings) by a different tool).\nreview = \"standard\"\n"
 	cfg += "\n# How agents work and talk here, applied in every aitk brief (docs/how-to/assistant.md).\n# [assistant]\n# character = \"full\"    # lite | full | ultra | off\n# talk = \"normal\"       # normal | lite | caveman\n# auto_persona = true   # the brief picks the personas the task needs\n"
 	state := map[string]any{"schema_version": 2, "project": map[string]any{"name": project.Slug(name, 62)}}
 	stateJSON, _ := json.MarshalIndent(state, "", "  ")
@@ -888,7 +888,7 @@ func waitingOnOthers(p *project.Project, t *task.Task) bool {
 	}
 	// The profile that close saved decides.
 	prof := t.Profile
-	if p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) { // opted in: own clean pass, strict work too; never lite
+	if p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) { // the loop (default): own clean pass, strict work too; never lite
 		if last == nil {
 			return false
 		}
