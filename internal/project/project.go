@@ -77,7 +77,9 @@ func pick(env, cfg, def string, allowed ...string) string {
 }
 
 type QualityCfg struct {
-	RegressionTests *bool `toml:"regression_tests,omitempty" json:"regression_tests,omitempty"`
+	RegressionTests *bool  `toml:"regression_tests,omitempty" json:"regression_tests,omitempty"`
+	Review          string `toml:"review,omitempty" json:"review,omitempty"`
+	OneTask         *bool  `toml:"one_task,omitempty" json:"one_task,omitempty"`
 }
 
 // RunSettings returns [run], empty when not configured.
@@ -92,6 +94,25 @@ func (c Config) RunSettings() RunCfg {
 func (c Config) RegressionTestsRequired() bool {
 	return c.Quality.RegressionTests == nil || *c.Quality.RegressionTests
 }
+
+// ReviewRequired reports whether a task of this profile needs review passes until one finds 0
+// before it is done. [quality] review: "standard" (the default: standard and strict work), or
+// "strict" or its alias "off" (the old behaviour: only strict work, which always needs its
+// independent review). Lite work never needs it, so a quick close without a task stays quick.
+func (c Config) ReviewRequired(profile string) bool {
+	if c.ReviewLoop() {
+		return profile == "standard" || profile == "strict"
+	}
+	return profile == "strict"
+}
+
+// ReviewLoop reports whether agents review their own work until a pass finds 0 (on strict work
+// too): on by default; [quality] review = "strict" or "off" turns it off.
+func (c Config) ReviewLoop() bool { return c.Quality.Review == "" || c.Quality.Review == "standard" }
+
+// OneTaskAtATime reports whether an agent must finish (or block) the active task before it
+// starts another in the same worktree (default true).
+func (c Config) OneTaskAtATime() bool { return c.Quality.OneTask == nil || *c.Quality.OneTask }
 
 type UATCfg struct {
 	Required string `toml:"required,omitempty" json:"required,omitempty"`

@@ -231,6 +231,9 @@ func (r *runner) one(c Candidate) RunTask {
 		snap := protectedOf(t)
 		started := task.Now()
 		prompt := runPrompt(p, t, rt.Attempts, r.attempts)
+		if rt.Attempts > 1 && rt.Note != "" {
+			prompt = "The previous attempt did not finish: " + rt.Note + "\n\n" + prompt
+		}
 		before := profile.Fingerprint(p)
 		ar := r.runAgent(prompt, t.ID)
 		code, runErr := ar.code, ar.err
@@ -251,6 +254,12 @@ func (r *runner) one(c Candidate) RunTask {
 			if ar.tail != "" {
 				rt.Note += ": " + lastLines(ar.tail, 3)
 			}
+			// The same rule as every failed attempt: the task file is not in the fingerprint, so
+			// whatever the agent wrote there (passes, a lower profile) goes back.
+			attempt := t.Review
+			restoreProtected(t, snap)
+			r.keepFindings(t, snap, attempt)
+			WithLock(p, func() error { return task.Save(p, t) })
 			return rt
 		}
 		switch t.Status {
@@ -263,19 +272,30 @@ func (r *runner) one(c Candidate) RunTask {
 				rt.Note = "the agent reported " + claimed + ", but aitk's own verification failed (" + why + "); reopened"
 				continue
 			}
-			rt.Status = target
+			rt.Status, rt.Note = target, "" // an earlier attempt's note no longer applies
 			if target == task.InReview {
-				rt.Note = "waiting for review passes or a person's acceptance (aitk uat accept " + t.ID + ")"
+				rt.Note = "waiting for a person's acceptance (aitk uat accept " + t.ID + ")"
+				kept := t.Review
+				t.Review = snap.review // the same test decide used: passes from outside the attempt
+				independent := reviewDone(t)
+				t.Review = kept
+				if t.Profile == "strict" && (!reviewDone(t) || !independent) {
+					rt.Note = "waiting for an independent review pass by another tool (aitk review pass " + t.ID + " --findings N)"
+				}
 			}
 			return rt
 		case task.Blocked, task.Cancelled:
+			attempt := t.Review
 			restoreProtected(t, snap) // whatever else the agent wrote, it cannot grant itself UAT or reviews
+			r.keepFindings(t, snap, attempt)
 			WithLock(p, func() error { return task.Save(p, t) })
 			rt.Status, rt.Note = t.Status, "the agent stopped the task; see its handoff"
 			return rt
 		}
 		// Still unfinished: whatever the agent wrote, it cannot keep grants it gave itself.
+		attempt := t.Review
 		restoreProtected(t, snap)
+		r.keepFindings(t, snap, attempt)
 		WithLock(p, func() error { return task.Save(p, t) })
 		switch {
 		case runErr != nil:
@@ -307,11 +327,15 @@ type protected struct {
 	goal      string
 	dependsOn []string
 	criteria  []string // texts; marking them done is the agent's job, rewording them is not
+	// Who worked on the task decides which review passes count as independent.
+	createdBy string
+	workers   []string
 }
 
 func protectedOf(t *task.Task) protected {
 	s := protected{profile: t.Profile, pinned: t.ProfilePinned, tags: append([]string(nil), t.Tags...),
-		goal: t.Goal, dependsOn: append([]string(nil), t.DependsOn...)}
+		goal: t.Goal, dependsOn: append([]string(nil), t.DependsOn...),
+		createdBy: t.CreatedBy, workers: append([]string(nil), t.Workers...)}
 	for _, c := range t.Criteria() {
 		s.criteria = append(s.criteria, c.Text)
 	}
@@ -334,8 +358,47 @@ func protectedOf(t *task.Task) protected {
 	return s
 }
 
+// ownPasses is the protected review plus the passes the agent appended during the attempt,
+// renumbered and attributed to the agent.
+func ownPasses(base, attempt *task.Review, agent string) *task.Review {
+	out := &task.Review{}
+	if base != nil {
+		out.Passes = append(out.Passes, base.Passes...)
+	}
+	if attempt != nil {
+		for i := len(out.Passes); i < len(attempt.Passes); i++ {
+			ps := attempt.Passes[i]
+			ps.N, ps.By, ps.Session = len(out.Passes)+1, agent, ""
+			out.Passes = append(out.Passes, ps)
+		}
+	}
+	return out
+}
+
+// keepFindings is the one rule for a failed attempt's review passes: none are kept, except
+// when the agent's last pass found something. Then its passes stay, under its name (never
+// independent: the agent is recorded as a worker), so those findings must reach 0 in a later
+// attempt or by a person instead of being forgotten. Call it after restoreProtected.
+func (r *runner) keepFindings(t *task.Task, snap protected, attempt *task.Review) {
+	own := ownPasses(snap.review, attempt, r.agentName)
+	if n := len(own.Passes); n > 0 && own.Passes[n-1].Findings > 0 {
+		t.Review = own
+		t.AddWorker(r.agentName)
+		return
+	}
+	t.Review = snap.review
+}
+
 func restoreProtected(t *task.Task, s protected) {
 	t.Profile, t.ProfilePinned, t.Tags, t.Goal, t.DependsOn = s.profile, s.pinned, s.tags, s.goal, s.dependsOn
+	t.CreatedBy = s.createdBy
+	workers := append([]string(nil), s.workers...) // an agent can add itself but never remove anyone
+	for _, w := range t.Workers {
+		if !containsFold(workers, w) {
+			workers = append(workers, w)
+		}
+	}
+	t.Workers = workers
 	t.Review = s.review
 	if t.Evidence == nil {
 		t.Evidence = &task.Evidence{}
@@ -348,9 +411,16 @@ func restoreProtected(t *task.Task, s protected) {
 // their values before the attempt, the check (and the audit, when required) are run by aitk, the
 // regression evidence is recomputed, and the Definition of Done decides. It returns the status to
 // record, or why the task cannot leave in_progress.
-func (r *runner) decide(t *task.Task, snap protected, since string) (string, string) {
+func (r *runner) decide(t *task.Task, snap protected, since string) (target, why string) {
 	p := r.p
+	attempt := t.Review // the agent's own passes: they count for the non-strict review loop only
+	defer func() {
+		if why != "" { // every way an attempt fails: findings the agent recorded are not forgotten
+			r.keepFindings(t, snap, attempt)
+		}
+	}()
 	restoreProtected(t, snap)
+	t.AddWorker(r.agentName) // aitk records this, not the agent: its own passes are never independent
 	cur := t.Criteria()
 	if len(cur) < len(snap.criteria) {
 		return "", "acceptance criteria were removed"
@@ -385,9 +455,35 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 			return "", "the security audit fails when aitk runs it"
 		}
 	}
+	// Only passes appended during this attempt are kept, attributed to the agent whatever the
+	// file says. The agent is a worker, so for strict work they can never stand in for another
+	// tool's independent review; they do count for the non-strict review loop, and they show
+	// the agent did its own pass, so a strict task left in_review does not hold the worktree.
+	t.Review = ownPasses(snap.review, attempt, r.agentName)
 	target, err := dod(p, t, prof, CloseInput{})
-	if err != nil {
+	if err == nil && target == task.Done && prof == "strict" {
+		// The independent review must stand on passes recorded outside this attempt: the agent's
+		// own clean pass after another tool's findings is not that tool confirming the fix.
+		kept := t.Review
+		t.Review = snap.review
+		independent := reviewDone(t)
+		t.Review = kept
+		if !independent {
+			target = task.InReview
+		}
+	}
+	if err != nil { // the deferred keepFindings decides which passes a failed attempt keeps
 		return "", "the Definition of Done does not hold: " + err.Error()
+	}
+	if target == task.InReview && prof != "strict" && !reviewSatisfied(p, t, prof) { // lite too, once it has a pass
+		if ps := t.Review.Passes; len(ps) > 0 && ps[len(ps)-1].Findings > 0 {
+			return "", fmt.Sprintf("review until clean is not finished (the last review pass found %d to fix)", ps[len(ps)-1].Findings)
+		}
+		return "", "review until clean is not finished (no clean review pass on the current code)"
+	}
+	if target == task.InReview && prof == "strict" && p.Config.ReviewLoop() && !reviewDone(t) && (t.Review == nil || len(t.Review.Passes) == 0 || t.Review.Passes[len(t.Review.Passes)-1].Findings > 0) {
+		// strict work waits for another tool only after the agent's own clean pass
+		return "", "your own review pass is missing or found something to fix (strict work needs it before another tool's pass)"
 	}
 	if IsBugTask(t) {
 		t.Evidence.RegressionTests = capList(regressionTests(p, t), 10)
@@ -402,18 +498,17 @@ func (r *runner) decide(t *task.Task, snap protected, since string) (string, str
 	if err := WithLock(p, func() error { return task.Save(p, t) }); err != nil {
 		return "", err.Error()
 	}
-	// Close writes the record of what was done; if the agent never ran it, aitk run writes one.
-	recorded := false
-	for _, h := range handoff.List(p) {
-		if strings.EqualFold(h.Task, t.ID) && h.At >= since {
-			recorded = true
-			break
-		}
+	// Close writes the record of what was done. When the agent did not close after this attempt
+	// started and after its last pass (it closed before reviewing, or switched instead), aitk run
+	// records the close itself: the rule closedSince uses, so the verified task frees the worktree.
+	from := since
+	if t.Review != nil && len(t.Review.Passes) > 0 && t.Review.Passes[len(t.Review.Passes)-1].At > from {
+		from = t.Review.Passes[len(t.Review.Passes)-1].At
 	}
-	if !recorded {
+	if !closedSince(p, t.ID, from) {
 		outcome := map[string]string{task.Done: "done", task.InReview: "progress"}[target]
 		handoff.Write(p, handoff.Meta{Task: t.ID, At: task.Now(), By: r.agentName, Outcome: outcome, TaskStatus: target, Check: t.Evidence.Check},
-			"## "+t.Title+"\n\nVerified by aitk run (check, Definition of Done). The agent did not record a summary with aitk close.\n")
+			"## "+t.Title+"\n\nVerified by aitk run (check, Definition of Done). The agent did not close the task after its last change or review pass.\n")
 	}
 	return target, ""
 }
@@ -597,7 +692,7 @@ func runPrompt(p *project.Project, t *task.Task, attempt, max int) string {
 Steps:
 1. Read the brief below and the task file. Keep the change focused on this task.
 2. Implement it, then run ` + "`aitk check`" + ` until it passes. Mark each satisfied criterion: ` + "`aitk task update " + t.ID + " --ac-done N`" + `.
-3. If the task is tagged bug, add a regression test that fails without the fix. Before closing, run ` + "`aitk impact`" + ` and make sure the code that depends on what you changed is covered by the check.
+3. If the task is tagged bug, add a regression test that fails without the fix. Before closing, run ` + "`aitk impact`" + ` and make sure the code that depends on what you changed is covered by the check.` + reviewStep(p, t) + `
 4. Finish with ` + "`aitk close --summary \"<what changed>\" --knowledge \"<lasting finding>|none\"`" + `. If close refuses, do what its fix line says and close again.
 5. If you cannot finish (missing access, unclear requirement, the check fails twice for the same reason), run ` + "`aitk close --status blocked --summary \"<why>\" --knowledge none`" + ` and stop.
 Never mark work done any other way, never edit aitk's evidence by hand, and never accept UAT.
@@ -702,4 +797,27 @@ func firstPositive(xs ...int) int {
 		}
 	}
 	return 0
+}
+
+// reviewStep is the prompt line for the agent's own review loop, only where it applies: a
+// task under [quality] review standard, or strict work (own clean pass before another tool's).
+func reviewStep(p *project.Project, t *task.Task) string {
+	prof := t.Profile // what close will use: pinned, unless the diff makes it strict
+	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
+		prof = computed
+	}
+	if prof == "lite" && !t.ProfilePinned {
+		prof = "standard" // the diff may still grow past lite
+	}
+	strictHint := ""
+	if len(p.Config.Risk.SensitivePaths) > 0 && !t.ProfilePinned && prof != "strict" && p.Config.ReviewLoop() {
+		strictHint = " If your change touches a sensitive path (aitk.toml [risk] sensitive_paths), the task becomes strict: your clean pass is still needed, and another tool's independent pass follows."
+	}
+	switch {
+	case prof == "strict" && p.Config.ReviewLoop():
+		return "\n   Then review your own change: record `aitk review pass " + t.ID + " --findings N`, fix what you found, run the check again, and repeat until a pass finds 0. Strict work also needs an independent pass by another tool after yours; your own passes never count as that one."
+	case prof != "strict" && p.Config.ReviewRequired(prof):
+		return "\n   Then review your own change: record `aitk review pass " + t.ID + " --findings N`, fix what you found, run the check again, and repeat until a pass finds 0." + strictHint
+	}
+	return ""
 }

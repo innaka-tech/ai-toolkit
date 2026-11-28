@@ -243,6 +243,13 @@ func UATAccept(p *project.Project, id, by, note string) (*UATDecision, error) {
 		target, derr := dod(p, t, prof, CloseInput{})
 		if derr != nil {
 			res.Missing = derr.Error()
+		} else if target == task.InReview {
+			switch {
+			case prof == "strict" && !reviewDone(t):
+				res.Missing = "strict task still needs ≥2 review passes (last with 0 findings, one clean (0 findings) by a tool that did not work on it): aitk review pass " + t.ID + " --findings N"
+			case !reviewSatisfied(p, t, prof):
+				res.Missing = "review until clean is not finished: aitk review pass " + t.ID + " --findings N, fix, repeat until a pass on the current code finds 0"
+			}
 		} else if target == task.Done {
 			t.Status, t.Closed = task.Done, now
 			res.Status = task.Done
@@ -263,7 +270,7 @@ func UATAccept(p *project.Project, id, by, note string) (*UATDecision, error) {
 		if note != "" {
 			body += " " + note
 		}
-		_, err = handoff.Write(p, handoff.Meta{Task: t.ID, At: now, By: "human", Outcome: map[bool]string{true: "done", false: "progress"}[res.Status == task.Done], TaskStatus: t.Status}, body+"\n")
+		_, err = handoff.Write(p, handoff.Meta{Task: t.ID, At: now, By: "human", Outcome: map[bool]string{true: "done", false: "progress"}[res.Status == task.Done]}, body+"\n") // no task_status: not a close (closedSince)
 		return err
 	})
 	return res, err
@@ -306,7 +313,7 @@ func UATReject(p *project.Project, id, by, reason string) (*UATDecision, error) 
 			return err
 		}
 		res = &UATDecision{Task: t.ID, Status: t.Status, UAT: "rejected"}
-		_, err = handoff.Write(p, handoff.Meta{Task: t.ID, At: now, By: "human", Outcome: "progress", TaskStatus: t.Status,
+		_, err = handoff.Write(p, handoff.Meta{Task: t.ID, At: now, By: "human", Outcome: "progress", // no task_status: not a close (closedSince)
 			Next: []string{"Address UAT feedback: " + reason}}, "## "+t.Title+"\n\nUAT rejected by "+who+".\n")
 		return err
 	})

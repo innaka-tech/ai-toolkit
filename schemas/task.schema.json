@@ -143,6 +143,10 @@
               "findings": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "tree": {
+                "type": "string",
+                "description": "working-tree fingerprint when the pass was recorded; a clean pass counts for review until clean only while the code is unchanged"
               }
             }
           }

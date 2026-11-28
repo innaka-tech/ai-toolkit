@@ -5,6 +5,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### ⚠ Compatibility
+- **Review until clean and one task at a time are on by default, in existing projects too.** A standard task now waits in `in_review` until a review pass finds 0, and an agent cannot start another task while its active one still needs it. To keep the old behaviour, set `[quality] review = "strict"` and `one_task = false`.
+- `aitk init` now writes `[quality] review = "standard"`. aitk before this release rejects `[quality] review` and `one_task` (`E_SCHEMA`), so everyone on a project that uses them needs this release or later.
+- Strict work in every project (with or without `[quality] review`, including `aitk run`): the independent review pass must itself be clean. Another tool's findings followed by the implementer's own clean pass no longer finish the task; the other tool reviews again.
+
+### Added
+- **Review until clean**: `[quality] review` (`standard` default, `strict`, `off`) makes tasks of those profiles wait in `in_review` until the last review pass finds 0 (a lite task with a recorded pass too); `aitk init` writes `review = "standard"` for new projects. The brief tells the agent to review, fix, and repeat, and, after three or more passes, to stop and ask when the last pass still has findings and did not improve on the one before.
+- **One task at a time** (`[quality] one_task`, default true): `aitk task start`, `task new --start`, and `task next --start` refuse with `E_TASK_ACTIVE` while the active task still needs its agent (any status but done, blocked, or cancelled, except an `in_review` task that only waits for another tool or a person); finish it or `aitk task block` it. `aitk run` is exempt. This applies to existing projects too (set `one_task = false` to opt out).
+- Inside `aitk run` the agent can start only its own task (`E_RUN_SCOPE`); aitk records it as a worker and protects `created_by` and `workers`, so its passes never count as another tool's review.
+- Review passes record the working-tree fingerprint; a clean pass counts for the review loop only while the code is unchanged.
+
 ## [2.10.0] - 2026-11-27
 
 Anti-slop and creative personas; README in Indonesian.

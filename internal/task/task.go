@@ -76,6 +76,7 @@ type Pass struct {
 	Session  string `yaml:"session,omitempty" json:"session,omitempty"`
 	At       string `yaml:"at" json:"at"`
 	Findings int    `yaml:"findings" json:"findings"`
+	Tree     string `yaml:"tree,omitempty" json:"tree,omitempty"` // working tree the pass reviewed
 }
 
 // Review holds bug-hunt passes.

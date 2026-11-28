@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -38,6 +39,7 @@ type Handoff struct {
 	Body    string `json:"body"`
 	File    string `json:"file"`
 	written int64
+	seq     int // write order within one second for one task: 1 for <stamp>-<task>.md, n for -n.md
 }
 
 // Write creates docs/ai/handoff/<UTC>-<task>.md and refreshes the index.
@@ -91,8 +93,12 @@ func List(p *project.Project) []*Handoff {
 		if info, err := e.Info(); err == nil {
 			h.written = info.ModTime().UnixNano()
 		}
+		h.seq = seqOf(e.Name(), h.Meta)
 		out = append(out, h)
 	}
+	// A total order first (time, then mtime, then name), then, within one second, each task's
+	// handoffs put back in the order Write numbered them, in the positions they already hold.
+	// Mixing the two in one comparator is not transitive (task ids can share a prefix).
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].At != out[j].At {
 			return out[i].At > out[j].At
@@ -102,7 +108,51 @@ func List(p *project.Project) []*Handoff {
 		}
 		return out[i].File > out[j].File
 	})
+	for start := 0; start < len(out); {
+		end := start
+		for end < len(out) && out[end].At == out[start].At {
+			end++
+		}
+		byTask := map[string][]int{} // positions in this second, per task, of numbered files
+		for i := start; i < end; i++ {
+			if out[i].seq > 0 {
+				k := strings.ToLower(out[i].Task)
+				byTask[k] = append(byTask[k], i)
+			}
+		}
+		for _, pos := range byTask {
+			hs := make([]*Handoff, len(pos))
+			for n, i := range pos {
+				hs[n] = out[i]
+			}
+			sort.SliceStable(hs, func(a, b int) bool { return hs[a].seq > hs[b].seq })
+			for n, i := range pos {
+				out[i] = hs[n]
+			}
+		}
+		start = end
+	}
 	return out
+}
+
+// seqOf reads the write order Write encodes in a handoff's file name: <stamp>-<task>.md is 1,
+// <stamp>-<task>-<n>.md is n. A name it does not recognise is 0.
+func seqOf(name string, m Meta) int {
+	task := m.Task
+	if task == "" {
+		task = "project"
+	}
+	prefix := strings.NewReplacer("-", "", ":", "").Replace(m.At) + "-" + task
+	base := strings.TrimSuffix(name, ".md")
+	if strings.EqualFold(base, prefix) {
+		return 1
+	}
+	if rest, ok := strings.CutPrefix(strings.ToLower(base), strings.ToLower(prefix)+"-"); ok {
+		if n, err := strconv.Atoi(rest); err == nil && n >= 2 {
+			return n
+		}
+	}
+	return 0
 }
 
 // WriteIndex regenerates docs/ai/handoff.md (10 newest).

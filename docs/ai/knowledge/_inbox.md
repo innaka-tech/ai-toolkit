@@ -7,4 +7,6 @@
 - cobra StringVar silently keeps only the last value of a repeated flag; list-like flags must be StringArray <!-- aitk:k date=2026-11-26 task=T-cy5a tags=bug -->
 - A task's changes are measured from the newest merge base of local and origin default branch; gates.DefaultBase (CI) prefers origin/ on purpose <!-- aitk:k date=2026-11-27 task=T-5w2x tags=bug -->
 - Everything that must apply automatically to every agent goes into aitk brief: every tool starts there (AGENTS.md, SessionStart hook, MCP instructions) <!-- aitk:k date=2026-11-27 task=T-gt80 -->
+- one_task is a workflow aid, not the quality gate: trust the close and let acceptance/close re-apply the DoD; every rule that tried to re-judge the worktree from the current tree found new edge cases. Handoff order within one second must come from the write number in the file name, applied as a second pass after a total order (a mixed comparator is not transitive). <!-- aitk:k date=2026-11-28 task=T-tzq8 -->
 - Slop rules stay narrow and advisory: a repo-wide scan of aitk itself must stay at zero hits, or the rule is too broad <!-- aitk:k date=2026-11-27 task=T-yy6r -->
+- Turn new safety behaviour on by default through the absent key, not by writing the key: older aitk rejects unknown keys (E_SCHEMA), but ignores a key that is not there. <!-- aitk:k date=2026-11-28 task=T-3bp7 -->

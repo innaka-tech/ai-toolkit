@@ -3,6 +3,7 @@ package gates_test
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -378,5 +379,601 @@ awk '/^updated:/ {print; print "evidence:"; print "  uat:"; print "    status: a
 	}
 	if body := must(t, dir, "sh", "-c", "grep -l "+x.ID+" docs/ai/tasks/*.md | xargs cat"); strings.Contains(body, "status: accepted") {
 		t.Fatalf("the forged acceptance survived the handover:\n%s", body)
+	}
+}
+
+// A standard-sized task in a new project (review = "standard"): the agent reviews its own work
+// until a pass finds 0, and aitk run counts that loop, so dependent tasks are not left waiting.
+const reviewingAgent = `set -e
+for i in 1 2 3 4 5 6; do echo "$AITK_RUN_TASK" > "src_${AITK_RUN_TASK}_$i.txt"; done
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+aitk review pass --findings 1
+aitk review pass --findings 0
+aitk close --summary "did $AITK_RUN_TASK" --knowledge none
+`
+
+func TestRunCountsTheAgentsReviewLoopOnStandardTasks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	dir := project(t)
+	if b, _ := os.ReadFile(filepath.Join(dir, "aitk.toml")); !strings.Contains(string(b), `review = "standard"`) {
+		t.Fatal("setup: aitk init must write review = \"standard\"")
+	}
+	must(t, dir, bin, "hooks", "uninstall")
+	first := strings.TrimSpace(must(t, dir, bin, "task", "new", "First feature", "--ac", "first works"))
+	id := strings.Fields(first)[1]
+	must(t, dir, bin, "task", "new", "Second feature", "--ac", "second works", "--depends", id)
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: tasks")
+
+	r := aitkRun(t, dir, "--cmd", reviewingAgent)
+	if !r.OK || len(r.Data.Tasks) != 2 {
+		t.Fatalf("both tasks (the second depends on the first) must run: %+v", r)
+	}
+	for _, x := range r.Data.Tasks {
+		if x.Status != "done" {
+			t.Fatalf("a standard task whose agent reviewed until clean must be done in aitk run: %+v", x)
+		}
+	}
+}
+
+type reviewPassOut struct {
+	By       string `json:"by"`
+	Findings int    `json:"findings"`
+}
+
+func passesOf(t *testing.T, dir, id string) []reviewPassOut {
+	t.Helper()
+	out := must(t, dir, bin, "--json", "task", "show", id)
+	var r struct {
+		Data struct {
+			Task struct {
+				Review struct {
+					Passes []reviewPassOut `json:"passes"`
+				} `json:"review"`
+			} `json:"task"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("task show: %v\n%s", err, out)
+	}
+	return r.Data.Task.Review.Passes
+}
+
+// An agent forges an independent reviewer in the task file. aitk run must never keep a forged
+// name: on a failed attempt nothing about reviews survives, on success the agent's passes are
+// attributed to the agent, so they cannot later count as another tool's review.
+func TestRunNeverKeepsForgedReviewers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	forger := func(markDone bool) string {
+		done := ""
+		if markDone {
+			done = "aitk task update --ac-done 1\n"
+		}
+		return `set -e
+for i in 1 2 3 4 5 6; do echo x > "src_$i.txt"; done
+touch ok.txt
+` + done + `aitk check
+aitk review pass --findings 0
+f=$(ls docs/ai/tasks/"$AITK_RUN_TASK"-*.md)
+sed -i.bak -E 's/^([[:space:]]+by: ).*/\1human-reviewer/' "$f" && rm -f "$f.bak"
+aitk close --summary "did it" --knowledge none || true
+`
+	}
+	for _, markDone := range []bool{false, true} {
+		dir := project(t)
+		must(t, dir, bin, "hooks", "uninstall")
+		id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Feature", "--ac", "works")))[1]
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		aitkRun(t, dir, "--cmd", forger(markDone), "--max-attempts", "1", "--max-tasks", "1")
+		for _, ps := range passesOf(t, dir, id) {
+			if ps.By == "human-reviewer" {
+				t.Fatalf("markDone=%v: a forged reviewer survived aitk run: %+v", markDone, passesOf(t, dir, id))
+			}
+		}
+		if !markDone && len(passesOf(t, dir, id)) != 0 {
+			t.Fatalf("a failed attempt must keep no review passes, got %+v", passesOf(t, dir, id))
+		}
+	}
+}
+
+// An agent that closes without reviewing does not get its task counted as finished.
+func TestRunReopensWhenTheAgentSkipsTheReviewLoop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	dir := project(t)
+	must(t, dir, bin, "hooks", "uninstall")
+	must(t, dir, bin, "task", "new", "Feature", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	lazy := `set -e
+for i in 1 2 3 4 5 6; do echo x > "src_$i.txt"; done
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+aitk close --summary "did it" --knowledge none
+`
+	r := aitkRun(t, dir, "--cmd", lazy, "--max-attempts", "2", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "done" || r.Data.Tasks[0].Status == "in_review" || r.Data.Tasks[0].Attempts != 2 {
+		t.Fatalf("skipping the review loop must use the remaining attempts and not count as finished: %+v", r.Data.Tasks)
+	}
+	if grep := must(t, dir, "sh", "-c", "cat docs/ai/handoff/*.md"); !strings.Contains(grep, "review until clean") {
+		t.Fatalf("the handover must say the review loop was not finished:\n%s", grep)
+	}
+}
+
+// Run 1 finishes a standard task with the agent's own review loop (its passes are kept under
+// the agent's name). The task is reopened; run 2 makes it strict and removes the agent from the
+// workers. The agent's old passes must never count as the independent review.
+func TestRunAgentCannotCertifyStrictReviewByFlippingTheProfile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	dir := project(t)
+	must(t, dir, bin, "hooks", "uninstall")
+	cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+	c := strings.Replace(string(cfg), "sensitive_paths = []", `sensitive_paths = ["secure/**"]`, 1) + "\n[security]\naudit = \"off\"\nasvs_level = 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(c), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Feature", "--ac", "works")))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	if r := aitkRun(t, dir, "--cmd", reviewingAgent, "--max-tasks", "1"); len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status != "done" {
+		t.Fatalf("setup: run 1 must finish the standard task: %+v", r.Data.Tasks)
+	}
+	if ps := passesOf(t, dir, id); len(ps) == 0 {
+		t.Fatal("setup: run 1 must keep the agent's passes")
+	}
+	must(t, dir, bin, "task", "update", id, "--status", "todo") // reopened by a person
+	flip := `set -e
+f=$(ls docs/ai/tasks/"$AITK_RUN_TASK"-*.md)
+mkdir -p secure && echo s > secure/x.txt
+sed -i.bak 's/(Required for strict profile. Impact:, Security (STRIDE):, Rollback:, Validation:)/Impact: x. Security (STRIDE): y. Rollback: z. Validation: w./' "$f"
+aitk check
+aitk close --summary "second" --knowledge none || true
+sed -i.bak -E '/^workers:/,/^[a-z_]+:/{/^[[:space:]]+- /d;}' "$f"
+sed -i.bak -E 's/^created_by: .*/created_by: human/' "$f"
+sed -i.bak -E 's/^status: .*/status: done/' "$f"
+rm -f "$f.bak"
+`
+	aitkRun(t, dir, "--cmd", flip, "--max-attempts", "1", "--max-tasks", "1")
+	var r struct {
+		Data struct {
+			Task struct {
+				Status  string `json:"status"`
+				Profile string `json:"profile"`
+			} `json:"task"`
+		} `json:"data"`
+	}
+	json.Unmarshal([]byte(must(t, dir, bin, "--json", "task", "show", id)), &r)
+	if r.Data.Task.Status == "done" {
+		t.Fatalf("strict work finished on the agent's own passes (profile %s): %+v", r.Data.Task.Profile, passesOf(t, dir, id))
+	}
+}
+
+// The review step is in the run prompt only where the agent's own loop applies, and a task that
+// finishes on a later attempt carries no stale note from an earlier one.
+func TestRunPromptReviewStepAndNotes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	probe := `grep -c "review your own change" "$AITK_RUN_PROMPT_FILE" > prompt-count.txt || true
+aitk close --status blocked --summary "probe only" --knowledge none
+`
+	for _, tc := range []struct {
+		review string
+		want   string
+	}{{`review = "standard"`, "1"}, {"", "1"}, {`review = "strict"`, "0"}} { // the loop is the default
+		dir := project(t)
+		must(t, dir, bin, "hooks", "uninstall")
+		cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+		os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(strings.Replace(string(cfg), `review = "standard"`, tc.review, 1)), 0o644)
+		must(t, dir, bin, "task", "new", "Feature", "--ac", "works")
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		aitkRun(t, dir, "--cmd", probe, "--max-attempts", "1", "--max-tasks", "1")
+		if b, _ := os.ReadFile(filepath.Join(dir, "prompt-count.txt")); strings.TrimSpace(string(b)) != tc.want {
+			t.Fatalf("config %q: review step count in prompt = %q, want %s", tc.review, b, tc.want)
+		}
+	}
+
+	dir := project(t)
+	must(t, dir, bin, "hooks", "uninstall")
+	must(t, dir, bin, "task", "new", "Feature", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	late := `set -e
+for i in 1 2 3 4 5 6; do echo x > "src_$i.txt"; done
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+if [ -f .reviewed-once ]; then aitk review pass --findings 0; fi
+touch .reviewed-once
+aitk close --summary "did it" --knowledge none
+`
+	r := aitkRun(t, dir, "--cmd", late, "--max-attempts", "2", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status != "done" || r.Data.Tasks[0].Attempts != 2 || r.Data.Tasks[0].Note != "" {
+		t.Fatalf("a task finished on the second attempt must be done with no stale note: %+v", r.Data.Tasks)
+	}
+}
+
+func newRunProject(t *testing.T, extraCfg string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake agents are shell scripts")
+	}
+	dir := project(t)
+	must(t, dir, bin, "hooks", "uninstall")
+	if extraCfg != "" {
+		cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+		c := strings.Replace(string(cfg), "sensitive_paths = []", `sensitive_paths = ["secure/**"]`, 1) + extraCfg
+		if err := os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func statusOf(t *testing.T, dir, id string) string {
+	t.Helper()
+	var r struct {
+		Data struct {
+			Task struct {
+				Status string `json:"status"`
+			} `json:"task"`
+		} `json:"data"`
+	}
+	json.Unmarshal([]byte(must(t, dir, bin, "--json", "task", "show", id)), &r)
+	return r.Data.Task.Status
+}
+
+// Inside aitk run the agent cannot start another task (it would be finished outside the run's
+// verification).
+func TestRunAgentStaysOnItsOwnTask(t *testing.T) {
+	dir := newRunProject(t, "")
+	a := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "First", "--ac", "works")))[1]
+	b := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Second", "--ac", "works", "--depends", a)))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: tasks")
+	escape := `aitk task block "$AITK_RUN_TASK" --reason "going elsewhere" || true
+aitk --json task start ` + b + ` > escape.json 2>&1 || true
+aitk --json task new "Sneaky" --start > sneaky.json 2>&1 || true
+`
+	aitkRun(t, dir, "--cmd", escape, "--max-attempts", "1", "--max-tasks", "1")
+	for _, f := range []string{"escape.json", "sneaky.json"} {
+		if out, _ := os.ReadFile(filepath.Join(dir, f)); !strings.Contains(string(out), "E_RUN_SCOPE") {
+			t.Fatalf("%s: starting another task inside aitk run must fail with E_RUN_SCOPE:\n%s", f, out)
+		}
+	}
+	if st := statusOf(t, dir, b); st != "todo" {
+		t.Fatalf("the other task must stay untouched, got %s", st)
+	}
+}
+
+// A strict task that aitk run leaves waiting for another tool does not hold the worktree.
+func TestRunStrictTaskWaitingForAnotherToolFreesTheWorktree(t *testing.T) {
+	dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+	id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Auth", "--ac", "works", "--profile", "strict")))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent := `set -e
+f=$(ls docs/ai/tasks/"$AITK_RUN_TASK"-*.md)
+mkdir -p secure && echo s > secure/x.txt
+sed -i.bak 's/(Required for strict profile. Impact:, Security (STRIDE):, Rollback:, Validation:)/Impact: x. Security (STRIDE): y. Rollback: z. Validation: w./' "$f" && rm -f "$f.bak"
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+# Follows the prompt only: it reviews its own change because the prompt says so.
+if grep -q "review your own change" "$AITK_RUN_PROMPT_FILE"; then aitk review pass --findings 0; fi
+aitk close --summary "auth" --knowledge none
+`
+	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status != "in_review" || !strings.Contains(r.Data.Tasks[0].Note, "another tool") {
+		t.Fatalf("setup: strict task must wait for another tool: %+v", r.Data.Tasks)
+	}
+	if ps := passesOf(t, dir, id); len(ps) != 1 || ps[0].By != "custom" {
+		t.Fatalf("the agent's own pass is kept under its name: %+v", ps)
+	}
+	if out, err := sh(t, dir, bin, "task", "new", "Next", "--start"); err != nil {
+		t.Fatalf("a task that only waits for another tool must not hold the worktree: %v\n%s", err, out)
+	}
+}
+
+// Run 1 by one agent finishes a standard task with its own passes; the task is reopened; run 2
+// by a different agent (codex) makes it strict and removes run 1's agent from the workers. Run 1's
+// passes must still not count as independent.
+func TestRunWorkersSurviveAcrossAgents(t *testing.T) {
+	dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+	id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Feature", "--ac", "works")))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	if r := aitkRun(t, dir, "--cmd", reviewingAgent, "--max-tasks", "1"); len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status != "done" {
+		t.Fatalf("setup: run 1 must finish the task: %+v", r.Data.Tasks)
+	}
+	must(t, dir, bin, "task", "update", id, "--status", "todo")
+	fake := t.TempDir()
+	script := `#!/bin/sh
+set -e
+f=$(ls docs/ai/tasks/"$AITK_RUN_TASK"-*.md)
+mkdir -p secure && echo s > secure/x.txt
+sed -i.bak 's/(Required for strict profile. Impact:, Security (STRIDE):, Rollback:, Validation:)/Impact: x. Security (STRIDE): y. Rollback: z. Validation: w./' "$f"
+aitk check
+aitk close --summary "codex" --knowledge none || true
+sed -i.bak -E '/^workers:/,/^[a-z_]+:/{/^[[:space:]]+- custom$/d;}' "$f"
+sed -i.bak -E 's/^created_by: .*/created_by: human/' "$f"
+sed -i.bak -E 's/^status: .*/status: done/' "$f"
+rm -f "$f.bak"
+`
+	if err := os.WriteFile(filepath.Join(fake, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
+	aitkRun(t, dir, "--agent", "codex", "--max-attempts", "1", "--max-tasks", "1")
+	if st := statusOf(t, dir, id); st == "done" {
+		t.Fatalf("strict work finished on another agent's earlier passes: %+v", passesOf(t, dir, id))
+	}
+}
+
+// The run scope also covers aitk work: an agent cannot open another task in a new worktree.
+func TestRunScopeCoversWork(t *testing.T) {
+	dir := newRunProject(t, "")
+	a := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "First", "--ac", "works")))[1]
+	b := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Second", "--ac", "works", "--depends", a)))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: tasks")
+	escape := `aitk --json work ` + b + ` > work.json 2>&1 || true
+aitk close --status blocked --summary "probe" --knowledge none
+`
+	aitkRun(t, dir, "--cmd", escape, "--max-attempts", "1", "--max-tasks", "1")
+	if out, _ := os.ReadFile(filepath.Join(dir, "work.json")); !strings.Contains(string(out), "E_RUN_SCOPE") {
+		t.Fatalf("aitk work on another task inside aitk run must fail with E_RUN_SCOPE:\n%s", out)
+	}
+}
+
+const strictSetup = `f=$(ls docs/ai/tasks/"$AITK_RUN_TASK"-*.md)
+mkdir -p secure && echo s > secure/x.txt
+sed -i.bak 's/(Required for strict profile. Impact:, Security (STRIDE):, Rollback:, Validation:)/Impact: x. Security (STRIDE): y. Rollback: z. Validation: w./' "$f" && rm -f "$f.bak"
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+`
+
+// A strict agent hand-writes two passes by "other" reviewers and status done, without running
+// aitk close or aitk review pass. aitk run records the agent as a worker itself, so the passes
+// (re-attributed to the agent) can never count as the independent review.
+func TestRunStrictHandForgedPassesNeverCount(t *testing.T) {
+	dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+	id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Auth", "--ac", "works", "--profile", "strict")))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent := "set -e\n" + strictSetup + `awk '{print} /^status:/{print "review:\n  passes:\n    - n: 1\n      by: alice\n      at: \"2026-01-01T00:00:00Z\"\n      findings: 1\n    - n: 2\n      by: bob\n      at: \"2026-01-01T00:00:01Z\"\n      findings: 0"}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+sed -i.bak -E 's/^status: .*/status: done/' "$f" && rm -f "$f.bak"
+`
+	aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if st := statusOf(t, dir, id); st == "done" {
+		t.Fatalf("hand-written passes certified strict work: %+v", passesOf(t, dir, id))
+	}
+	for _, ps := range passesOf(t, dir, id) {
+		if ps.By == "alice" || ps.By == "bob" {
+			t.Fatalf("a hand-written reviewer name survived: %+v", passesOf(t, dir, id))
+		}
+	}
+}
+
+// Strict work without the agent's own clean pass is retried, never left waiting for another tool.
+func TestRunStrictRetriesWithoutTheAgentsOwnCleanPass(t *testing.T) {
+	for _, review := range []string{"", "aitk review pass --findings 1\n"} {
+		dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+		must(t, dir, bin, "task", "new", "Auth", "--ac", "works", "--profile", "strict")
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		agent := "set -e\n" + strictSetup + review + "aitk close --summary auth --knowledge none\n"
+		probe := `if [ -f .attempted ]; then grep -c "The previous attempt did not finish: .*own review pass" "$AITK_RUN_PROMPT_FILE" > reason.txt || true; fi
+touch .attempted
+`
+		r := aitkRun(t, dir, "--cmd", probe+agent, "--max-attempts", "2", "--max-tasks", "1")
+		if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Attempts != 2 || r.Data.Tasks[0].Status == "in_review" || r.Data.Tasks[0].Status == "done" {
+			t.Fatalf("review %q: strict work without the agent's own clean pass must be retried, not left waiting: %+v", review, r.Data.Tasks)
+		}
+		if b, _ := os.ReadFile(filepath.Join(dir, "reason.txt")); strings.TrimSpace(string(b)) != "1" {
+			t.Fatalf("review %q: the second attempt's prompt must say why the first failed (got %q)", review, b)
+		}
+		if review != "" { // findings survive, under the agent's name only (never independent)
+			ps := passesOf(t, dir, r.Data.Tasks[0].ID)
+			if len(ps) == 0 || ps[len(ps)-1].Findings == 0 {
+				t.Fatalf("a failed strict attempt's findings must be kept: %+v", ps)
+			}
+			for _, p := range ps {
+				if p.By != "custom" {
+					t.Fatalf("kept passes are the agent's own: %+v", ps)
+				}
+			}
+		}
+	}
+}
+
+// review = "strict" keeps the old strict behaviour in aitk run: a change that
+// becomes strict waits for another tool after one attempt; no own-pass retry is imposed.
+func TestRunStrictWithoutReviewLoopKeepsOldBehaviour(t *testing.T) {
+	dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+	cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+	os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(strings.Replace(string(cfg), `review = "standard"`, `review = "strict"`, 1)), 0o644)
+	must(t, dir, bin, "task", "new", "Auth", "--ac", "works") // unpinned: the diff makes it strict
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	r := aitkRun(t, dir, "--cmd", "set -e\n"+strictSetup+"aitk close --summary auth --knowledge none\n", "--max-attempts", "1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status != "in_review" || r.Data.Tasks[0].Attempts != 1 {
+		t.Fatalf("without the review loop, strict work waits for another tool after one attempt: %+v", r.Data.Tasks)
+	}
+}
+
+// A failed attempt keeps none of the agent's passes, also when the standard loop is retried.
+func TestRunFailedStandardAttemptKeepsNoPasses(t *testing.T) {
+	dir := newRunProject(t, "")
+	id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Feature", "--ac", "works")))[1]
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	stale := `set -e
+for i in 1 2 3 4 5 6; do echo x > "src_$i.txt"; done
+touch ok.txt
+aitk task update --ac-done 1
+aitk check
+aitk review pass --findings 0
+echo changed > src_1.txt
+aitk check
+aitk close --summary "did it" --knowledge none
+`
+	aitkRun(t, dir, "--cmd", stale, "--max-attempts", "1", "--max-tasks", "1")
+	if ps := passesOf(t, dir, id); len(ps) != 0 {
+		t.Fatalf("a failed attempt (stale clean pass) must keep no passes: %+v", ps)
+	}
+}
+
+// created_by is protected: the task's creator (codex) reviewed it, which never counts as
+// independent; the run agent cannot rewrite created_by to make that pass count.
+func TestRunCreatedByIsProtected(t *testing.T) {
+	dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+	id := strings.Fields(strings.TrimSpace(mustEnv(t, dir, []string{"AITK_TOOL=codex"}, bin, "task", "new", "Auth", "--ac", "works", "--profile", "strict")))[1]
+	mustEnv(t, dir, []string{"AITK_TOOL=codex"}, bin, "review", "pass", id, "--findings", "0")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent := "set -e\n" + strictSetup + `aitk review pass --findings 0
+aitk close --summary auth --knowledge none || true
+sed -i.bak -E 's/^created_by: .*/created_by: human/; s/^status: .*/status: done/' "$f" && rm -f "$f.bak"
+`
+	aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if st := statusOf(t, dir, id); st == "done" {
+		t.Fatalf("the creator's own pass counted as independent after created_by was rewritten: %+v", passesOf(t, dir, id))
+	}
+}
+
+func mustEnv(t *testing.T, dir string, env []string, name string, args ...string) string {
+	t.Helper()
+	c := exec.Command(name, args...)
+	c.Dir = dir
+	c.Env = append(os.Environ(), env...)
+	out, err := c.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
+	}
+	return string(out)
+}
+
+// Another tool found problems in strict work; the task was reopened and the run agent fixed it
+// and reviewed itself. That is not the other tool confirming the fix: the task waits for it.
+func TestRunStrictAfterIndependentFindingsWaitsForTheReviewer(t *testing.T) {
+	for _, loop := range []bool{false, true} {
+		dir := newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+		if !loop {
+			cfg, _ := os.ReadFile(filepath.Join(dir, "aitk.toml"))
+			os.WriteFile(filepath.Join(dir, "aitk.toml"), []byte(strings.Replace(string(cfg), `review = "standard"`, `review = "strict"`, 1)), 0o644)
+		}
+		id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Auth", "--ac", "works", "--profile", "strict")))[1]
+		mustEnv(t, dir, []string{"AITK_TOOL=reviewer"}, bin, "review", "pass", id, "--findings", "2")
+		must(t, dir, bin, "task", "update", id, "--status", "todo")
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		r := aitkRun(t, dir, "--cmd", "set -e\n"+strictSetup+"aitk review pass --findings 0\naitk close --summary auth --knowledge none\n", "--max-attempts", "1", "--max-tasks", "1")
+		if len(r.Data.Tasks) != 1 || !strings.Contains(r.Data.Tasks[0].Note, "independent review pass by another tool") {
+			t.Fatalf("loop=%v: the note must name the wait for another tool, not a person: %+v", loop, r.Data.Tasks)
+		}
+		if st := statusOf(t, dir, id); st == "done" {
+			t.Fatalf("loop=%v: strict work done on the agent's own pass after the reviewer's findings: %+v", loop, passesOf(t, dir, id))
+		}
+	}
+}
+
+// A lite-sized task whose last pass found something is not finished inside aitk run either.
+func TestRunLiteTaskWithFindingsIsReopened(t *testing.T) {
+	dir := newRunProject(t, "")
+	must(t, dir, bin, "task", "new", "Small", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent := "touch ok.txt\necho x > a.txt\naitk task update --ac-done 1\naitk review pass --findings 2\naitk check\naitk close --summary done --knowledge none\n"
+	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "in_review" || r.Data.Tasks[0].Status == "done" ||
+		!strings.Contains(r.Data.Tasks[0].Note, "review until clean") {
+		t.Fatalf("a lite task with findings must be reopened, not left waiting: %+v", r)
+	}
+}
+
+// Findings a lite task's agent recorded survive the reopen: the next attempt cannot close it as
+// done without a clean pass.
+func TestRunLiteFindingsSurviveTheRetry(t *testing.T) {
+	dir := newRunProject(t, "")
+	must(t, dir, bin, "task", "new", "Small", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	// Attempt 1 records findings; attempt 2 only closes again.
+	agent := "if [ ! -f a.txt ]; then touch ok.txt; echo x > a.txt; aitk task update --ac-done 1; aitk review pass --findings 2; fi\naitk check\naitk close --summary done --knowledge none\n"
+	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "2", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "done" || !strings.Contains(r.Data.Tasks[0].Note, "found 2 to fix") {
+		t.Fatalf("a lite task's findings must survive the retry: %+v", r)
+	}
+}
+
+// Findings the agent recorded survive every way an attempt can fail, not only an unfinished
+// review loop: a failing check, open criteria, a blocked hand-over, or no close at all.
+func TestRunFindingsSurviveEveryFailedAttempt(t *testing.T) {
+	cases := map[string]string{
+		"check fails":   "echo x > a.txt\naitk task update --ac-done 1\naitk review pass --findings 2\n",
+		"criteria open": "touch ok.txt\necho x > a.txt\naitk review pass --findings 2\naitk check\naitk close --summary s --knowledge none || true\n",
+		"blocked":       "touch ok.txt\necho x > a.txt\naitk review pass --findings 2\naitk close --status blocked --summary s --knowledge none\n",
+		"not closed":    "touch ok.txt\necho x > a.txt\naitk review pass --findings 2\naitk task update --status in_progress\n",
+	}
+	for name, agent := range cases {
+		dir := newRunProject(t, "")
+		id := strings.Fields(strings.TrimSpace(must(t, dir, bin, "task", "new", "Small", "--ac", "works")))[1]
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+		ps := passesOf(t, dir, id)
+		if len(ps) == 0 || ps[len(ps)-1].Findings != 2 || ps[len(ps)-1].By != "custom" {
+			t.Fatalf("%s: the agent's findings must survive the failed attempt: %+v", name, ps)
+		}
+	}
+}
+
+// An agent that writes passes and a lower profile, then exits as if it never started, keeps
+// none of it: the "failed to start" path follows the same rule as every failed attempt.
+func TestRunFailedStartKeepsNoForgedPasses(t *testing.T) {
+	dir := runProject(t)
+	r := aitkRun(t, dir, "--cmd", "aitk review pass --findings 0; aitk review pass --findings 0; aitk task update --status in_progress; exit 1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || !strings.Contains(r.Data.Stopped, "failed to start") {
+		t.Fatalf("setup: the run must stop as a failed start: %+v", r)
+	}
+	if ps := passesOf(t, dir, r.Data.Tasks[0].ID); len(ps) != 0 {
+		t.Fatalf("passes written by an agent that \"failed to start\" must not stay: %+v", ps)
+	}
+}
+
+// A task aitk run verified frees the worktree even when the agent closed before its last pass,
+// or switched instead of closing: aitk run records the close itself.
+func TestRunVerifiedTaskFreesTheWorktree(t *testing.T) {
+	work := "for i in 1 2 3 4 5 6; do echo x > \"src_$i.txt\"; done\ntouch ok.txt\naitk task update --ac-done 1\naitk check\n"
+	cases := map[string]string{
+		"closed before the last pass": work + "aitk close --summary s --knowledge none\nsleep 1.1\naitk review pass --findings 0\n",
+		"switched instead of closing": work + "aitk review pass --findings 0\naitk switch codex --print >/dev/null\n",
+	}
+	for name, agent := range cases {
+		dir := newRunProject(t, "\n[uat]\nrequired = \"standard\"\n")
+		must(t, dir, bin, "task", "new", "Feature", "--ac", "works")
+		must(t, dir, "git", "add", "-A")
+		must(t, dir, "git", "commit", "-qm", "chore: task")
+		r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+		if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status != "in_review" {
+			t.Fatalf("%s: setup: the run must verify the task as waiting for acceptance: %+v", name, r)
+		}
+		if out, err := sh(t, dir, bin, "task", "new", "Next", "--start"); err != nil {
+			t.Fatalf("%s: a task the run verified must not hold the worktree:\n%s", name, out)
+		}
 	}
 }
