@@ -859,10 +859,11 @@ func SwitchAllowed(p *project.Project, next string) error {
 		"task %s is still %s; one task at a time", t.ID, t.Status)
 }
 
-// waitingOnOthers reports whether an in_review task needs nothing more from its own agent: the
-// Definition of Done holds except for another tool's review pass or a person's acceptance. A
-// task with no review pass yet, a last pass with findings, an unmet review-until-clean rule, or
-// an open close requirement still needs its agent.
+// waitingOnOthers reports whether an in_review task needs nothing more from its own agent: it
+// was closed after its last pass (by aitk close or aitk run, anyone), that close left it
+// waiting only for another tool's pass or a person's acceptance, and nothing the agent did
+// since reopens its part. A task with no review pass yet (where the loop applies), a last pass
+// with findings, no close after it, or an unfinished review loop still needs its agent.
 func waitingOnOthers(p *project.Project, t *task.Task) bool {
 	prof := t.Profile
 	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
@@ -877,26 +878,29 @@ func waitingOnOthers(p *project.Project, t *task.Task) bool {
 		lastPass = last.At
 	}
 	h := closingSince(p, t.ID, lastPass)
-	if h == nil {
-		return false // never closed after its last pass: its agent still has to run aitk close
+	if h == nil || h.TaskStatus != task.InReview {
+		return false // never closed (to in_review) after its last pass: its agent still has to run aitk close
 	}
-	// The close applied the Definition of Done to the code as it was then; later changes that
-	// are not the agent's (a pull, a merge) must not take the worktree back. What is left to
-	// check is that the close did not leave the agent's own review loop unfinished: its clean
-	// pass must have reviewed the code the close verified. Acceptance re-checks everything.
-	if p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) { // opted in: own clean pass, strict work too; never lite
-		if lastPass == "" {
+	loop := p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) // opted in: own clean pass, strict work too; never lite
+	if loop && lastPass == "" {
+		return false
+	}
+	if len(codeChanges(p)) > 0 {
+		// Uncommitted work: the agent kept editing after its close. Judge the code as it is now.
+		if loop && prof != "strict" && !reviewSatisfied(p, t, prof) {
 			return false
 		}
-		if prof != "strict" {
-			last := t.Review.Passes[len(t.Review.Passes)-1]
-			atClose := h.Check != nil && h.Check.Tree != "" && last.Tree == h.Check.Tree
-			if !atClose && !reviewSatisfied(p, t, prof) {
-				return false
-			}
-		}
+		target, err := dod(p, t, prof, CloseInput{})
+		return err == nil && target == task.InReview
 	}
-	return h.TaskStatus == task.InReview
+	// A clean tree: the close applied the Definition of Done to the code as it was then, and
+	// commits that arrive later (a pull, a merge) must not take the worktree back. The close must
+	// not have left the agent's own loop unfinished: its clean pass reviewed the code the close
+	// verified (known when a check ran). Acceptance re-checks everything on the code as it is.
+	if loop && prof != "strict" && h.Check != nil && h.Check.Tree != "" && t.Review.Passes[len(t.Review.Passes)-1].Tree != h.Check.Tree {
+		return false
+	}
+	return true
 }
 
 // closedSince reports whether the task was closed at or after at: only aitk close and aitk run

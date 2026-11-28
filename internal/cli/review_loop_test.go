@@ -479,3 +479,63 @@ func TestUpstreamChangeDoesNotTakeTheWorktreeBack(t *testing.T) {
 		mustOK(t, aitk(t, dir, "task", "start", b))
 	}
 }
+
+// The agent's own edits after its close (uncommitted) still hold the worktree: they are its
+// unreviewed work, not code from elsewhere.
+func TestEditsAfterTheCloseStillHoldTheWorktree(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"standard\"\n")
+	a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	standardChange(t, dir, "e")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	write(t, dir, "src/e_9.go", "package src\n\nvar later = 1\n") // unreviewed, uncommitted
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+}
+
+// Without a check command, a commit from elsewhere does not take the worktree back either.
+func TestUpstreamChangeWithoutACheckCommand(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	cfg := read(t, dir, "aitk.toml")
+	cfg = cfg[:strings.Index(cfg, "\n[check]")] + "\n[uat]\nrequired = \"standard\"\n"
+	write(t, dir, "aitk.toml", cfg)
+	a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	standardChange(t, dir, "n")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+	if st := status(t, dir, a); st != "in_review" {
+		t.Fatalf("setup: waits for UAT, got %s", st)
+	}
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "feat: export")
+	write(t, dir, "upstream.go", "package main\n")
+	run(t, dir, "git", "add", "upstream.go")
+	run(t, dir, "git", "commit", "-qm", "feat: upstream")
+	mustOK(t, aitk(t, dir, "task", "start", b))
+}
+
+// A close that left the review loop unfinished (the clean pass reviewed older code) keeps the
+// worktree even once everything is committed.
+func TestUnfinishedLoopHoldsAfterCommitting(t *testing.T) {
+	dir := repo(t)
+	initRepo(t, dir)
+	write(t, dir, "aitk.toml", read(t, dir, "aitk.toml")+"\n[uat]\nrequired = \"standard\"\n")
+	a := data(aitk(t, dir, "task", "new", "Export", "--ac", "Given x, when y, then z", "--start"))["id"].(string)
+	standardChange(t, dir, "c")
+	mustOK(t, aitk(t, dir, "task", "update", a, "--ac-done", "1"))
+	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
+	write(t, dir, "src/c_9.go", "package src\n\nvar later = 1\n")
+	mustOK(t, aitk(t, dir, "check"))
+	mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
+	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
+	run(t, dir, "git", "add", "-A")
+	run(t, dir, "git", "commit", "-qm", "feat: export")
+	expect(t, aitk(t, dir, "task", "start", b), 3, "E_TASK_ACTIVE")
+}
