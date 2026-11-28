@@ -263,6 +263,31 @@ func (p *Project) Path(rel ...string) string {
 	return filepath.Join(append([]string{p.Root}, rel...)...)
 }
 
+// GitRel returns the repository-relative path git uses for an aitk path: when a parent
+// directory (docs, say) is a symlink to another directory inside the repository, git tracks
+// the files under the link's target, and pathspecs through the link are refused. A path that
+// resolves outside the repository, or cannot be resolved, is returned unchanged.
+func (p *Project) GitRel(rel string) string {
+	root, err := filepath.EvalSymlinks(p.Root)
+	if err != nil {
+		return rel
+	}
+	rest := ""
+	dir := filepath.FromSlash(rel)
+	for dir != "." && dir != string(filepath.Separator) && dir != "" {
+		if real, err := filepath.EvalSymlinks(filepath.Join(p.Root, dir)); err == nil {
+			r, err := filepath.Rel(root, filepath.Join(real, rest))
+			if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+				return rel
+			}
+			return filepath.ToSlash(r)
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = filepath.Dir(dir)
+	}
+	return rel
+}
+
 // LocalStateDir is the in-tree fallback for aitk's private state, used when the git
 // directory is read-only (for example inside an agent sandbox). It ignores itself.
 const LocalStateDir = ".aitk"

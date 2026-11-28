@@ -481,11 +481,6 @@ func firstN(xs []string, n int) []string {
 	return xs
 }
 
-// isAitkState reports whether a path is aitk's own state (tasks, handoffs, knowledge, indexes).
-func isAitkState(path string) bool {
-	return strings.HasPrefix(path, project.DocsAI+"/") || path == "ai-state.json"
-}
-
 // commitWork commits the task's work. The tree was clean when the run started and every task
 // leaves it clean, so the changes belong to this task. Finished work (done or in_review) is one
 // Conventional Commit; unfinished work is set aside with git stash and only aitk's handover
@@ -514,7 +509,7 @@ func (r *runner) commitWork(rt *RunTask) error {
 		if _, err := literalGit(p, "reset", "-q"); err != nil {
 			return err
 		}
-		if _, err := literalGit(p, "add", "-A", "--", project.DocsAI, "ai-state.json"); err != nil {
+		if _, err := literalGit(p, "add", "-A", "--", p.GitRel(project.DocsAI), "ai-state.json"); err != nil {
 			return err
 		}
 		if out, _ := literalGit(p, "diff", "--cached", "--name-only"); strings.TrimSpace(out) != "" {

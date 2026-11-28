@@ -105,7 +105,7 @@ func codeChanges(p *project.Project) []string {
 	out, _ := gitx.RunRaw(p.Root, "status", "--porcelain=v1", "-z", "--untracked-files=normal")
 	var files []string
 	for _, rec := range strings.Split(string(out), "\x00") {
-		if len(rec) > 3 && !profile.Managed(rec[3:]) {
+		if len(rec) > 3 && !profile.ManagedIn(p, rec[3:]) {
 			files = append(files, rec[3:])
 		}
 	}

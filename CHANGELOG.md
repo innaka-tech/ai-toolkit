@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Fixed
+- A repository whose `docs/` is a symlink to another directory inside it (`docs -> documentation`) works again: `aitk close` no longer fails with `E_DOD_CHECK_STALE` right after a passing check, aitk's own files there no longer count as code changes (which raised the risk profile), and `aitk run --commit` commits the handover record instead of failing on a pathspec "beyond a symbolic link".
+
 ## [2.10.0] - 2026-11-27
 
 Anti-slop and creative personas; README in Indonesian.

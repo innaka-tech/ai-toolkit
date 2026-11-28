@@ -380,3 +380,27 @@ awk '/^updated:/ {print; print "evidence:"; print "  uat:"; print "    status: a
 		t.Fatalf("the forged acceptance survived the handover:\n%s", body)
 	}
 }
+
+// aitk run --commit in a repository whose docs/ is a symlink inside the repository: finished
+// work is committed, and an unfinished task's handover record too.
+func TestRunCommitsWhenDocsIsASymlink(t *testing.T) {
+	dir := runProject(t)
+	must(t, dir, "sh", "-c", "mv docs documentation && ln -s documentation docs && git add -A && git commit -qm 'chore: move docs'")
+	must(t, dir, bin, "task", "new", "First", "--ac", "works")
+	must(t, dir, bin, "task", "new", "Second", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: tasks")
+	agent := `if [ ! -f first.txt ]; then
+  echo x > first.txt; touch ok.txt; aitk task update --ac-done 1; aitk check; aitk close --summary done --knowledge none
+else
+  echo y > second.txt
+fi
+`
+	r := aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "2")
+	if len(r.Data.Tasks) != 2 || r.Data.Tasks[0].Status != "done" || r.Data.Tasks[0].Commit == "" {
+		t.Fatalf("finished work must be committed: %+v", r)
+	}
+	if r.Data.Tasks[1].Commit == "" || r.Data.Tasks[1].Stash == "" || strings.Contains(r.Data.Stopped, "commit failed") {
+		t.Fatalf("the unfinished task's handover must be committed and its work stashed: %+v", r)
+	}
+}

@@ -36,6 +36,20 @@ func Managed(rel string) bool {
 	return false
 }
 
+// ManagedIn is Managed for a path as git reports it: aitk's own directories may sit behind a
+// symlink inside the repository (docs -> documentation), where git names the target's path.
+func ManagedIn(p *project.Project, rel string) bool {
+	if Managed(rel) {
+		return true
+	}
+	for _, dir := range []string{project.DocsAI, project.ADRDir} {
+		if g := p.GitRel(dir); g != dir && strings.HasPrefix(rel, g+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // Change is a changed file with its line count. From is the old path of a rename.
 type Change struct {
 	Path  string `json:"path"`
@@ -85,7 +99,7 @@ func DiffSince(p *project.Project, base string) []Change {
 	}
 	var out []Change
 	for path, c := range byPath {
-		if !Managed(path) || c.From != "" && !Managed(c.From) {
+		if !ManagedIn(p, path) || c.From != "" && !ManagedIn(p, c.From) {
 			out = append(out, *c)
 		}
 	}
@@ -296,7 +310,7 @@ func treeFingerprint(p *project.Project) string {
 	}
 	args := []string{"rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"}
 	for _, f := range []string{project.StateFile, project.ConfigFile, project.AgentsFile, "CLAUDE.md", ".gitattributes", project.DocsAI, project.ADRDir, project.LocalStateDir} {
-		args = append(args, f)
+		args = append(args, p.GitRel(f)) // the path git tracks, also behind an in-repo symlink
 	}
 	if _, err := run(args...); err != nil {
 		return ""
@@ -328,7 +342,7 @@ func bigUntracked(p *project.Project, limit int64) []bigFile {
 	out, _ := gitx.RunRaw(p.Root, "ls-files", "-z", "--others", "--exclude-standard")
 	var big []bigFile
 	for _, rel := range strings.Split(string(out), "\x00") {
-		if rel == "" || Managed(rel) {
+		if rel == "" || ManagedIn(p, rel) {
 			continue
 		}
 		if info, err := os.Lstat(p.Path(rel)); err == nil && info.Mode().IsRegular() && info.Size() > limit {
@@ -346,7 +360,7 @@ func statusFingerprint(p *project.Project) string {
 	var paths []string
 	for _, rec := range strings.Split(string(out), "\x00") {
 		if len(rec) > 3 {
-			if rel := rec[3:]; !Managed(rel) {
+			if rel := rec[3:]; !ManagedIn(p, rel) {
 				paths = append(paths, rel)
 			}
 		}
