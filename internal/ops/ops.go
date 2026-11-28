@@ -861,44 +861,38 @@ func SwitchAllowed(p *project.Project, next string) error {
 
 // waitingOnOthers reports whether an in_review task needs nothing more from its own agent: it
 // was closed after its last pass (by aitk close or aitk run, anyone), that close left it
-// waiting only for another tool's pass or a person's acceptance, and nothing the agent did
-// since reopens its part. A task with no review pass yet (where the loop applies), a last pass
-// with findings, no close after it, or an unfinished review loop still needs its agent.
+// waiting only for another tool's pass or a person's acceptance, and, with review = standard,
+// the clean pass reviewed the code that close verified. It trusts the close and the profile the
+// close saved: changes after it, from a pull or from anyone's edits, never take the worktree
+// back, because acceptance (and any later close) re-applies the Definition of Done to the code
+// as it is then. A last pass with findings, no close after it, or an unfinished review loop
+// still needs the agent.
 func waitingOnOthers(p *project.Project, t *task.Task) bool {
-	prof := t.Profile
-	if computed := profile.Compute(p, TaskChanges(p, t)); !t.ProfilePinned || computed == "strict" {
-		prof = computed
-	}
-	var lastPass string
+	var last *task.Pass
 	if t.Review != nil && len(t.Review.Passes) > 0 {
-		last := t.Review.Passes[len(t.Review.Passes)-1]
+		last = &t.Review.Passes[len(t.Review.Passes)-1]
 		if last.Findings > 0 {
 			return false // something to fix
 		}
-		lastPass = last.At
 	}
-	h := closingSince(p, t.ID, lastPass)
+	at := ""
+	if last != nil {
+		at = last.At
+	}
+	h := closingSince(p, t.ID, at)
 	if h == nil || h.TaskStatus != task.InReview {
 		return false // never closed (to in_review) after its last pass: its agent still has to run aitk close
 	}
-	loop := p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) // opted in: own clean pass, strict work too; never lite
-	if loop && lastPass == "" {
-		return false
-	}
-	if len(codeChanges(p)) > 0 {
-		// Uncommitted work: the agent kept editing after its close. Judge the code as it is now.
-		if loop && prof != "strict" && !reviewSatisfied(p, t, prof) {
+	prof := t.Profile // saved by that close
+	if p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) { // opted in: own clean pass, strict work too; never lite
+		if last == nil {
 			return false
 		}
-		target, err := dod(p, t, prof, CloseInput{})
-		return err == nil && target == task.InReview
-	}
-	// A clean tree: the close applied the Definition of Done to the code as it was then, and
-	// commits that arrive later (a pull, a merge) must not take the worktree back. The close must
-	// not have left the agent's own loop unfinished: its clean pass reviewed the code the close
-	// verified (known when a check ran). Acceptance re-checks everything on the code as it is.
-	if loop && prof != "strict" && h.Check != nil && h.Check.Tree != "" && t.Review.Passes[len(t.Review.Passes)-1].Tree != h.Check.Tree {
-		return false
+		// The close must not have left the loop unfinished: the clean pass reviewed the code the
+		// close verified (known when a check ran; without one, the close is trusted).
+		if prof != "strict" && h.Check != nil && h.Check.Tree != "" && last.Tree != h.Check.Tree {
+			return false
+		}
 	}
 	return true
 }
