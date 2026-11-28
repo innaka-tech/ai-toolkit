@@ -883,7 +883,8 @@ func waitingOnOthers(p *project.Project, t *task.Task) bool {
 	if h == nil || h.TaskStatus != task.InReview {
 		return false // never closed (to in_review) after its last pass: its agent still has to run aitk close
 	}
-	prof := t.Profile // saved by that close
+	// The profile that close saved decides.
+	prof := t.Profile
 	if p.Config.ReviewLoop() && p.Config.ReviewRequired(prof) { // opted in: own clean pass, strict work too; never lite
 		if last == nil {
 			return false
