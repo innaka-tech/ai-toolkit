@@ -34,6 +34,31 @@ func Managed(rel string) bool {
 			return true
 		}
 	}
+	return adapterFile(rel)
+}
+
+// adapterFiles and adapterPrefixes are what aitk adapters sync writes for AI tools: aitk's own
+// rules, prompts and skills, and the tool settings it registers the MCP server and session hook
+// in. Tool configuration, not project code.
+var adapterFiles = map[string]bool{
+	".mcp.json": true, ".claude/settings.json": true, ".gemini/settings.json": true, ".qwen/settings.json": true,
+	".cursor/mcp.json": true, ".kiro/settings/mcp.json": true, ".roo/mcp.json": true, ".vscode/mcp.json": true,
+	"opencode.json": true, ".aider.conf.yml": true, ".github/copilot-instructions.md": true, ".junie/guidelines.md": true,
+	".clinerules": true,
+}
+
+var adapterPrefixes = []string{".claude/skills/aitk/", ".clinerules/aitk", ".cursor/rules/aitk", ".github/prompts/aitk-",
+	".kiro/steering/aitk", ".roo/rules/aitk", ".windsurf/rules/aitk", ".windsurf/workflows/aitk-", ".opencode/command/aitk-"}
+
+func adapterFile(rel string) bool {
+	if adapterFiles[rel] {
+		return true
+	}
+	for _, p := range adapterPrefixes {
+		if strings.HasPrefix(rel, p) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -315,6 +340,20 @@ func treeFingerprint(p *project.Project) string {
 	}
 	if _, err := run(args...); err != nil {
 		return ""
+	}
+	// The AI tools' files aitk adapters writes are not code either.
+	if listed, err := run("ls-files", "-z"); err == nil {
+		var tools []string
+		for _, rel := range strings.Split(listed, "\x00") {
+			if adapterFile(rel) {
+				tools = append(tools, rel)
+			}
+		}
+		if len(tools) > 0 {
+			if _, err := run(append([]string{"rm", "-q", "--cached", "--ignore-unmatch", "--"}, tools...)...); err != nil {
+				return ""
+			}
+		}
 	}
 	tree, err := run("write-tree")
 	if err != nil || tree == "" {

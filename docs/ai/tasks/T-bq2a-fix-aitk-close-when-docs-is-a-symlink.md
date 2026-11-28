@@ -4,7 +4,7 @@ title: Fix aitk close when docs/ is a symlink
 status: in_review
 profile: strict
 created: "2026-11-28T02:09:55Z"
-updated: "2026-11-28T10:59:30Z"
+updated: "2026-11-28T11:07:11Z"
 created_by: claude-code
 workers:
   - claude-code
@@ -50,25 +50,25 @@ evidence:
   check:
     cmd: go vet ./... && go test -short ./...
     exit_code: 0
-    duration_ms: 71890
+    duration_ms: 71811
     summary: |-
-      …it/v2/internal/conv	[no test files]
+      …ai-toolkit/v2/internal/conv	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doc	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doctor	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/fsx	(cached)
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	69.593s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	69.520s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/gitx	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/handoff	(cached)
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/handoff	0.324s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/heal	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/jsonedit	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/knowledge	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	1.020s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	0.656s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/migrate	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	(cached)
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	1.728s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	0.013s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	1.614s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/proc	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/profile	(cached)
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/project	(cached)
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/profile	0.460s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/project	0.077s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/release	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/schema	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/secrets	(cached)
@@ -81,8 +81,8 @@ evidence:
       ?   	github.com/innaka-tech/ai-toolkit/v2/schemas	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/skills	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/standards	[no test files]
-    at: "2026-11-28T10:59:30Z"
-    tree: 142239f66e1cf4f3b33a081ca3b9e6482249bbaa9421f82eb920fa9d13168d53
+    at: "2026-11-28T11:07:11Z"
+    tree: 9b084aa91448e7940794d57cacdb57e18a6645cea58fbd97fb555eafb94633fc
   commits:
     - 76d18c2
     - 9f30046
