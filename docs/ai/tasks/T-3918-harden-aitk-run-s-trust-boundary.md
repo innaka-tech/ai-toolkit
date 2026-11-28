@@ -6,7 +6,7 @@ profile: standard
 tags:
   - security
 created: "2026-11-27T14:10:15Z"
-updated: "2026-11-28T06:58:05Z"
+updated: "2026-11-28T09:48:36Z"
 created_by: claude-code
 workers:
   - claude-code
@@ -54,29 +54,34 @@ review:
       at: "2026-11-28T02:22:38Z"
       findings: 3
       tree: 46de57dea57dacd084ec2c2f8e5146d766610be6af47c84af5de9aa6b4de8444
+    - "n": 9
+      by: claude-code
+      at: "2026-11-28T07:17:49Z"
+      findings: 3
+      tree: b3869d98da86a782ba63281c353cc2988024c33974236d3de87894f3a9f837a6
 evidence:
   check:
     cmd: go vet ./... && go test -short ./...
     exit_code: 0
-    duration_ms: 52885
+    duration_ms: 50069
     summary: |-
-      …/compat	[no test files]
+      …al/compat	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/conv	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doc	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/doctor	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/fsx	(cached)
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	50.836s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/gates	48.257s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/gitx	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/handoff	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/heal	[no test files]
       ok  	github.com/innaka-tech/ai-toolkit/v2/internal/jsonedit	(cached)
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/knowledge	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	0.632s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/mcpserver	0.655s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/migrate	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	(cached)
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	1.305s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/ops	0.012s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/plugins	1.516s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/proc	[no test files]
-      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/profile	0.545s
+      ok  	github.com/innaka-tech/ai-toolkit/v2/internal/profile	0.803s
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/project	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/release	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/internal/schema	[no test files]
@@ -89,8 +94,8 @@ evidence:
       ?   	github.com/innaka-tech/ai-toolkit/v2/schemas	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/skills	[no test files]
       ?   	github.com/innaka-tech/ai-toolkit/v2/standards	[no test files]
-    at: "2026-11-28T06:58:05Z"
-    tree: b3869d98da86a782ba63281c353cc2988024c33974236d3de87894f3a9f837a6
+    at: "2026-11-28T09:48:36Z"
+    tree: 80e08487a736eef779d4a0a4c3ee4dc9c9d3b1ae4e783337e33af846d0cf7f2c
 ---
 
 ## Objective

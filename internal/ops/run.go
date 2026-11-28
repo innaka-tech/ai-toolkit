@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -273,6 +274,12 @@ func (r *runner) one(c Candidate) (rt RunTask) {
 		// An agent that fails at once without touching anything is broken (not installed, bad
 		// flags, not logged in): stop the run instead of blaming the task.
 		if (code != 0 || runErr != nil) && ar.duration < agentStartupWindow && t.Status == task.InProgress && profile.Fingerprint(p) == before {
+			// Code untouched, but the agent may have written its own task file: nothing it wrote
+			// there survives (a forged pass would otherwise be the next attempt's baseline).
+			r.restore(t, snap)
+			if r.saveFailed(t) {
+				return r.unsaved(t, rt)
+			}
 			rt.Status, rt.AgentError = t.Status, true
 			rt.Note = fmt.Sprintf("the agent failed to start (exit %d)", code)
 			if runErr != nil {
@@ -391,12 +398,16 @@ type protected struct {
 	// Who worked on the task decides which review passes count as independent.
 	createdBy string
 	workers   []string
+	// What decides which changes are the task's (and so its risk profile).
+	base, created, branch string
+	legacy                map[string]any
 }
 
 func protectedOf(t *task.Task) protected {
 	s := protected{profile: t.Profile, pinned: t.ProfilePinned, tags: append([]string(nil), t.Tags...),
 		goal: t.Goal, dependsOn: append([]string(nil), t.DependsOn...),
-		createdBy: t.CreatedBy, workers: append([]string(nil), t.Workers...)}
+		createdBy: t.CreatedBy, workers: append([]string(nil), t.Workers...),
+		base: t.Base, created: t.Created, branch: t.Branch, legacy: t.Legacy}
 	for _, c := range t.Criteria() {
 		s.criteria = append(s.criteria, c.Text)
 	}
@@ -802,8 +813,10 @@ func relTo(p *project.Project, abs string) string {
 // sanitizeNewTask keeps a task the agent filed as plain new work. It reports whether it changed.
 func sanitizeNewTask(t *task.Task, agent string) bool {
 	changed := t.Review != nil || t.Evidence != nil || len(t.Workers) > 0 || t.CreatedBy != agent ||
+		t.Base != "" || t.Branch != "" || len(t.Paths) > 0 || len(t.Legacy) > 0 ||
 		(t.ProfilePinned && t.Profile != "strict") || (t.Status != task.Todo && t.Status != task.Blocked) || t.Closed != ""
 	t.Review, t.Evidence, t.Workers, t.CreatedBy, t.Closed = nil, nil, nil, agent, ""
+	t.Base, t.Branch, t.Paths, t.Legacy = "", "", nil, nil // set when someone starts it, never seeded
 	if t.ProfilePinned && t.Profile != "strict" {
 		t.ProfilePinned = false // pinning raises the bar only
 	}
@@ -845,6 +858,7 @@ func ownPasses(base, attempt *task.Review, agent string) *task.Review {
 func restoreProtected(t *task.Task, s protected) {
 	t.Profile, t.ProfilePinned, t.Tags, t.Goal, t.DependsOn = s.profile, s.pinned, s.tags, s.goal, s.dependsOn
 	t.CreatedBy = s.createdBy
+	t.Base, t.Created, t.Branch, t.Legacy = s.base, s.created, s.branch, s.legacy
 	workers := append([]string(nil), s.workers...) // an agent can add itself but never remove anyone
 	for _, w := range t.Workers {
 		if !containsFold(workers, w) {
@@ -1113,10 +1127,26 @@ func (g *attemptGuard) verifyStaged(p *project.Project) error {
 	if err != nil {
 		return err
 	}
+	// Also every staged file of aitk's own state, changed or not: a blob the agent committed
+	// itself matches HEAD, so it is not in the diff, yet a filter can make the file on disk
+	// differ from it.
+	all, err := literalGit(p, "ls-files", "-z", "--", project.DocsAI, project.StateFile)
+	if err != nil {
+		return err
+	}
+	out += "\x00" + all
 	norm := func(b []byte) []byte { return bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")) }
+	var rels []string
+	wants := map[string][]byte{}
 	for _, rel := range strings.Split(out, "\x00") {
+		if _, seen := wants[rel]; seen || rel == "" {
+			continue
+		}
+		if strings.Contains(rel, "\n") && (strings.HasPrefix(rel, project.DocsAI+"/") || g.files[p.Path(rel)] != nil) {
+			return fmt.Errorf("a file name with a newline in aitk's state (%q); nothing committed", rel)
+		}
 		want, guarded := g.files[p.Path(rel)]
-		if !guarded && rel != "" && (strings.HasPrefix(rel, project.DocsAI+"/") || rel == project.StateFile) {
+		if !guarded && (strings.HasPrefix(rel, project.DocsAI+"/") || rel == project.StateFile) {
 			// aitk's own files the guard does not snapshot (the agent's task, new tasks,
 			// handoffs): what git stores must still be exactly what aitk read and verified.
 			b, err := os.ReadFile(p.Path(rel))
@@ -1125,16 +1155,44 @@ func (g *attemptGuard) verifyStaged(p *project.Project) error {
 			}
 			want, guarded = b, true
 		}
-		if rel == "" || !guarded {
-			continue
+		if guarded {
+			rels = append(rels, rel)
+			wants[rel] = want
 		}
-		c := exec.Command("git", append(safeGitFlags(), "cat-file", "blob", ":"+rel)...)
-		c.Dir = p.Root
-		got, err := c.Output()
-		if err != nil {
-			continue // removed from the index: the restore put the file back, git add saw it
+	}
+	if len(rels) == 0 {
+		return nil
+	}
+	// One git process for every blob: "<sha> blob <size>\n<content>\n", or "<name> missing\n"
+	// for a path no longer in the index (the restore put the file back; git add saw it).
+	c := exec.Command("git", append(safeGitFlags(), "cat-file", "--batch")...)
+	c.Dir = p.Root
+	var in bytes.Buffer
+	for _, rel := range rels {
+		in.WriteString(":" + rel + "\n")
+	}
+	c.Stdin = &in
+	got, err := c.Output()
+	if err != nil {
+		return fmt.Errorf("could not read the staged files: %w", err)
+	}
+	for _, rel := range rels {
+		nl := bytes.IndexByte(got, '\n')
+		if nl < 0 {
+			return fmt.Errorf("could not read the staged files: short output")
 		}
-		if !bytes.Equal(norm(got), norm(want)) {
+		header := strings.Fields(string(got[:nl]))
+		got = got[nl+1:]
+		if len(header) != 3 || header[1] != "blob" {
+			continue // missing from the index
+		}
+		size, err := strconv.Atoi(header[2])
+		if err != nil || size+1 > len(got) {
+			return fmt.Errorf("could not read the staged files: bad size for %s", rel)
+		}
+		blob := got[:size]
+		got = got[size+1:]
+		if !bytes.Equal(norm(blob), norm(wants[rel])) {
 			return fmt.Errorf("git would commit %s differently from the file (a .gitattributes rule changed it); nothing committed", rel)
 		}
 	}

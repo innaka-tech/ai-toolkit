@@ -1555,3 +1555,52 @@ sed -i.bak "s/^title: .*/title: ` + long + `/" "$f" && rm -f "$f.bak"
 		sameFile(t, dir, bFile, bWas, "hard link at a symlink target")
 	}
 }
+
+// Security review pass 9 scenarios.
+func TestRunGuardNinthPass(t *testing.T) {
+	close := "touch ok.txt\naitk task update --ac-done 1\naitk check\naitk close --summary done --knowledge none\n"
+
+	// An agent that "fails to start" after writing its own task file keeps none of it.
+	dir := newRunProject(t, "")
+	a, _, _, _ := twoTasks(t, dir)
+	agent := "AITK_TOOL=alice aitk review pass --findings 0 >/dev/null 2>&1\nAITK_TOOL=alice aitk task update --status in_progress >/dev/null 2>&1\necho 'error: not logged in'\nexit 1\n"
+	r := aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if !strings.Contains(r.Data.Stopped, "failed to start") {
+		t.Fatalf("setup: the run must take the failed-start path: %+v", r)
+	}
+	for _, ps := range passesOf(t, dir, a) {
+		if ps.By == "alice" {
+			t.Fatalf("a pass written before a failed start must not survive: %+v", passesOf(t, dir, a))
+		}
+	}
+
+	// base is protected: committing the work and moving base to HEAD does not lower strict to lite.
+	dir = newRunProject(t, "\n[security]\naudit = \"off\"\nasvs_level = 0\n")
+	must(t, dir, bin, "task", "new", "Feature", "--ac", "works")
+	must(t, dir, "git", "add", "-A")
+	must(t, dir, "git", "commit", "-qm", "chore: task")
+	agent = `mkdir -p secure && echo x > secure/x.txt && touch ok.txt
+aitk task update --ac-done 1
+git add -A && git commit -qm "feat: secure" --no-verify
+f=$(ls docs/ai/tasks/*.md | head -1)
+sed -i.bak -e "s/^base: .*/base: $(git rev-parse HEAD)/" -e "s/^status: .*/status: done/" "$f" && rm -f "$f.bak"
+`
+	r = aitkRun(t, dir, "--cmd", agent, "--max-attempts", "1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Status == "done" {
+		t.Fatalf("moving base must not lower strict work to lite: %+v", r)
+	}
+
+	// A file of aitk's state that the agent committed itself is still checked against the disk.
+	dir = newRunProject(t, "")
+	twoTasks(t, dir)
+	before := strings.TrimSpace(must(t, dir, "git", "rev-parse", "HEAD"))
+	agent = "echo x > feature.txt\n" + close + `printf 'a@b\n' > docs/ai/notes.md
+git add docs/ai/notes.md && git commit -qm "docs: notes" --no-verify
+printf 'a+AEA-b\n' > docs/ai/notes.md
+echo 'docs/ai/notes.md working-tree-encoding=UTF-7' > .gitattributes
+`
+	r = aitkRun(t, dir, "--cmd", agent, "--commit", "--max-attempts", "1", "--max-tasks", "1")
+	if len(r.Data.Tasks) != 1 || r.Data.Tasks[0].Commit != "" || !strings.Contains(r.Data.Tasks[0].Note, "differently") {
+		t.Fatalf("aitk must not commit when a committed state file differs from the disk: %+v (HEAD was %s)", r, before)
+	}
+}
