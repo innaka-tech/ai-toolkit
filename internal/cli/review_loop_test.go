@@ -583,7 +583,12 @@ func TestTheLatestOfTwoClosesInOneSecondDecides(t *testing.T) {
 	mustOK(t, aitk(t, dir, "check"))
 	mustOK(t, aitk(t, dir, "review", "pass", "--findings", "0"))
 	b := data(aitk(t, dir, "task", "new", "Other"))["id"].(string)
-	for {
+	// Both closes must land in one second. A slow machine may never manage that; the ordering
+	// itself is covered without timing in internal/handoff (TestListOrders…).
+	for try := 0; ; try++ {
+		if try == 5 {
+			t.Skip("two closes never fit in one second on this machine")
+		}
 		start := time.Now().Unix()
 		mustOK(t, aitk(t, dir, "close", "--status", "in_progress", "--summary", "wip", "--knowledge", "none"))
 		mustOK(t, aitk(t, dir, "close", "--summary", "export", "--knowledge", "none"))
